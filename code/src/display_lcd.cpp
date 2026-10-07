@@ -129,9 +129,55 @@ void DisplayLcd::onPowerSourceButton(lv_event_t *) {
 void DisplayLcd::onBleSelected(lv_event_t *) {
   if (!g_display) return;
   g_display->requestedPowerMode_ = 1;
+  g_display->requestedBleScan_ = true;
   g_display->selectedPowerMode_ = 1;
-  lv_label_set_text(lv_obj_get_child(g_display->powerSourceButton_, 0), "METER: BLE");
+  lv_label_set_text(g_display->bleStatusLabel_, "Scanning for BLE devices...");
   lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onBleScanAgain(lv_event_t *) {
+  if (!g_display) return;
+  g_display->requestedBleScan_ = true;
+  lv_label_set_text(g_display->bleStatusLabel_, "Scanning for BLE devices...");
+}
+
+void DisplayLcd::onBleDeviceSelected(lv_event_t *event) {
+  if (!g_display) return;
+  size_t index = (size_t)(uintptr_t)lv_event_get_user_data(event);
+  if (index >= g_display->bleDeviceCount_) return;
+
+  g_display->selectedBleDevice_ = index;
+  lv_label_set_text(g_display->bleConfirmNameLabel_,
+                    g_display->bleDevices_[index].name);
+  lv_label_set_text(g_display->bleConfirmAddressLabel_,
+                    g_display->bleDevices_[index].address);
+  lv_obj_clear_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onBleConfirm(lv_event_t *) {
+  if (!g_display || g_display->selectedBleDevice_ >= g_display->bleDeviceCount_) return;
+  snprintf(g_display->requestedBleAddress_, sizeof(g_display->requestedBleAddress_),
+           "%s", g_display->bleDevices_[g_display->selectedBleDevice_].address);
+  g_display->requestedBleConnect_ = true;
+  lv_label_set_text(g_display->bleStatusLabel_, "Connecting...");
+  lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onBleBack(lv_event_t *) {
+  if (!g_display) return;
+  g_display->requestedBleCancel_ = true;
+  g_display->requestedPowerMode_ = 0;
+  g_display->selectedPowerMode_ = 0;
+  lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onBleConfirmCancel(lv_event_t *) {
+  if (g_display && g_display->bleConfirmPanel_) {
+    lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
+  }
 }
 
 void DisplayLcd::onAntSelected(lv_event_t *) {
@@ -167,23 +213,23 @@ void DisplayLcd::buildPowerSourcePanel() {
 
   lv_obj_t *title = lv_label_create(powerSourcePanel_);
   lv_label_set_text(title, "SELECT POWER METER");
-  lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
   lv_obj_set_style_text_color(title, lv_color_make(93, 214, 197), 0);
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 14, 20);
 
   lv_obj_t *hint = lv_label_create(powerSourcePanel_);
-  lv_label_set_text(hint, "Select connection type");
+  lv_label_set_text(hint, "Choose BLE scan or ANT+ search");
   lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(hint, lv_color_make(164, 183, 198), 0);
   lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 14, 52);
 
-  const char *labels[] = {"BLE POWER METER", "ANT+ POWER METER", "AUTO SELECT", "BACK"};
+  const char *labels[] = {"SCAN BLE DEVICES", "ANT+ POWER METER", "AUTO SELECT", "BACK"};
   lv_event_cb_t callbacks[] = {onBleSelected, onAntSelected, onAutoSelected, onCancelSelection};
   const lv_color_t colors[] = {
     lv_color_make(22, 55, 62), lv_color_make(24, 47, 73),
     lv_color_make(38, 49, 61), lv_color_make(40, 43, 50)
   };
-  const lv_coord_t heights[] = {48, 48, 44, 38};
+  const lv_coord_t heights[] = {42, 42, 40, 34};
   lv_coord_t y = 92;
   for (size_t i = 0; i < 4; ++i) {
     lv_obj_t *button = lv_btn_create(powerSourcePanel_);
@@ -193,10 +239,127 @@ void DisplayLcd::buildPowerSourcePanel() {
     lv_obj_add_event_cb(button, callbacks[i], LV_EVENT_CLICKED, nullptr);
     lv_obj_t *label = lv_label_create(button);
     lv_label_set_text(label, labels[i]);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
     lv_obj_center(label);
     y += heights[i] + 8;
   }
   lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+
+  bleDevicePanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(bleDevicePanel_, 240, 320);
+  lv_obj_center(bleDevicePanel_);
+  lv_obj_set_style_radius(bleDevicePanel_, 0, 0);
+  lv_obj_set_style_border_width(bleDevicePanel_, 0, 0);
+  lv_obj_set_style_bg_color(bleDevicePanel_, lv_color_make(8, 15, 25), 0);
+  lv_obj_set_style_bg_opa(bleDevicePanel_, LV_OPA_COVER, 0);
+
+  title = lv_label_create(bleDevicePanel_);
+  lv_label_set_text(title, "BLE POWER METERS");
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(title, lv_color_make(93, 214, 197), 0);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 10);
+
+  hint = lv_label_create(bleDevicePanel_);
+  lv_label_set_text(hint, "Tap a device, then confirm");
+  lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(hint, lv_color_make(164, 183, 198), 0);
+  lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 12, 34);
+
+  lv_obj_t *scanButton = lv_btn_create(bleDevicePanel_);
+  lv_obj_set_size(scanButton, 216, 32);
+  lv_obj_align(scanButton, LV_ALIGN_TOP_LEFT, 12, 58);
+  lv_obj_set_style_bg_color(scanButton, lv_color_make(22, 55, 62), 0);
+  lv_obj_add_event_cb(scanButton, onBleScanAgain, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *scanLabel = lv_label_create(scanButton);
+  lv_label_set_text(scanLabel, "SCAN AGAIN");
+  lv_obj_set_style_text_font(scanLabel, &lv_font_montserrat_14, 0);
+  lv_obj_center(scanLabel);
+
+  bleStatusLabel_ = lv_label_create(bleDevicePanel_);
+  lv_label_set_text(bleStatusLabel_, "No scan yet");
+  lv_obj_set_width(bleStatusLabel_, 216);
+  lv_label_set_long_mode(bleStatusLabel_, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(bleStatusLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(bleStatusLabel_, lv_color_make(255, 209, 102), 0);
+  lv_obj_align(bleStatusLabel_, LV_ALIGN_TOP_LEFT, 12, 96);
+
+  for (size_t i = 0; i < 4; ++i) {
+    bleDeviceButtons_[i] = lv_btn_create(bleDevicePanel_);
+    lv_obj_set_size(bleDeviceButtons_[i], 216, 38);
+    lv_obj_align(bleDeviceButtons_[i], LV_ALIGN_TOP_LEFT, 12,
+                 (lv_coord_t)(116 + i * 40));
+    lv_obj_set_style_bg_color(bleDeviceButtons_[i], lv_color_make(18, 36, 50), 0);
+    lv_obj_set_style_pad_all(bleDeviceButtons_[i], 1, 0);
+    lv_obj_set_style_border_width(bleDeviceButtons_[i], 0, 0);
+    lv_obj_add_event_cb(bleDeviceButtons_[i], onBleDeviceSelected,
+                        LV_EVENT_CLICKED, (void *)(uintptr_t)i);
+    lv_obj_t *deviceLabel = lv_label_create(bleDeviceButtons_[i]);
+    lv_obj_set_width(deviceLabel, 196);
+    lv_label_set_long_mode(deviceLabel, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(deviceLabel, &lv_font_montserrat_14, 0);
+    lv_obj_center(deviceLabel);
+    lv_obj_add_flag(bleDeviceButtons_[i], LV_OBJ_FLAG_HIDDEN);
+  }
+
+  lv_obj_t *backButton = lv_btn_create(bleDevicePanel_);
+  lv_obj_set_size(backButton, 216, 28);
+  lv_obj_align(backButton, LV_ALIGN_TOP_LEFT, 12, 284);
+  lv_obj_set_style_bg_color(backButton, lv_color_make(40, 43, 50), 0);
+  lv_obj_add_event_cb(backButton, onBleBack, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *backLabel = lv_label_create(backButton);
+  lv_label_set_text(backLabel, "BACK");
+  lv_obj_set_style_text_font(backLabel, &lv_font_montserrat_14, 0);
+  lv_obj_center(backLabel);
+  lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
+
+  bleConfirmPanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(bleConfirmPanel_, 240, 320);
+  lv_obj_center(bleConfirmPanel_);
+  lv_obj_set_style_radius(bleConfirmPanel_, 0, 0);
+  lv_obj_set_style_border_width(bleConfirmPanel_, 0, 0);
+  lv_obj_set_style_bg_color(bleConfirmPanel_, lv_color_make(8, 15, 25), 0);
+  lv_obj_set_style_bg_opa(bleConfirmPanel_, LV_OPA_COVER, 0);
+
+  title = lv_label_create(bleConfirmPanel_);
+  lv_label_set_text(title, "CONFIRM CONNECTION");
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(title, lv_color_make(93, 214, 197), 0);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 22);
+
+  bleConfirmNameLabel_ = lv_label_create(bleConfirmPanel_);
+  lv_label_set_text(bleConfirmNameLabel_, "BLE device");
+  lv_obj_set_width(bleConfirmNameLabel_, 216);
+  lv_label_set_long_mode(bleConfirmNameLabel_, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(bleConfirmNameLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(bleConfirmNameLabel_, lv_color_white(), 0);
+  lv_obj_align(bleConfirmNameLabel_, LV_ALIGN_TOP_LEFT, 12, 84);
+
+  bleConfirmAddressLabel_ = lv_label_create(bleConfirmPanel_);
+  lv_label_set_text(bleConfirmAddressLabel_, "");
+  lv_obj_set_style_text_font(bleConfirmAddressLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(bleConfirmAddressLabel_, lv_color_make(164, 183, 198), 0);
+  lv_obj_align(bleConfirmAddressLabel_, LV_ALIGN_TOP_LEFT, 12, 112);
+
+  lv_obj_t *confirmButton = lv_btn_create(bleConfirmPanel_);
+  lv_obj_set_size(confirmButton, 216, 42);
+  lv_obj_align(confirmButton, LV_ALIGN_TOP_LEFT, 12, 190);
+  lv_obj_set_style_bg_color(confirmButton, lv_color_make(22, 75, 67), 0);
+  lv_obj_add_event_cb(confirmButton, onBleConfirm, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *confirmLabel = lv_label_create(confirmButton);
+  lv_label_set_text(confirmLabel, "CONNECT");
+  lv_obj_set_style_text_font(confirmLabel, &lv_font_montserrat_14, 0);
+  lv_obj_center(confirmLabel);
+
+  lv_obj_t *cancelButton = lv_btn_create(bleConfirmPanel_);
+  lv_obj_set_size(cancelButton, 216, 36);
+  lv_obj_align(cancelButton, LV_ALIGN_TOP_LEFT, 12, 242);
+  lv_obj_set_style_bg_color(cancelButton, lv_color_make(40, 43, 50), 0);
+  lv_obj_add_event_cb(cancelButton, onBleConfirmCancel, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *cancelLabel = lv_label_create(cancelButton);
+  lv_label_set_text(cancelLabel, "CANCEL");
+  lv_obj_set_style_text_font(cancelLabel, &lv_font_montserrat_14, 0);
+  lv_obj_center(cancelLabel);
+  lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::begin() {
@@ -397,6 +560,64 @@ bool DisplayLcd::takePowerSourceRequest(int &mode) {
   mode = requestedPowerMode_;
   requestedPowerMode_ = -1;
   return true;
+}
+
+bool DisplayLcd::takeBleScanRequest() {
+  if (!requestedBleScan_) return false;
+  requestedBleScan_ = false;
+  return true;
+}
+
+bool DisplayLcd::takeBleConnectRequest(char *address, size_t capacity) {
+  if (!requestedBleConnect_) return false;
+  requestedBleConnect_ = false;
+  if (!address || capacity == 0) return false;
+  snprintf(address, capacity, "%s", requestedBleAddress_);
+  requestedBleAddress_[0] = '\0';
+  return true;
+}
+
+bool DisplayLcd::takeBleCancelRequest() {
+  if (!requestedBleCancel_) return false;
+  requestedBleCancel_ = false;
+  return true;
+}
+
+void DisplayLcd::setBleDevices(const BlePowerDevice *devices, size_t count,
+                               const char *status) {
+  bleDeviceCount_ = min(count, (size_t)4);
+  for (size_t i = 0; i < 4; ++i) {
+    lv_obj_t *button = bleDeviceButtons_[i];
+    if (i < bleDeviceCount_ && devices) {
+      bleDevices_[i] = devices[i];
+      char label[64];
+      snprintf(label, sizeof(label), "%s\n%s  %d dBm",
+               bleDevices_[i].name, bleDevices_[i].address,
+               bleDevices_[i].rssi);
+      lv_label_set_text(lv_obj_get_child(button, 0), label);
+      lv_obj_clear_flag(button, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+
+  if (status) {
+    lv_label_set_text(bleStatusLabel_, status);
+  } else if (bleDeviceCount_ == 0) {
+    lv_label_set_text(bleStatusLabel_, "No connectable BLE devices found");
+  } else {
+    lv_label_set_text(bleStatusLabel_, "Select your power meter");
+  }
+}
+
+void DisplayLcd::setBleScanStatus(const char *status) {
+  if (bleStatusLabel_ && status) lv_label_set_text(bleStatusLabel_, status);
+}
+
+void DisplayLcd::closePowerMeterPanels() {
+  lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::tick() {

@@ -8,6 +8,7 @@ static const NimBLEUUID kChrData("0xFFE1");
 
 bool   BlePosture::s_connected = false;
 float  BlePosture::s_pitch = 0;
+uint32_t BlePosture::s_notificationCount = 0;
 
 // ---------------------------------------------------------------------------
 // 0x55 协议帧解析（角度包 0x53）：
@@ -28,6 +29,7 @@ void BlePosture::witNotify(NimBLERemoteCharacteristic *chr, uint8_t *d, size_t n
 
     int16_t pitch = (int16_t)(d[i + 4] | (d[i + 5] << 8));
     s_pitch = (float)pitch / 100.0f;                   // 0.01°/LSB
+    s_notificationCount++;
     return;
   }
 }

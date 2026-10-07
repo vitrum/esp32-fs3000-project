@@ -49,8 +49,12 @@ Window win;
 static uint32_t lastSampleMs = 0;
 static uint32_t lastLogMs    = 0;
 static uint32_t lastBleMs    = 0;
+static uint32_t lastBlePowerNotification = 0;
+static uint32_t lastBlePostureNotification = 0;
+static uint32_t lastBleDisconnectCount = 0;
 static bool     powerConnected = false;
 static bool     postureConnected = false;
+static bool     manualBlePairing = false;
 static int      powerMode = 0;      // 0=自动 1=BLE 2=ANT+
 #ifdef ANT_POWER_ENABLE
 static bool     antStarted = false;   // ANT 节点已启动（此后 BLE 扫描不可用）
@@ -89,6 +93,8 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.println("\n== Aero Probe (single FS3000 + touch UI + BLE/ANT+ PM) ==");
+  Serial.println("[PM] Tap SELECT POWER METER -> SCAN BLE DEVICES to choose a device.");
+  Serial.println("[PM] BLE/ANT+ measurements are streamed to this monitor.");
 
   // 原型阶段单风速传感器；Wire1 由 LCD 初始化为 CST328 触摸总线
   Wire.begin(PIN_I2C1_SDA, PIN_I2C1_SCL, 400000);
@@ -172,8 +178,77 @@ void loop() {
 #endif
   }
 
-  // 3) 自动模式先扫描 BLE；选择 ANT+ 或自动模式达到延迟后启动 ANT。
-  //    ANT 使用 NimBLE 被动扫描窗口；切回 BLE 时停止 ANT 并恢复扫描。
+  if (lcd.takeBleCancelRequest()) {
+    manualBlePairing = false;
+    Serial.println("[BLE] device selection cancelled");
+  }
+
+  if (lcd.takeBleScanRequest()) {
+    manualBlePairing = true;
+    powerMode = 1;
+#ifdef ANT_POWER_ENABLE
+    if (antStarted) {
+      antPower.stop();
+      antStarted = false;
+    }
+#endif
+    BlePowerDevice devices[4] = {};
+    size_t deviceCount = 0;
+    Serial.println("[BLE] scanning for connectable devices (6 seconds)...");
+    bool scanOk = powerMeter.scanDevices(devices, 4, deviceCount);
+    if (scanOk) {
+      char status[48];
+      snprintf(status, sizeof(status), "%u device(s) found",
+               (unsigned)deviceCount);
+      lcd.setBleDevices(devices, deviceCount, status);
+    } else {
+      lcd.setBleDevices(nullptr, 0, "BLE scan failed; try again");
+      Serial.println("[BLE] scan could not be started");
+    }
+  }
+
+  char selectedAddress[18] = {};
+  if (lcd.takeBleConnectRequest(selectedAddress, sizeof(selectedAddress))) {
+    Serial.printf("[BLE] user confirmed connection to %s\n", selectedAddress);
+    powerConnected = powerMeter.connectDevice(selectedAddress);
+    if (powerConnected) {
+      manualBlePairing = false;
+      lcd.closePowerMeterPanels();
+    } else {
+      lcd.setBleScanStatus("Connection failed; select or scan again");
+    }
+  }
+
+  powerConnected = powerMeter.connected();
+  uint32_t bleDisconnects = powerMeter.disconnectCount();
+  if (bleDisconnects != lastBleDisconnectCount) {
+    lastBleDisconnectCount = bleDisconnects;
+    Serial.printf("[BLE] power meter disconnected (total %lu)\n",
+                  (unsigned long)bleDisconnects);
+  }
+
+  uint32_t blePowerNotifications = powerMeter.notificationCount();
+  if (blePowerNotifications != lastBlePowerNotification) {
+    lastBlePowerNotification = blePowerNotifications;
+    Serial.printf("[BLE-DATA] P=%.0f W cad=%.0f rpm speed=%.2f m/s\n",
+                  powerMeter.power(), powerMeter.cadence(), powerMeter.speed());
+  }
+  uint32_t blePostureNotifications = posture.notificationCount();
+  if (blePostureNotifications != lastBlePostureNotification) {
+    lastBlePostureNotification = blePostureNotifications;
+    Serial.printf("[BLE-POSTURE] pitch=%+.2f deg\n", posture.pitchDeg());
+  }
+#ifdef ANT_POWER_ENABLE
+  static uint32_t lastAntDataCount = 0;
+  uint32_t antDataCount = antPower.dataCount();
+  if (antDataCount != lastAntDataCount) {
+    lastAntDataCount = antDataCount;
+    Serial.printf("[ANT-DATA] device=%u P=%.0f W cad=%.0f rpm\n",
+                  antPower.deviceNum(), antPower.power(), antPower.cadence());
+  }
+#endif
+
+  // AUTO mode starts ANT+ after its BLE posture discovery window.
 #ifdef ANT_POWER_ENABLE
   bool shouldStartAnt = powerMode == 2 ||
                         (powerMode == 0 && now >= ANT_POWER_START_DELAY_MS);
@@ -182,24 +257,16 @@ void loop() {
     antStarted = true;
     antPower.begin();
   }
-  if (!antStarted && ((powerMode != 2 && !powerConnected) || !postureConnected) &&
+  if (!antStarted && !manualBlePairing && !postureConnected &&
       now - lastBleMs >= BLE_RECONNECT_MS) {
     lastBleMs = now;
-    if (!powerConnected && powerMode != 2) {
-      powerConnected = powerMeter.tryConnect();
-    } else if (!postureConnected) {
-      postureConnected = posture.tryConnect();
-    }
+    postureConnected = posture.tryConnect();
   }
 #else
-  if ((!powerConnected || !postureConnected) &&
+  if (!manualBlePairing && !postureConnected &&
       now - lastBleMs >= BLE_RECONNECT_MS) {
     lastBleMs = now;
-    if (!powerConnected) {
-      powerConnected = powerMeter.tryConnect();
-    } else if (!postureConnected) {
-      postureConnected = posture.tryConnect();
-    }
+    postureConnected = posture.tryConnect();
   }
 #endif
 }

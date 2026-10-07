@@ -25,6 +25,7 @@ public:
   float power()   const { return s_power; }      // W
   float cadence() const { return s_cadence; }    // rpm
   uint16_t deviceNum() const { return s_device; }
+  uint32_t dataCount() const { return s_dataCount; }
 
 private:
   static void onData(ant_node_t *, const ant_node_rx_t *, const uint8_t page[8], void *);
@@ -36,4 +37,5 @@ private:
   static float   s_power;
   static float   s_cadence;
   static uint16_t s_device;
+  static uint32_t s_dataCount;
 };

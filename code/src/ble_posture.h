@@ -21,9 +21,11 @@ public:
   bool tryConnect();               // 扫描并连接；未连接时可反复调用
   bool connected() const { return s_connected; }
   float pitchDeg() const { return s_pitch; }   // 俯仰角（度）
+  uint32_t notificationCount() const { return s_notificationCount; }
 
 private:
   static void witNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, bool isNotify);
   static bool   s_connected;
   static float  s_pitch;
+  static uint32_t s_notificationCount;
 };

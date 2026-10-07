@@ -10,6 +10,7 @@ bool    AntPower::s_tracking  = false;
 float   AntPower::s_power     = 0.0f;
 float   AntPower::s_cadence   = 0.0f;
 uint16_t AntPower::s_device   = 0;
+uint32_t AntPower::s_dataCount = 0;
 
 // ---------------------------------------------------------------------------
 // 回调运行在 ANT 任务上下文（持节点锁）：只拷贝数据，不阻塞、不打印大块
@@ -26,6 +27,7 @@ void AntPower::onData(ant_node_t *, const ant_node_rx_t *rx,
   s_cadence  = (pw.instantaneous_cadence == 0xFF)
                    ? 0.0f : (float)pw.instantaneous_cadence;
   s_tracking = true;
+  s_dataCount++;
 }
 
 void AntPower::onEvent(ant_node_t *, uint8_t ch, uint8_t ev, void *) {
