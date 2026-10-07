@@ -2,92 +2,151 @@
 #include "config.h"
 #include <NimBLEDevice.h>
 
-// ---- 蓝牙 SIG Cycling Power Service ----
-static const NimBLEUUID kSvcCP ("0x1818");
-static const NimBLEUUID kChrCPM("0x2A63");
+namespace {
+const NimBLEUUID kSvcCP("0x1818");
+const NimBLEUUID kChrCPM("0x2A63");
+const NimBLEUUID kSvcFTMS("0x1826");
+const NimBLEUUID kChrIndoorBikeData("0x2AD2");
 
-bool   BlePowerMeter::s_connected = false;
-float  BlePowerMeter::s_power  = 0;
-float  BlePowerMeter::s_cadence = 0;
-float  BlePowerMeter::s_speed  = 0;
-float  BlePowerMeter::s_wheelCirc = BLE_WHEEL_CIRC_M;
+bool s_hasWheel = false;
+bool s_hasCrank = false;
+uint32_t s_lastWheelRevs = 0;
+uint16_t s_lastWheelTime = 0;
+uint32_t s_lastCrankRevs = 0;
+uint16_t s_lastCrankTime = 0;
+
+bool hasBytes(size_t length, size_t index, size_t count) {
+  return index <= length && count <= length - index;
+}
+
+uint16_t readU16(const uint8_t *data, size_t index) {
+  return (uint16_t)data[index] | ((uint16_t)data[index + 1] << 8);
+}
+
+void logBleError(const char *message) {
+  Serial.printf("[BLE] %s\n", message);
+}
+}
+
+bool BlePowerMeter::s_connected = false;
+bool BlePowerMeter::s_hasCyclingPower = false;
+bool BlePowerMeter::s_hasFitnessMachine = false;
+float BlePowerMeter::s_power = 0;
+float BlePowerMeter::s_cadence = 0;
+float BlePowerMeter::s_speed = 0;
+float BlePowerMeter::s_wheelCirc = BLE_WHEEL_CIRC_M;
 uint32_t BlePowerMeter::s_notificationCount = 0;
 uint32_t BlePowerMeter::s_disconnectCount = 0;
 NimBLEClient *BlePowerMeter::s_client = nullptr;
 char BlePowerMeter::s_connectedAddress[18] = {};
+char BlePowerMeter::s_lastError[192] = {};
 
 class BlePowerClientCallbacks : public NimBLEClientCallbacks {
   void onDisconnect(NimBLEClient *, int reason) override {
     (void)reason;
     BlePowerMeter::s_connected = false;
     BlePowerMeter::s_connectedAddress[0] = '\0';
+    BlePowerMeter::s_hasCyclingPower = false;
+    BlePowerMeter::s_hasFitnessMachine = false;
+    BlePowerMeter::s_power = 0;
+    BlePowerMeter::s_cadence = 0;
+    BlePowerMeter::s_speed = 0;
     BlePowerMeter::s_disconnectCount++;
   }
 };
 
 static BlePowerClientCallbacks s_clientCallbacks;
 
-static bool      s_hasWheel = false;
-static bool      s_hasCrank = false;
-static uint32_t  s_lastWheelRevs = 0;
-static uint16_t  s_lastWheelTime = 0;
-static uint32_t  s_lastCrankRevs = 0;
-static uint16_t  s_lastCrankTime = 0;
-
-// ---------------------------------------------------------------------------
-// 0x2A63 notify 回调：按 CPS 规范解析 Flags 之后按位序取字段
-// ---------------------------------------------------------------------------
-void BlePowerMeter::cpmNotify(NimBLERemoteCharacteristic *chr, uint8_t *d, size_t n,
-                             bool isNotify) {
-  (void)chr; (void)isNotify;
-  if (n < 4) return;
-
-  uint16_t flags = d[0] | (d[1] << 8);
-  size_t   idx   = 2;
-
-  // Instantaneous Power (W)
-  s_power = (float)(d[idx] | (d[idx + 1] << 8));
-  s_notificationCount++;
-  idx += 2;
-
-  if (flags & 0x0001) idx += 1;                 // Pedal Power Balance
-  if (flags & 0x0004) idx += 2;                 // Accumulated Torque
-
-  if ((flags & 0x0010) && (n >= idx + 6)) {     // Wheel Revolution Data
-    uint32_t revs = (uint32_t)d[idx] | ((uint32_t)d[idx + 1] << 8) |
-                    ((uint32_t)d[idx + 2] << 16) | ((uint32_t)d[idx + 3] << 24);
-    uint16_t t = d[idx + 4] | (d[idx + 5] << 8);   // 1/1024 s
-    if (s_hasWheel) {
-      uint16_t dt  = (uint16_t)(t - s_lastWheelTime);  // 处理 64s 回绕
-      uint32_t drev = revs - s_lastWheelRevs;
-      if (dt > 0) {
-        s_speed = s_wheelCirc * (float)drev / ((float)dt / 1024.0f);
-      }
-    }
-    s_lastWheelRevs = revs;
-    s_lastWheelTime = t;
-    s_hasWheel = true;
-    idx += 6;
-  }
-
-  if ((flags & 0x0020) && (n >= idx + 4)) {     // Crank Revolution Data
-    uint16_t revs = d[idx] | (d[idx + 1] << 8);
-    uint16_t t    = d[idx + 2] | (d[idx + 3] << 8);  // 1/1024 s
-    if (s_hasCrank) {
-      uint16_t dt  = (uint16_t)(t - s_lastCrankTime);
-      uint16_t drev = (uint16_t)(revs - s_lastCrankRevs);
-      if (dt > 0) {
-        s_cadence = 60.0f * (float)drev / ((float)dt / 1024.0f);
-      }
-    }
-    s_lastCrankRevs = revs;
-    s_lastCrankTime = t;
-    s_hasCrank = true;
-  }
-  // 其余字段（极值/上死点/累计能量等）本项目不需要，忽略
+void BlePowerMeter::setError(const char *message) {
+  snprintf(s_lastError, sizeof(s_lastError), "%s", message ? message : "Unknown BLE error");
+  logBleError(s_lastError);
 }
 
-// ---------------------------------------------------------------------------
+void BlePowerMeter::cpmNotify(NimBLERemoteCharacteristic *, uint8_t *data,
+                              size_t length, bool) {
+  if (!data || length < 4) return;
+
+  const uint16_t flags = readU16(data, 0);
+  size_t index = 2;
+  s_power = (float)(int16_t)readU16(data, index);
+  s_notificationCount++;
+  index += 2;
+
+  if (flags & 0x0001) index += 1;
+  if (flags & 0x0004) index += 2;
+
+  if ((flags & 0x0010) && hasBytes(length, index, 6)) {
+    const uint32_t revolutions = (uint32_t)data[index] |
+                                 ((uint32_t)data[index + 1] << 8) |
+                                 ((uint32_t)data[index + 2] << 16) |
+                                 ((uint32_t)data[index + 3] << 24);
+    const uint16_t eventTime = readU16(data, index + 4);
+    if (s_hasWheel) {
+      const uint16_t deltaTime = (uint16_t)(eventTime - s_lastWheelTime);
+      const uint32_t deltaRevs = revolutions - s_lastWheelRevs;
+      if (deltaTime > 0) {
+        s_speed = s_wheelCirc * (float)deltaRevs / ((float)deltaTime / 1024.0f);
+      }
+    }
+    s_lastWheelRevs = revolutions;
+    s_lastWheelTime = eventTime;
+    s_hasWheel = true;
+    index += 6;
+  }
+
+  if ((flags & 0x0020) && hasBytes(length, index, 4)) {
+    const uint16_t revolutions = readU16(data, index);
+    const uint16_t eventTime = readU16(data, index + 2);
+    if (s_hasCrank) {
+      const uint16_t deltaTime = (uint16_t)(eventTime - s_lastCrankTime);
+      const uint16_t deltaRevs = (uint16_t)(revolutions - s_lastCrankRevs);
+      if (deltaTime > 0) {
+        s_cadence = 60.0f * (float)deltaRevs / ((float)deltaTime / 1024.0f);
+      }
+    }
+    s_lastCrankRevs = revolutions;
+    s_lastCrankTime = eventTime;
+    s_hasCrank = true;
+  }
+}
+
+void BlePowerMeter::indoorBikeNotify(NimBLERemoteCharacteristic *, uint8_t *data,
+                                     size_t length, bool) {
+  if (!data || length < 2) return;
+
+  const uint16_t flags = readU16(data, 0);
+  size_t index = 2;
+
+  // FTMS bit 0 clear means instantaneous speed is present (0.01 km/h units).
+  if ((flags & 0x0001) == 0) {
+    if (!hasBytes(length, index, 2)) return;
+    s_speed = (float)readU16(data, index) / 360.0f;
+    index += 2;
+  }
+
+  if (flags & 0x0002) index += 2;  // Average Speed
+  if (flags & 0x0004) {
+    if (!hasBytes(length, index, 2)) return;
+    s_cadence = (float)readU16(data, index) * 0.5f;
+    index += 2;
+  }
+  if (flags & 0x0008) index += 2;  // Average Cadence
+  if (flags & 0x0010) index += 3;  // Total Distance
+  if (flags & 0x0020) index += 2;  // Resistance Level
+  if (flags & 0x0040) {
+    if (!hasBytes(length, index, 2)) return;
+    s_power = (float)(int16_t)readU16(data, index);
+    index += 2;
+    s_notificationCount++;
+  }
+  if (flags & 0x0080) index += 2;  // Average Power
+  if (flags & 0x0100) index += 5;  // Expended Energy
+  if (flags & 0x0200) index += 1;  // Heart Rate
+  if (flags & 0x0400) index += 1;  // Metabolic Equivalent
+  if (flags & 0x0800) index += 2;  // Elapsed Time
+  if (flags & 0x1000) index += 2;  // Remaining Time
+}
+
 void BlePowerMeter::begin(const char *deviceName, float wheelCircM) {
   s_wheelCirc = wheelCircM;
   NimBLEDevice::init(deviceName);
@@ -96,10 +155,16 @@ void BlePowerMeter::begin(const char *deviceName, float wheelCircM) {
 bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
                                 size_t &count) {
   count = 0;
-  if (!devices || capacity == 0) return false;
+  if (!devices || capacity == 0) {
+    setError("BLE scan failed: invalid output buffer");
+    return false;
+  }
 
   NimBLEScan *scan = NimBLEDevice::getScan();
-  if (!scan) return false;
+  if (!scan) {
+    setError("BLE scan failed: NimBLE scan is unavailable");
+    return false;
+  }
   scan->setActiveScan(true);
   NimBLEScanResults results = scan->getResults(6000, false);
 
@@ -108,11 +173,13 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
       const NimBLEAdvertisedDevice *ad = results.getDevice(i);
       if (!ad->isConnectable()) continue;
 
-      const bool isPowerMeter = ad->isAdvertisingService(kSvcCP);
-      if ((pass == 0 && !isPowerMeter) || (pass == 1 && isPowerMeter)) continue;
+      const bool cyclingPower = ad->isAdvertisingService(kSvcCP);
+      const bool fitnessMachine = ad->isAdvertisingService(kSvcFTMS);
+      const bool supported = cyclingPower || fitnessMachine;
+      if ((pass == 0 && !supported) || (pass == 1 && supported)) continue;
 
-      std::string name = ad->getName();
-      if (name.empty() && !isPowerMeter) continue;
+      const std::string name = ad->getName();
+      if (name.empty() && !supported) continue;
 
       const std::string address = ad->getAddress().toString();
       bool alreadyAdded = false;
@@ -129,94 +196,147 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
                name.empty() ? "Unnamed BLE device" : name.c_str());
       snprintf(device.address, sizeof(device.address), "%s", address.c_str());
       device.rssi = ad->getRSSI();
+      device.cyclingPower = cyclingPower;
+      device.fitnessMachine = fitnessMachine;
     }
   }
 
   Serial.printf("[BLE] scan complete: %u connectable device(s)\n",
                 (unsigned)count);
   for (size_t i = 0; i < count; ++i) {
-    Serial.printf("[BLE] %u: %s, %s, RSSI %d dBm\n",
+    Serial.printf("[BLE] %u: %s, %s, RSSI %d dBm%s%s\n",
                   (unsigned)(i + 1), devices[i].name, devices[i].address,
-                  devices[i].rssi);
+                  devices[i].rssi,
+                  devices[i].cyclingPower ? " CPS" : "",
+                  devices[i].fitnessMachine ? " FTMS" : "");
   }
+  s_lastError[0] = '\0';
   return true;
 }
 
+void BlePowerMeter::disconnect() {
+  if (s_client && s_client->isConnected()) s_client->disconnect();
+  if (s_client) {
+    NimBLEDevice::deleteClient(s_client);
+    s_client = nullptr;
+  }
+  s_connected = false;
+  s_connectedAddress[0] = '\0';
+  s_hasCyclingPower = false;
+  s_hasFitnessMachine = false;
+  s_power = 0;
+  s_cadence = 0;
+  s_speed = 0;
+}
+
+void BlePowerMeter::cancelCurrentOperation() {
+  NimBLEScan *scan = NimBLEDevice::getScan();
+  if (scan && scan->isScanning()) scan->stop();
+  if (s_client && !s_client->isConnected()) s_client->cancelConnect();
+}
+
 bool BlePowerMeter::connectDevice(const char *address) {
-  if (!address || !address[0]) return false;
+  if (!address || !address[0]) {
+    setError("Connection failed: selected device address is empty");
+    return false;
+  }
   if (s_client && s_client->isConnected() &&
       strcmp(s_connectedAddress, address) == 0) {
+    s_lastError[0] = '\0';
     return true;
   }
 
-  if (s_client) {
-    if (s_client->isConnected()) s_client->disconnect();
-    NimBLEDevice::deleteClient(s_client);
-    s_client = nullptr;
-    s_connected = false;
-    s_connectedAddress[0] = '\0';
-  }
+  disconnect();
 
   NimBLEScan *scan = NimBLEDevice::getScan();
-  if (!scan) return false;
+  if (!scan) {
+    setError("Connection failed: NimBLE scan results are unavailable");
+    return false;
+  }
   NimBLEScanResults results = scan->getResults();
-  const NimBLEAdvertisedDevice *ad = nullptr;
+  const NimBLEAdvertisedDevice *advertised = nullptr;
   for (int i = 0; i < results.getCount(); ++i) {
     const NimBLEAdvertisedDevice *candidate = results.getDevice(i);
     if (candidate->getAddress().toString() == address) {
-      ad = candidate;
+      advertised = candidate;
       break;
     }
   }
-  if (!ad) {
-    Serial.printf("[BLE] selected device %s is no longer in scan results\n", address);
+  if (!advertised) {
+    char error[192];
+    snprintf(error, sizeof(error),
+             "Connection failed for %s: device is no longer in scan results. Scan again and select it nearby.",
+             address);
+    setError(error);
     return false;
   }
 
-  NimBLEClient *cli = NimBLEDevice::createClient();
-  if (!cli) {
-    Serial.println("[BLE] failed to create GATT client");
+  NimBLEClient *client = NimBLEDevice::createClient();
+  if (!client) {
+    setError("Connection failed: could not allocate a BLE GATT client");
     return false;
   }
-  cli->setClientCallbacks(&s_clientCallbacks, false);
-  s_client = cli;
+  client->setClientCallbacks(&s_clientCallbacks, false);
+  client->setConnectTimeout(8000);
+  s_client = client;
 
-  if (!cli->connect(ad)) {
-    Serial.printf("[BLE] connection failed: %s\n", address);
-    NimBLEDevice::deleteClient(cli);
-    s_client = nullptr;
-    return false;
-  }
-
-  NimBLERemoteService *svc = cli->getService(kSvcCP);
-  if (!svc) {
-    Serial.printf("[BLE] %s has no Cycling Power service (0x1818)\n", address);
-    cli->disconnect();
-    NimBLEDevice::deleteClient(cli);
-    s_client = nullptr;
+  if (!client->connect(advertised)) {
+    char error[192];
+    snprintf(error, sizeof(error),
+             "BLE connection to %s failed (code %d: %s). Wake the trainer and retry.",
+             address, client->getLastError(),
+             NimBLEUtils::returnCodeToString(client->getLastError()));
+    setError(error);
+    disconnect();
     return false;
   }
 
-  NimBLERemoteCharacteristic *chr = svc->getCharacteristic(kChrCPM);
-  if (!chr) {
-    Serial.printf("[BLE] %s has no power measurement characteristic (0x2A63)\n", address);
-    cli->disconnect();
-    NimBLEDevice::deleteClient(cli);
-    s_client = nullptr;
-    return false;
+  NimBLERemoteService *cpService = client->getService(kSvcCP);
+  NimBLERemoteService *ftmsService = client->getService(kSvcFTMS);
+  NimBLERemoteCharacteristic *cpMeasurement =
+      cpService ? cpService->getCharacteristic(kChrCPM) : nullptr;
+  NimBLERemoteCharacteristic *indoorBikeData =
+      ftmsService ? ftmsService->getCharacteristic(kChrIndoorBikeData) : nullptr;
+
+  if (cpMeasurement) {
+    s_hasCyclingPower = cpMeasurement->subscribe(true, cpmNotify, true);
+  }
+  if (indoorBikeData) {
+    s_hasFitnessMachine = indoorBikeData->subscribe(true, indoorBikeNotify, true);
   }
 
-  if (!chr->subscribe(true, cpmNotify, true)) {
-    Serial.printf("[BLE] failed to subscribe to power data: %s\n", address);
-    cli->disconnect();
-    NimBLEDevice::deleteClient(cli);
-    s_client = nullptr;
+  if (!s_hasCyclingPower && !s_hasFitnessMachine) {
+    char error[192];
+    if (!cpService && !ftmsService) {
+      snprintf(error, sizeof(error),
+               "Connection to %s succeeded, but neither Cycling Power (0x1818) nor Fitness Machine (0x1826) service is present.",
+               address);
+    } else if ((cpService && !cpMeasurement) || (ftmsService && !indoorBikeData)) {
+      snprintf(error, sizeof(error),
+               "Connection to %s succeeded, but no supported measurement characteristic was found (CPS 0x2A63 / FTMS 0x2AD2).",
+               address);
+    } else {
+      snprintf(error, sizeof(error),
+               "Connection to %s succeeded, but subscribing to power data failed (CPS 0x2A63 / FTMS 0x2AD2).",
+               address);
+    }
+    setError(error);
+    disconnect();
     return false;
   }
 
   s_connected = true;
   snprintf(s_connectedAddress, sizeof(s_connectedAddress), "%s", address);
-  Serial.printf("[BLE] power meter connected: %s (%s)\n",
-                ad->getName().c_str(), address);
+  s_power = 0;
+  s_cadence = 0;
+  s_speed = 0;
+  s_hasWheel = false;
+  s_hasCrank = false;
+  s_notificationCount = 0;
+  s_lastError[0] = '\0';
+  Serial.printf("[BLE] connected: %s (%s), profiles:%s%s\n",
+                advertised->getName().c_str(), address,
+                s_hasCyclingPower ? " CPS" : "",
+                s_hasFitnessMachine ? " FTMS" : "");
   return true;
 }

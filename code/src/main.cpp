@@ -12,6 +12,7 @@
 // ============================================================================
 #include <Arduino.h>
 #include <Wire.h>
+#include <cstring>
 
 #include "config.h"
 #include "fs3000.h"
@@ -60,6 +61,92 @@ static int      powerMode = 0;      // 0=自动 1=BLE 2=ANT+
 static bool     antStarted = false;   // ANT 节点已启动（此后 BLE 扫描不可用）
 #endif
 static WindVector wv;            // 最近一次探针读数（供显示）
+
+enum class BleOperationState : uint8_t { Idle, Running, Complete };
+enum class BleOperationKind : uint8_t { Scan, Connect };
+
+struct BleOperationResult {
+  BleOperationKind kind = BleOperationKind::Scan;
+  bool success = false;
+  bool cancelled = false;
+  size_t deviceCount = 0;
+  BlePowerDevice devices[4] = {};
+  char error[192] = {};
+};
+
+static volatile BleOperationState bleOperationState = BleOperationState::Idle;
+static volatile bool bleOperationCancelRequested = false;
+static BleOperationResult bleOperationResult;
+static char bleOperationAddress[18] = {};
+static TaskHandle_t bleOperationTaskHandle = nullptr;
+static portMUX_TYPE bleOperationMux = portMUX_INITIALIZER_UNLOCKED;
+
+static void bleOperationTask(void *argument) {
+  const BleOperationKind kind =
+      (BleOperationKind)(uintptr_t)argument;
+  BleOperationResult result;
+  result.kind = kind;
+
+  if (kind == BleOperationKind::Scan) {
+    result.success = powerMeter.scanDevices(result.devices, 4, result.deviceCount);
+    if (!result.success) {
+      snprintf(result.error, sizeof(result.error), "%s", powerMeter.lastError());
+    }
+  } else {
+    result.success = powerMeter.connectDevice(bleOperationAddress);
+    if (!result.success) {
+      snprintf(result.error, sizeof(result.error), "%s", powerMeter.lastError());
+    }
+  }
+
+  result.cancelled = bleOperationCancelRequested;
+  if (result.cancelled && kind == BleOperationKind::Connect) {
+    powerMeter.disconnect();
+  }
+
+  portENTER_CRITICAL(&bleOperationMux);
+  bleOperationResult = result;
+  bleOperationState = BleOperationState::Complete;
+  portEXIT_CRITICAL(&bleOperationMux);
+  vTaskDelete(nullptr);
+}
+
+static bool startBleOperation(BleOperationKind kind, const char *address = nullptr) {
+  if (bleOperationState != BleOperationState::Idle) return false;
+
+  if (kind == BleOperationKind::Connect) {
+    snprintf(bleOperationAddress, sizeof(bleOperationAddress), "%s",
+             address ? address : "");
+  }
+  bleOperationCancelRequested = false;
+  portENTER_CRITICAL(&bleOperationMux);
+  bleOperationResult = BleOperationResult();
+  bleOperationState = BleOperationState::Running;
+  portEXIT_CRITICAL(&bleOperationMux);
+
+  if (xTaskCreate(bleOperationTask, "bleOperation", 8192,
+                  (void *)(uintptr_t)kind, 1, &bleOperationTaskHandle) != pdPASS) {
+    portENTER_CRITICAL(&bleOperationMux);
+    bleOperationState = BleOperationState::Idle;
+    portEXIT_CRITICAL(&bleOperationMux);
+    bleOperationTaskHandle = nullptr;
+    return false;
+  }
+  return true;
+}
+
+static bool takeBleOperationResult(BleOperationResult &result) {
+  portENTER_CRITICAL(&bleOperationMux);
+  if (bleOperationState != BleOperationState::Complete) {
+    portEXIT_CRITICAL(&bleOperationMux);
+    return false;
+  }
+  result = bleOperationResult;
+  bleOperationState = BleOperationState::Idle;
+  portEXIT_CRITICAL(&bleOperationMux);
+  bleOperationTaskHandle = nullptr;
+  return true;
+}
 
 // 当前功率数据源：0=无 1=BLE 2=ANT+（写进 CSV 供后处理区分）
 static int pmSrc() {
@@ -152,7 +239,7 @@ void loop() {
     int   src     = pmSrc();
 
     logger.log(now, power, pmCadence(), vg, vAir, yaw, post, rho, src);
-    lcd.update(wv, power, pmCadence(), vg, post, rho, src, logger.ok(), env.temperatureC());
+    lcd.update(wv, pmPower(), pmCadence(), vg, post, rho, src, logger.ok());
 
     // 串口同输出一行，便于现场监控
     Serial.printf("%lu P=%5.0fW(%s) cad=%4.0f vg=%4.2f vAir=%4.2f yaw=%+5.1f pos=%+5.1f rho=%.3f\n",
@@ -179,8 +266,14 @@ void loop() {
   }
 
   if (lcd.takeBleCancelRequest()) {
-    manualBlePairing = false;
-    Serial.println("[BLE] device selection cancelled");
+    if (bleOperationState != BleOperationState::Idle) {
+      bleOperationCancelRequested = true;
+      powerMeter.cancelCurrentOperation();
+      Serial.println("[BLE] cancellation requested; waiting for the current GATT operation");
+    } else {
+      manualBlePairing = false;
+      Serial.println("[BLE] device selection cancelled");
+    }
   }
 
   if (lcd.takeBleScanRequest()) {
@@ -192,30 +285,46 @@ void loop() {
       antStarted = false;
     }
 #endif
-    BlePowerDevice devices[4] = {};
-    size_t deviceCount = 0;
     Serial.println("[BLE] scanning for connectable devices (6 seconds)...");
-    bool scanOk = powerMeter.scanDevices(devices, 4, deviceCount);
-    if (scanOk) {
-      char status[48];
-      snprintf(status, sizeof(status), "%u device(s) found",
-               (unsigned)deviceCount);
-      lcd.setBleDevices(devices, deviceCount, status);
-    } else {
-      lcd.setBleDevices(nullptr, 0, "BLE scan failed; try again");
-      Serial.println("[BLE] scan could not be started");
+    if (!startBleOperation(BleOperationKind::Scan)) {
+      lcd.showBleConnectFailure("Could not start the BLE scan task. Close this message and try again.");
     }
   }
 
   char selectedAddress[18] = {};
   if (lcd.takeBleConnectRequest(selectedAddress, sizeof(selectedAddress))) {
     Serial.printf("[BLE] user confirmed connection to %s\n", selectedAddress);
-    powerConnected = powerMeter.connectDevice(selectedAddress);
-    if (powerConnected) {
+    if (!startBleOperation(BleOperationKind::Connect, selectedAddress)) {
+      lcd.showBleConnectFailure("Could not start the BLE connection task. Close this message and try again.");
+    }
+  }
+
+  BleOperationResult operationResult;
+  if (takeBleOperationResult(operationResult)) {
+    if (operationResult.cancelled || bleOperationCancelRequested) {
+      if (operationResult.kind == BleOperationKind::Connect) {
+        powerMeter.disconnect();
+      }
+      bleOperationCancelRequested = false;
       manualBlePairing = false;
-      lcd.closePowerMeterPanels();
+      lcd.finishBleCancelled();
+      Serial.println("[BLE] operation cancelled");
+    } else if (operationResult.success) {
+      if (operationResult.kind == BleOperationKind::Scan) {
+        char status[48];
+        snprintf(status, sizeof(status), "%u device(s) found",
+                 (unsigned)operationResult.deviceCount);
+        lcd.setBleDevices(operationResult.devices, operationResult.deviceCount, status);
+      } else {
+        powerConnected = powerMeter.connected();
+        manualBlePairing = false;
+        lcd.closePowerMeterPanels();
+      }
     } else {
-      lcd.setBleScanStatus("Connection failed; select or scan again");
+      powerConnected = powerMeter.connected();
+      lcd.showBleConnectFailure(operationResult.error[0]
+                                    ? operationResult.error
+                                    : "BLE operation failed without a reported reason.");
     }
   }
 

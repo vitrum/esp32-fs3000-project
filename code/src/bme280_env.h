@@ -13,13 +13,12 @@ public:
   bool begin(TwoWire &w, uint8_t addr = BME280_ADDR);
   bool present() const { return _ok; }
   float rhoKgM3();                  // 每 10s 刷新一次
-  float temperatureC();
 
 private:
   Adafruit_BME280 _bme;
   bool   _ok = false;
   float  _rho = 1.225f;
-  float  _temp = 20.0f;
+  float  _temp = 0.0f;
   uint32_t _lastMs = 0;
 
   void update();

@@ -61,7 +61,6 @@
     .wind-card { top: 123px; height: 56px; }
     .wind-row { position: absolute; inset: 0; }
     .wind { position: absolute; left: 8px; bottom: 2px; font-size: 20px; line-height: 24px; font-weight: 400; white-space: nowrap; }
-    .temp { position: absolute; right: 8px; top: 50%; transform: translateY(calc(-50% + 4px)); color: #7fd2ff; font-size: 16px; line-height: 20px; white-space: nowrap; }
     .caption { display: none; }
     .power-card { top: 185px; height: 76px; }
     .power { position: absolute; left: 13px; top: 34px; width: 190px; overflow: hidden; transform: translateY(-50%); color: #82ebff; font-size: 20px; line-height: 24px; text-align: center; white-space: nowrap; }
@@ -74,9 +73,16 @@
     .time { position: absolute; right: 12px; top: 268px; color: #c8dce6; font-size: 14px; line-height: 17px; text-align: right; }
     .touch-dialog { position: absolute; z-index: 5; inset: 0; display: none; flex-direction: column; padding: 18px 14px; background: #09111bf2; backdrop-filter: blur(8px); }
     .touch-dialog.open { display: flex; }
+    .loading-dialog { position: absolute; z-index: 6; inset: 0; display: none; padding: 12px; background: #080f19; }
+    .loading-dialog.open { display: block; }
+    .loading-back { width: 64px; height: 30px; min-height: 0; border-radius: 0; padding: 0; font-size: 11px; }
+    .loading-title { position: absolute; left: 86px; top: 19px; color: #5dd6c5; font-size: 14px; font-weight: 750; }
+    .loading-spinner { position: absolute; top: 84px; left: 96px; width: 42px; height: 42px; border: 4px solid #294052; border-top-color: #5dd6c5; border-radius: 50%; animation: spin .8s linear infinite; }
+    .loading-message { position: absolute; left: 12px; top: 142px; width: 216px; color: #dce7ef; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .dialog-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; font-size: 15px; font-weight: 750; }
     .dialog-close { border: 0; padding: 4px 9px; color: #a9c0ce; background: #1a2b3a; }
-    .device-option { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-height: 51px; width: 100%; margin-bottom: 8px; border-radius: 10px; border-color: #294052; text-align: left; }
+    .device-option { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-height: 45px; width: 100%; margin-bottom: 6px; border-radius: 10px; border-color: #294052; text-align: left; }
     .device-option strong { font-size: 12px; }
     .device-option span { color: #9aafc2; font-size: 10px; }
     .dialog-note { margin-top: auto; color: #8fa6b9; font-size: 10px; line-height: 1.5; }
@@ -152,11 +158,11 @@
         </div>
         <div class="divider divider-cda"></div>
         <div class="card wind-card">
-          <div class="wind-row"><span class="wind" id="wind-reading">34.2 km/h</span><span class="temp" id="temp-reading">20.0 °C</span></div>
+          <div class="wind-row"><span class="wind" id="wind-reading">34.2 km/h</span></div>
         </div>
         <div class="divider divider-wind"></div>
         <div class="card power-card">
-          <div class="avg3">3 SEC AVG</div>
+          <div class="avg3">LIVE POWER</div>
           <div class="power" id="power-reading">0 W</div>
         </div>
         <div class="divider divider-power"></div>
@@ -166,22 +172,27 @@
         </div>
         <div class="touch-dialog" id="touch-dialog" aria-hidden="true">
           <div class="dialog-heading"><span>选择功率计</span><button type="button" class="dialog-close" id="dialog-close" aria-label="关闭">×</button></div>
+          <button type="button" class="device-option" id="scan-again"><strong>扫描 BLE 设备</strong><span>扫描功率计与智能骑行台</span></button>
           <button type="button" class="device-option" data-source="BLE"><strong>BLE · Assioma Duo</strong><span>Cycling Power · 已发现</span></button>
-          <button type="button" class="device-option" data-source="BLE"><strong>BLE · 4iiii Precision</strong><span>Cycling Power · 已发现</span></button>
+          <button type="button" class="device-option" data-source="BLE"><strong>BLE · Smart Trainer</strong><span>FTMS Indoor Bike Data · 已发现</span></button>
           <button type="button" class="device-option" data-source="ANT+"><strong>ANT+ · Bike Power</strong><span>搜索 ANT+ 功率计</span></button>
-          <p class="dialog-note">点选设备连接。当前固件演示页模拟设备选择；实际扫描列表需要设备发现后显示。</p>
+          <p class="dialog-note">点选设备后会显示 LOADING；覆盖层阻止误触，并可返回重选。</p>
+        </div>
+        <div class="loading-dialog" id="ble-loading" aria-hidden="true">
+          <button type="button" class="loading-back" id="loading-back">返回</button>
+          <div class="loading-title">LOADING</div>
+          <div class="loading-spinner" id="loading-spinner"></div>
+          <div class="loading-message" id="loading-message">正在连接 BLE 设备...</div>
         </div>
       </div>
       </div>
-      <div class="notice">温度来自可选 BME280 环境传感器，不是 FS3000 测得。CDA 为模拟估算：假设静风、平路、匀速，视风速度近似地速；单风速计不能测出真实地速/风向。</div>
+      <div class="notice">FS3000 只测风速，不提供温度；温度仅在另接 BME280 时可用于空气密度计算。CdA 为模拟估算：假设静风、平路、匀速，视风速度近似地速；单风速计不能测出真实地速/风向。</div>
     </section>
     <section class="controls" aria-label="模拟输入与交互">
       <div class="panel">
         <h2>传感器模拟输入</h2>
         <label for="wind-input">风速 <span class="value" id="wind-value">34.2 km/h</span></label>
         <input id="wind-input" type="range" min="0" max="54" step="0.1" value="34.2">
-        <label for="temp-input">环境温度 <span class="value" id="temp-value">20.0 °C</span></label>
-        <input id="temp-input" type="range" min="-10" max="50" step="0.1" value="20">
       </div>
       <div class="panel">
         <h2>功率计连接</h2>
@@ -205,7 +216,7 @@
           <button id="reset" type="button">重置平均值</button>
           <button id="toggle-run" type="button">暂停自动采样</button>
         </div>
-        <p class="help">自动采样每秒记录一个样本。功率区域仅显示最近 3 个样本的平均值。</p>
+        <p class="help">自动采样每秒记录一个样本。屏幕显示实时功率；可从设备选择层体验 LOADING、返回重选及 FTMS 智能骑行台。</p>
       </div>
       <div class="panel wide">
         <h2>ZONE 参考分级（按估算 CdA）</h2>
@@ -229,7 +240,7 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { source: null, power: 230, cadence: 88, wind: 9.5, temp: 20, samples: [], seconds: 0, running: false };
+  const state = { source: null, power: 230, cadence: 88, wind: 9.5, samples: [], seconds: 0, running: false };
   const stateMeter = { name: null };
   const maxSamples = 60;
   const model = { totalMassKg: 85, crr: 0.004, airDensityKgM3: 1.225, drivetrainEfficiency: 0.975 };
@@ -270,10 +281,9 @@
     const cda = estimateCda(displayedPower, state.wind);
     const zone = zoneFor(cda);
     $("wind-reading").textContent = `${(state.wind * 3.6).toFixed(1)} km/h`;
-    $("temp-reading").textContent = `${state.temp.toFixed(1)} °C`;
     const recent3 = state.samples.slice(-3);
     const average = (values) => values.length ? values.reduce((sum, item) => sum + item, 0) / values.length : 0;
-    $("power-reading").textContent = `${Math.round(average(recent3))} W`;
+    $("power-reading").textContent = `${Math.round(displayedPower)} W`;
     $("cadence-reading").textContent = `CADENCE ${Math.round(displayedCadence)} rpm`;
     $("screen-meter-button").textContent = state.source ? `${state.source} · ${stateMeter.name || "功率计"} ▾` : "选择功率计 ▾";
     $("screen-meter-button").style.color = state.source === "ANT+" ? "#7ed3ff" : state.source === "BLE" ? "#8eeba7" : "#83e6d7";
@@ -305,11 +315,6 @@
     $("wind-value").textContent = `${Number(event.target.value).toFixed(1)} km/h`;
     render();
   });
-  $("temp-input").addEventListener("input", (event) => {
-    state.temp = Number(event.target.value);
-    $("temp-value").textContent = `${state.temp.toFixed(1)} °C`;
-    render();
-  });
   $("power-input").addEventListener("input", (event) => {
     state.power = Number(event.target.value);
     $("power-value").textContent = `${Math.round(state.power)} W`;
@@ -328,13 +333,38 @@
     $("touch-dialog").classList.remove("open");
     $("touch-dialog").setAttribute("aria-hidden", "true");
   }
+  let loadingTimer = null;
+  function beginLoading(message, done) {
+    $("loading-message").textContent = message;
+    $("loading-spinner").style.display = "block";
+    $("ble-loading").classList.add("open");
+    $("ble-loading").setAttribute("aria-hidden", "false");
+    loadingTimer = setTimeout(() => {
+      loadingTimer = null;
+      $("ble-loading").classList.remove("open");
+      $("ble-loading").setAttribute("aria-hidden", "true");
+      done();
+    }, 900);
+  }
   function connect(source, name = null) {
     state.source = source;
     stateMeter.name = name;
     $("connect-ble").classList.toggle("selected", source === "BLE");
     $("connect-ant").classList.toggle("selected", source === "ANT+");
+    $("ble-loading").classList.remove("open");
+    $("ble-loading").setAttribute("aria-hidden", "true");
     closeMeterDialog();
     render();
+  }
+  function scanAgain() {
+    closeMeterDialog();
+    beginLoading("正在搜索附近的 BLE 功率计和智能骑行台...", openMeterDialog);
+  }
+  function connectSelected(option) {
+    const source = option.dataset.source;
+    const name = option.querySelector("strong").textContent.split("·")[1].trim();
+    closeMeterDialog();
+    beginLoading(`正在连接 ${name}...`, () => connect(source, name));
   }
   function disconnect() {
     state.source = null;
@@ -354,8 +384,16 @@
   $("screen-meter-button").addEventListener("click", openMeterDialog);
   $("choose-meter").addEventListener("click", openMeterDialog);
   $("dialog-close").addEventListener("click", closeMeterDialog);
-  document.querySelectorAll(".device-option").forEach((option) => {
-    option.addEventListener("click", () => connect(option.dataset.source, option.querySelector("strong").textContent.split("·")[1].trim()));
+  $("scan-again").addEventListener("click", scanAgain);
+  document.querySelectorAll(".device-option[data-source]").forEach((option) => {
+    option.addEventListener("click", () => connectSelected(option));
+  });
+  $("loading-back").addEventListener("click", () => {
+    if (loadingTimer !== null) clearTimeout(loadingTimer);
+    loadingTimer = null;
+    $("ble-loading").classList.remove("open");
+    $("ble-loading").setAttribute("aria-hidden", "true");
+    openMeterDialog();
   });
   $("disconnect").addEventListener("click", disconnect);
   $("step-one").addEventListener("click", () => sample(1));
@@ -375,7 +413,6 @@
     openMeterDialog,
     setInput(values) {
       if ("wind" in values) { state.wind = Number(values.wind) / 3.6; $("wind-input").value = String(values.wind); $("wind-value").textContent = `${Number(values.wind).toFixed(1)} km/h`; }
-      if ("temp" in values) { state.temp = Number(values.temp); $("temp-input").value = String(state.temp); $("temp-value").textContent = `${state.temp.toFixed(1)} °C`; }
       if ("power" in values) { state.power = Number(values.power); $("power-input").value = String(state.power); $("power-value").textContent = `${Math.round(state.power)} W`; }
       if ("cadence" in values) { state.cadence = Number(values.cadence); $("cadence-input").value = String(state.cadence); $("cadence-value").textContent = `${Math.round(state.cadence)} rpm`; }
       render();
@@ -387,7 +424,6 @@
         source: state.source,
         wind: state.wind * 3.6,
         windMps: state.wind,
-        temp: state.temp,
         power: state.source ? state.power : 0,
         cadence: state.source ? state.cadence : 0,
         cda: estimateCda(state.source ? state.power : 0, state.wind),

@@ -9,19 +9,21 @@
 #include "ble_power.h"
 #include "wind_probe.h"
 
-// ST7789 屏（240x320）状态显示：风速 / 温度 / 功率 / 踏频 / 车速 / 姿态 / 状态
+// ST7789 屏（240x320）状态显示：风速 / CdA / 实时功率 / 踏频 / 状态
 class DisplayLcd {
 public:
   void begin();
   void tick();
   void update(const WindVector &w, float powerW, float cadRpm, float vgMps,
-              float postureDeg, float rho, int pmSrc, bool logOk, float tempC);
+              float postureDeg, float rho, int pmSrc, bool logOk);
   bool takePowerSourceRequest(int &mode);
   bool takeBleScanRequest();
   bool takeBleConnectRequest(char *address, size_t capacity);
   bool takeBleCancelRequest();
+  void showBleLoading(const char *status);
+  void finishBleCancelled();
+  void showBleConnectFailure(const char *error);
   void setBleDevices(const BlePowerDevice *devices, size_t count, const char *status);
-  void setBleScanStatus(const char *status);
   void closePowerMeterPanels();
 
 private:
@@ -31,7 +33,6 @@ private:
   lv_obj_t *screen_ = nullptr;
   lv_obj_t *titleLabel_ = nullptr;
   lv_obj_t *windLabel_ = nullptr;
-  lv_obj_t *tempLabel_ = nullptr;
   lv_obj_t *powerLabel_ = nullptr;
   lv_obj_t *avg3Label_ = nullptr;
   lv_obj_t *cadenceLabel_ = nullptr;
@@ -41,6 +42,11 @@ private:
   lv_obj_t *powerSourcePanel_ = nullptr;
   lv_obj_t *bleDevicePanel_ = nullptr;
   lv_obj_t *bleConfirmPanel_ = nullptr;
+  lv_obj_t *bleLoadingPanel_ = nullptr;
+  lv_obj_t *bleLoadingTitle_ = nullptr;
+  lv_obj_t *bleLoadingLabel_ = nullptr;
+  lv_obj_t *bleLoadingSpinner_ = nullptr;
+  lv_obj_t *bleLoadingBackButton_ = nullptr;
   lv_obj_t *bleStatusLabel_ = nullptr;
   lv_obj_t *bleConfirmNameLabel_ = nullptr;
   lv_obj_t *bleConfirmAddressLabel_ = nullptr;
@@ -60,6 +66,7 @@ private:
   bool requestedBleScan_ = false;
   bool requestedBleConnect_ = false;
   bool requestedBleCancel_ = false;
+  bool bleOperationActive_ = false;
   char requestedBleAddress_[18] = {};
   BlePowerDevice bleDevices_[4] = {};
   size_t bleDeviceCount_ = 0;
@@ -75,6 +82,7 @@ private:
   static void onBleConfirm(lv_event_t *event);
   static void onBleBack(lv_event_t *event);
   static void onBleConfirmCancel(lv_event_t *event);
+  static void onBleLoadingBack(lv_event_t *event);
   static void onAntSelected(lv_event_t *event);
   static void onAutoSelected(lv_event_t *event);
   static void onCancelSelection(lv_event_t *event);

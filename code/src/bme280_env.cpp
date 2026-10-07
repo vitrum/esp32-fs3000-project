@@ -24,12 +24,3 @@ float EnvSensor::rhoKgM3() {
   }
   return _rho;
 }
-
-float EnvSensor::temperatureC() {
-  if (!_ok) return _temp;
-  if (millis() - _lastMs >= 10000) {
-    _lastMs = millis();
-    update();
-  }
-  return _temp;
-}

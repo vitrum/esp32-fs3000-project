@@ -7,23 +7,21 @@ struct BlePowerDevice {
   char name[32];
   char address[18];
   int8_t rssi;
+  bool cyclingPower;
+  bool fitnessMachine;
 };
 
-// BLE 功率计客户端（GATT Central，NimBLE）
-// 服务：Cycling Power Service  0x1818
-// 特征：Cycling Power Measurement  0x2A63（notify）
-//
-// 解析协议字段（Bluetooth SIG CPS 规范）：
-//   Flags(2B) + Instantaneous Power(2B, W) [+ 可选字段]
-//   - bit4 置位：Wheel Revolution Data（4B 累计轮转 + 2B 事件时间 @1/1024s）
-//   - bit5 置位：Crank Revolution Data（2B 累计曲柄转数 + 2B 事件时间）
-// 车速/踏频由事件时间差分计算，需要轮周长参数。
+// BLE GATT Central supporting Cycling Power (0x1818) and Fitness Machine
+// Service Indoor Bike Data (0x1826) power trainers.
 class BlePowerMeter {
 public:
   void begin(const char *deviceName, float wheelCircM);
   bool scanDevices(BlePowerDevice *devices, size_t capacity, size_t &count);
   bool connectDevice(const char *address);
+  void cancelCurrentOperation();
+  void disconnect();
   bool connected() const { return s_connected; }
+  const char *lastError() const { return s_lastError; }
   float power()   const { return s_power; }
   float cadence() const { return s_cadence; }   // rpm（需功率计发送曲柄数据）
   float speed()   const { return s_speed; }     // m/s（需功率计发送轮速数据）
@@ -34,7 +32,11 @@ public:
 private:
   friend class BlePowerClientCallbacks;
   static void cpmNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, bool isNotify);
+  static void indoorBikeNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, bool isNotify);
+  static void setError(const char *message);
   static bool   s_connected;
+  static bool   s_hasCyclingPower;
+  static bool   s_hasFitnessMachine;
   static float  s_power;
   static float  s_cadence;
   static float  s_speed;
@@ -43,4 +45,5 @@ private:
   static uint32_t s_disconnectCount;
   static NimBLEClient *s_client;
   static char s_connectedAddress[18];
+  static char s_lastError[192];
 };
