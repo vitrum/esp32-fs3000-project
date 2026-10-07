@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aero Probe UI Simulator</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(ellipse at 20% 0%, #173246 0, #0a1420 48%, #070d15 100%);
+      color: #eaf2f8;
+      font-synthesis: none;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; }
+    main {
+      width: min(980px, 100%);
+      margin: 0 auto;
+      padding: 26px 20px 40px;
+    }
+    h1 { margin: 0 0 8px; font-size: 25px; }
+    .intro { margin: 0 0 22px; color: #9aafc2; line-height: 1.6; }
+    .layout { display: grid; grid-template-columns: 280px 1fr; gap: 24px; align-items: start; }
+    .device {
+      width: 240px;
+      height: 320px;
+      padding: 10px 12px;
+      border: 1px solid #314a60;
+      border-radius: 20px;
+      background: #090f19;
+      box-shadow: 0 20px 55px #0009, inset 0 0 0 5px #101d2a, 0 0 30px #36d4bf12;
+      overflow: hidden;
+      margin: 0 auto;
+      color: white;
+      position: relative;
+    }
+    .top { height: 27px; display: flex; align-items: center; justify-content: space-between; }
+    .brand { color: #5dd6c5; font-weight: 800; letter-spacing: .07em; font-size: 15px; }
+    .badge { color: #9cd6a2; font-size: 10px; }
+    .rule { height: 2px; background: #3d5a78; margin: 0 0 7px; }
+    .card {
+      border: 1px solid #2d4b66;
+      border-radius: 14px;
+      background: #111d29;
+      padding: 10px 12px;
+    }
+    .wind-card { height: 65px; margin-bottom: 7px; padding: 7px 10px; }
+    .wind-row { display: flex; align-items: center; justify-content: space-between; }
+    .wind { font-size: 21px; font-weight: 700; letter-spacing: -.04em; }
+    .temp { color: #7fd2ff; font-size: 13px; white-space: nowrap; }
+    .caption { color: #b4c3d2; font-size: 9px; margin-top: 1px; }
+    .cda-card { height: 59px; margin-bottom: 7px; padding: 5px 10px; border-color: #45644c; background: linear-gradient(130deg, #142a27, #14221f 70%); display: flex; align-items: center; justify-content: space-between; }
+    .cda-details { min-width: 0; }
+    .cda-title { color: #a8c4b1; font-size: 9px; letter-spacing: .08em; }
+    .cda-reading { color: #e9fff0; font-size: 12px; font-weight: 700; margin-top: 2px; white-space: nowrap; }
+    .posture-reading { color: #a8c4b1; font-size: 8px; margin-top: 1px; white-space: nowrap; }
+    .zone-block { display: flex; align-items: center; gap: 4px; color: #aaf5a0; }
+    .zone-caption { font-size: 9px; font-weight: 700; letter-spacing: .04em; }
+    .zone-number { font-size: 30px; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .power-card { height: 88px; background: #111e24; border-color: #3e6c73; padding: 7px 10px; }
+    .power { color: #82ebff; font-size: 21px; font-weight: 700; }
+    .avg3 { color: #ffd166; font-size: 11px; margin-top: 1px; }
+    .avg60 { color: #aaf5a0; font-size: 11px; margin-top: 1px; }
+    .bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 5px; }
+    .cadence { font-size: 12px; font-weight: 600; }
+    .meter-button { display: block; margin-top: 2px; min-height: 19px; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid #2b5c62; border-radius: 6px; padding: 1px 5px; background: #102b32; color: #83e6d7; font-size: 8px; font-weight: 700; cursor: pointer; }
+    .time { color: #c8dce6; font-size: 9px; text-align: right; }
+    .touch-dialog { position: absolute; z-index: 5; inset: 0; display: none; flex-direction: column; padding: 18px 14px; background: #09111bf2; backdrop-filter: blur(8px); }
+    .touch-dialog.open { display: flex; }
+    .dialog-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; font-size: 15px; font-weight: 750; }
+    .dialog-close { border: 0; padding: 4px 9px; color: #a9c0ce; background: #1a2b3a; }
+    .device-option { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-height: 51px; width: 100%; margin-bottom: 8px; border-radius: 10px; border-color: #294052; text-align: left; }
+    .device-option strong { font-size: 12px; }
+    .device-option span { color: #9aafc2; font-size: 10px; }
+    .dialog-note { margin-top: auto; color: #8fa6b9; font-size: 10px; line-height: 1.5; }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .panel {
+      padding: 16px;
+      border: 1px solid #23384c;
+      border-radius: 14px;
+      background: #101b28;
+    }
+    .panel h2 { margin: 0 0 12px; font-size: 15px; }
+    .wide { grid-column: 1 / -1; }
+    .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+    button {
+      min-height: 36px;
+      border: 1px solid #37536b;
+      border-radius: 8px;
+      padding: 7px 11px;
+      background: #17283a;
+      color: #eaf2f8;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:hover { background: #213950; }
+    button.selected { border-color: #5dd6c5; color: #5dd6c5; }
+    button.primary { background: #146d70; border-color: #24898a; }
+    label { display: block; margin: 11px 0 6px; color: #afc1d0; font-size: 12px; }
+    input[type="range"] { width: 100%; accent-color: #5dd6c5; }
+    .value { float: right; color: #eef7fc; font-variant-numeric: tabular-nums; }
+    .help { color: #8fa6b9; font-size: 12px; line-height: 1.55; margin: 10px 0 0; }
+    .notice {
+      border-left: 3px solid #e7b94f;
+      padding: 8px 10px;
+      margin-top: 14px;
+      color: #d4c69f;
+      background: #211e16;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .zone-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .zone-table th, .zone-table td { padding: 7px 8px; border-bottom: 1px solid #23384c; text-align: left; }
+    .zone-table th { color: #96adbf; font-weight: 600; }
+    .zone-table tr:last-child td { border-bottom: 0; }
+    .zone-name { color: #aaf5a0; font-weight: 700; }
+    @media (max-width: 700px) {
+      .layout { grid-template-columns: 1fr; }
+      .controls { grid-template-columns: 1fr; }
+      .wide { grid-column: auto; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Aero Probe UI 模拟器</h1>
+  <p class="intro">在没有 ESP32、FS3000 和功率计的情况下，检查仪表布局、数据刷新、功率源状态以及 3 秒 / 1 分钟平均值。</p>
+  <div class="layout">
+    <section aria-label="240乘320 LCD预览">
+      <div class="device">
+        <div class="top"><span class="brand">AERO PROBE</span><span class="badge" id="log-status">LOG OK</span></div>
+        <div class="rule"></div>
+        <div class="card cda-card">
+          <div class="cda-details">
+            <div class="cda-title">ESTIMATED CdA</div>
+            <div class="cda-reading" id="cda-reading">-- m²</div>
+            <div class="posture-reading" id="posture-reading">等待功率数据</div>
+          </div>
+          <div class="zone-block"><span class="zone-caption">ZONE</span><span class="zone-number" id="zone-reading">--</span></div>
+        </div>
+        <div class="card wind-card">
+          <div class="wind-row"><span class="wind" id="wind-reading">34.2 km/h</span><span class="temp" id="temp-reading">20.0 °C</span></div>
+          <div class="caption">风速</div>
+        </div>
+        <div class="card power-card">
+          <div class="power" id="power-reading">0 W</div>
+          <div class="avg3" id="avg3-reading">3s avg 0 W</div>
+          <div class="avg60" id="avg60-reading">1m avg 0 W</div>
+        </div>
+        <div class="bottom">
+          <div><div class="cadence" id="cadence-reading">Cadence 0 rpm</div><button type="button" class="meter-button" id="screen-meter-button">选择功率计 ▾</button></div>
+          <div class="time" id="clock-reading">00:00:00<br>SIM</div>
+        </div>
+        <div class="touch-dialog" id="touch-dialog" aria-hidden="true">
+          <div class="dialog-heading"><span>选择功率计</span><button type="button" class="dialog-close" id="dialog-close" aria-label="关闭">×</button></div>
+          <button type="button" class="device-option" data-source="BLE"><strong>BLE · Assioma Duo</strong><span>Cycling Power · 已发现</span></button>
+          <button type="button" class="device-option" data-source="BLE"><strong>BLE · 4iiii Precision</strong><span>Cycling Power · 已发现</span></button>
+          <button type="button" class="device-option" data-source="ANT+"><strong>ANT+ · Bike Power</strong><span>搜索 ANT+ 功率计</span></button>
+          <p class="dialog-note">点选设备连接。当前固件演示页模拟设备选择；实际扫描列表需要设备发现后显示。</p>
+        </div>
+      </div>
+      <div class="notice">温度来自可选 BME280 环境传感器，不是 FS3000 测得。CDA 为模拟估算：假设静风、平路、匀速，视风速度近似地速；单风速计不能测出真实地速/风向。</div>
+    </section>
+    <section class="controls" aria-label="模拟输入与交互">
+      <div class="panel">
+        <h2>传感器模拟输入</h2>
+        <label for="wind-input">风速 <span class="value" id="wind-value">34.2 km/h</span></label>
+        <input id="wind-input" type="range" min="0" max="54" step="0.1" value="34.2">
+        <label for="temp-input">环境温度 <span class="value" id="temp-value">20.0 °C</span></label>
+        <input id="temp-input" type="range" min="-10" max="50" step="0.1" value="20">
+      </div>
+      <div class="panel">
+        <h2>功率计连接</h2>
+        <div class="buttons">
+          <button id="choose-meter" type="button">触控选择功率计</button>
+          <button id="connect-ble" type="button">连接 BLE</button>
+          <button id="connect-ant" type="button">连接 ANT+</button>
+          <button id="disconnect" type="button">断开</button>
+        </div>
+        <label for="power-input">实时功率 <span class="value" id="power-value">230 W</span></label>
+        <input id="power-input" type="range" min="0" max="1500" step="1" value="230">
+        <label for="cadence-input">踏频 <span class="value" id="cadence-value">88 rpm</span></label>
+        <input id="cadence-input" type="range" min="0" max="180" step="1" value="88">
+        <p class="help">选择连接方式后，模拟显示对应来源及功率、踏频。</p>
+      </div>
+      <div class="panel wide">
+        <h2>采样控制</h2>
+        <div class="buttons">
+          <button class="primary" id="step-one" type="button">采样推进 1 秒</button>
+          <button id="step-sixty" type="button">快速推进 60 秒</button>
+          <button id="reset" type="button">重置平均值</button>
+          <button id="toggle-run" type="button">暂停自动采样</button>
+        </div>
+        <p class="help">自动采样每秒记录一个样本。推进按钮便于快速检查滑动平均，不需要等待真实的一分钟。</p>
+      </div>
+      <div class="panel wide">
+        <h2>ZONE 参考分级（按估算 CdA）</h2>
+        <table class="zone-table">
+          <thead><tr><th>ZONE</th><th>CdA (m²)</th><th>姿态参考</th></tr></thead>
+          <tbody>
+            <tr><td class="zone-name">1</td><td>≥ 0.50</td><td>直立坐姿</td></tr>
+            <tr><td class="zone-name">2</td><td>0.42–&lt; 0.50</td><td>较低 / 弯把姿态</td></tr>
+            <tr><td class="zone-name">3</td><td>0.36–&lt; 0.42</td><td>低趴姿态</td></tr>
+            <tr><td class="zone-name">4</td><td>0.31–&lt; 0.36</td><td>激进下把姿态</td></tr>
+            <tr><td class="zone-name">5</td><td>0.27–&lt; 0.31</td><td>更激进气动姿态</td></tr>
+            <tr><td class="zone-name">6</td><td>0.23–&lt; 0.27</td><td>竞赛级 TT 姿态</td></tr>
+            <tr><td class="zone-name">7</td><td>&lt; 0.23</td><td>顶级 TT 计时赛车手</td></tr>
+          </tbody>
+        </table>
+        <p class="help">模拟参数：骑手+车辆 85 kg、Crr 0.004、空气密度 1.225 kg/m³、传动效率 97.5%。ZONE 是便于比较的启发式区间，并非通用标准。</p>
+      </div>
+    </section>
+  </div>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const state = { source: null, power: 230, cadence: 88, wind: 9.5, temp: 20, samples: [], seconds: 0, running: false };
+  const stateMeter = { name: null };
+  const maxSamples = 60;
+  const model = { totalMassKg: 85, crr: 0.004, airDensityKgM3: 1.225, drivetrainEfficiency: 0.975 };
+  const zones = [
+    { zone: 7, upper: 0.23, posture: "顶级 TT 计时赛车手" },
+    { zone: 6, upper: 0.27, posture: "竞赛级 TT 姿态" },
+    { zone: 5, upper: 0.31, posture: "更激进气动姿态" },
+    { zone: 4, upper: 0.36, posture: "激进下把姿态" },
+    { zone: 3, upper: 0.42, posture: "低趴姿态" },
+    { zone: 2, upper: 0.50, posture: "较低 / 弯把姿态" },
+    { zone: 1, upper: Infinity, posture: "直立坐姿" }
+  ];
+
+  function estimateCda(powerW, windMps) {
+    if (!state.source || powerW <= 0 || windMps < 3) return null;
+    const groundSpeedMps = windMps;
+    const wheelPowerW = powerW * model.drivetrainEfficiency;
+    const rollingPowerW = model.totalMassKg * 9.80665 * model.crr * groundSpeedMps;
+    const aeroPowerW = wheelPowerW - rollingPowerW;
+    if (aeroPowerW <= 0) return null;
+    return aeroPowerW / (0.5 * model.airDensityKgM3 * groundSpeedMps ** 3);
+  }
+
+  function zoneFor(cda) {
+    return cda == null ? null : zones.find((zone) => cda < zone.upper) || zones[zones.length - 1];
+  }
+
+  function formatTime(seconds) {
+    const hours = Math.floor(seconds / 3600) % 24;
+    const minutes = Math.floor(seconds / 60) % 60;
+    const secs = seconds % 60;
+    return [hours, minutes, secs].map((v) => String(v).padStart(2, "0")).join(":");
+  }
+
+  function render() {
+    const displayedPower = state.source ? state.power : 0;
+    const displayedCadence = state.source ? state.cadence : 0;
+    const cda = estimateCda(displayedPower, state.wind);
+    const zone = zoneFor(cda);
+    $("wind-reading").textContent = `${(state.wind * 3.6).toFixed(1)} km/h`;
+    $("temp-reading").textContent = `${state.temp.toFixed(1)} °C`;
+    $("power-reading").textContent = `${Math.round(displayedPower)} W`;
+    $("cadence-reading").textContent = `Cadence ${Math.round(displayedCadence)} rpm`;
+    $("screen-meter-button").textContent = state.source ? `${state.source} · ${stateMeter.name || "功率计"} ▾` : "选择功率计 ▾";
+    $("screen-meter-button").style.color = state.source === "ANT+" ? "#7ed3ff" : state.source === "BLE" ? "#8eeba7" : "#83e6d7";
+    const recent3 = state.samples.slice(-3);
+    const recent60 = state.samples.slice(-maxSamples);
+    const average = (values) => values.length ? values.reduce((sum, item) => sum + item, 0) / values.length : 0;
+    $("avg3-reading").textContent = `3s avg ${Math.round(average(recent3))} W`;
+    $("avg60-reading").textContent = `1m avg ${Math.round(average(recent60))} W`;
+    $("zone-reading").textContent = zone ? String(zone.zone) : "--";
+    $("zone-reading").style.color = zone ? "#aaf5a0" : "#9aafc2";
+    $("cda-reading").textContent = cda == null ? "-- m²" : `${cda.toFixed(2)} m²`;
+    $("posture-reading").textContent = zone ? zone.posture : "等待有效数据";
+    $("clock-reading").innerHTML = `${formatTime(state.seconds)}<br>SIM`;
+    $("log-status").textContent = state.running ? "LOG OK" : "PAUSED";
+    $("log-status").style.color = state.running ? "#9cd6a2" : "#ffd166";
+  }
+
+  function sample(seconds = 1) {
+    for (let i = 0; i < seconds; i++) {
+      state.samples.push(state.source ? state.power : 0);
+      if (state.samples.length > maxSamples) state.samples.shift();
+      state.seconds++;
+    }
+    render();
+  }
+
+  $("wind-input").addEventListener("input", (event) => {
+    state.wind = Number(event.target.value) / 3.6;
+    $("wind-value").textContent = `${Number(event.target.value).toFixed(1)} km/h`;
+    render();
+  });
+  $("temp-input").addEventListener("input", (event) => {
+    state.temp = Number(event.target.value);
+    $("temp-value").textContent = `${state.temp.toFixed(1)} °C`;
+    render();
+  });
+  $("power-input").addEventListener("input", (event) => {
+    state.power = Number(event.target.value);
+    $("power-value").textContent = `${Math.round(state.power)} W`;
+    render();
+  });
+  $("cadence-input").addEventListener("input", (event) => {
+    state.cadence = Number(event.target.value);
+    $("cadence-value").textContent = `${Math.round(state.cadence)} rpm`;
+    render();
+  });
+  function openMeterDialog() {
+    $("touch-dialog").classList.add("open");
+    $("touch-dialog").setAttribute("aria-hidden", "false");
+  }
+  function closeMeterDialog() {
+    $("touch-dialog").classList.remove("open");
+    $("touch-dialog").setAttribute("aria-hidden", "true");
+  }
+  function connect(source, name = null) {
+    state.source = source;
+    stateMeter.name = name;
+    $("connect-ble").classList.toggle("selected", source === "BLE");
+    $("connect-ant").classList.toggle("selected", source === "ANT+");
+    closeMeterDialog();
+    render();
+  }
+  function disconnect() {
+    state.source = null;
+    stateMeter.name = null;
+    state.power = 0;
+    state.cadence = 0;
+    $("power-input").value = "0";
+    $("cadence-input").value = "0";
+    $("power-value").textContent = "0 W";
+    $("cadence-value").textContent = "0 rpm";
+    $("connect-ble").classList.remove("selected");
+    $("connect-ant").classList.remove("selected");
+    render();
+  }
+  $("connect-ble").addEventListener("click", () => connect("BLE"));
+  $("connect-ant").addEventListener("click", () => connect("ANT+"));
+  $("screen-meter-button").addEventListener("click", openMeterDialog);
+  $("choose-meter").addEventListener("click", openMeterDialog);
+  $("dialog-close").addEventListener("click", closeMeterDialog);
+  document.querySelectorAll(".device-option").forEach((option) => {
+    option.addEventListener("click", () => connect(option.dataset.source, option.querySelector("strong").textContent.split("·")[1].trim()));
+  });
+  $("disconnect").addEventListener("click", disconnect);
+  $("step-one").addEventListener("click", () => sample(1));
+  $("step-sixty").addEventListener("click", () => sample(60));
+  $("reset").addEventListener("click", () => { state.samples = []; state.seconds = 0; render(); });
+  $("toggle-run").textContent = "开始自动采样";
+  $("toggle-run").addEventListener("click", (event) => {
+    state.running = !state.running;
+    event.target.textContent = state.running ? "暂停自动采样" : "开始自动采样";
+    render();
+  });
+
+  setInterval(() => { if (state.running) sample(1); }, 1000);
+  window.aeroProbeSim = {
+    connect,
+    disconnect,
+    openMeterDialog,
+    setInput(values) {
+      if ("wind" in values) { state.wind = Number(values.wind) / 3.6; $("wind-input").value = String(values.wind); $("wind-value").textContent = `${Number(values.wind).toFixed(1)} km/h`; }
+      if ("temp" in values) { state.temp = Number(values.temp); $("temp-input").value = String(state.temp); $("temp-value").textContent = `${state.temp.toFixed(1)} °C`; }
+      if ("power" in values) { state.power = Number(values.power); $("power-input").value = String(state.power); $("power-value").textContent = `${Math.round(state.power)} W`; }
+      if ("cadence" in values) { state.cadence = Number(values.cadence); $("cadence-input").value = String(state.cadence); $("cadence-value").textContent = `${Math.round(state.cadence)} rpm`; }
+      render();
+    },
+    step: sample,
+    reset() { state.samples = []; state.seconds = 0; render(); },
+    snapshot() {
+      return {
+        source: state.source,
+        wind: state.wind * 3.6,
+        windMps: state.wind,
+        temp: state.temp,
+        power: state.source ? state.power : 0,
+        cadence: state.source ? state.cadence : 0,
+        cda: estimateCda(state.source ? state.power : 0, state.wind),
+        zone: zoneFor(estimateCda(state.source ? state.power : 0, state.wind))?.zone ?? null,
+        average3: state.samples.slice(-3).reduce((sum, value, _, values) => sum + value / values.length, 0),
+        average60: state.samples.slice(-maxSamples).reduce((sum, value, _, values) => sum + value / values.length, 0),
+        sampleCount: state.samples.length,
+        seconds: state.seconds
+      };
+    }
+  };
+  render();
+})();
+</script>
+</body>
+</html>

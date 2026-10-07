@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <NimBLEDevice.h>
 
 // BLE 功率计客户端（GATT Central，NimBLE）
 // 服务：Cycling Power Service  0x1818
@@ -22,6 +23,7 @@ public:
   void setWheelCircumference(float m) { s_wheelCirc = m; }
 
 private:
+  static void cpmNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, bool isNotify);
   static bool   s_connected;
   static float  s_power;
   static float  s_cadence;

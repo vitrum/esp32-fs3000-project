@@ -62,3 +62,13 @@ void AntPower::begin() {
   Serial.printf("[ANT] power channel open: rc=%u\n", rc);
   s_started = true;
 }
+
+void AntPower::stop() {
+  if (!s_started) return;
+  ant_node_stop(&s_node);
+  NimBLEDevice::getScan()->stop();
+  s_started = false;
+  s_tracking = false;
+  s_power = 0.0f;
+  s_cadence = 0.0f;
+}

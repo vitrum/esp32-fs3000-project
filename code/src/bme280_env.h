@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_BME280.h>
+#include "config.h"
 
 // 可选环境传感器：BME280 温度/气压 → 空气密度
 // ρ = P_atm / (287.05 · T_K)，单位 kg/m³

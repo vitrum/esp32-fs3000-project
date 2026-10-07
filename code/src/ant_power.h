@@ -19,6 +19,7 @@
 class AntPower {
 public:
   void begin();                    // 启动 ANT（被动扫描 + coexist + 功率通道）
+  void stop();                     // 停止 ANT 并释放射频供 BLE 扫描使用
   bool started()  const { return s_started; }
   bool tracking() const { return s_tracking; }   // 最近是否收到功率页
   float power()   const { return s_power; }      // W

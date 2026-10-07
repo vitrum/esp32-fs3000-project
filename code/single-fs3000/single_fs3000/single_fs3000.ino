@@ -117,11 +117,11 @@ void loop() {
   gfx->setTextColor(WHITE, BLACK);
   gfx->setTextSize(4);
   gfx->setCursor(16, 128);
-  snprintf(buf, sizeof(buf), "%5.2f", mps);
+  snprintf(buf, sizeof(buf), "%5.1f", mps * 3.6f);
   gfx->println(buf);
   gfx->setTextSize(1);
   gfx->setCursor(150, 148);
-  gfx->println("m/s");
+  gfx->println("km/h");
 
   // 明细行
   gfx->fillRect(0, 200, 240, 60, BLACK);

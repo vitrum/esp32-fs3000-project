@@ -2,16 +2,64 @@
 
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
+
+#include "lv_conf.h"
+#include <lvgl.h>
+
 #include "wind_probe.h"
 
-// ST7789 屏（240x320）状态显示：偏航角 / 视风速度 / 功率 / 踏频 / 车速 / 姿态 / 状态
+// ST7789 屏（240x320）状态显示：风速 / 温度 / 功率 / 踏频 / 车速 / 姿态 / 状态
 class DisplayLcd {
 public:
   void begin();
+  void tick();
   void update(const WindVector &w, float powerW, float cadRpm, float vgMps,
-              float postureDeg, float rho, int pmSrc, bool logOk);
+              float postureDeg, float rho, int pmSrc, bool logOk, float tempC);
+  bool takePowerSourceRequest(int &mode);
 
 private:
   Arduino_DataBus *_bus = nullptr;
   Arduino_GFX     *_gfx = nullptr;
+
+  lv_obj_t *screen_ = nullptr;
+  lv_obj_t *titleLabel_ = nullptr;
+  lv_obj_t *windLabel_ = nullptr;
+  lv_obj_t *tempLabel_ = nullptr;
+  lv_obj_t *realPowerLabel_ = nullptr;
+  lv_obj_t *avg3Label_ = nullptr;
+  lv_obj_t *avg60Label_ = nullptr;
+  lv_obj_t *cadenceLabel_ = nullptr;
+  lv_obj_t *timeLabel_ = nullptr;
+  lv_obj_t *statusLabel_ = nullptr;
+  lv_obj_t *powerSourceButton_ = nullptr;
+  lv_obj_t *powerSourcePanel_ = nullptr;
+  lv_obj_t *cdaLabel_ = nullptr;
+  lv_obj_t *zoneLabel_ = nullptr;
+  lv_obj_t *postureLabel_ = nullptr;
+  lv_obj_t *windLabelTitle_ = nullptr;
+
+  int powerHistorySize_ = 60;
+  float powerHistory_[60] = {0};
+  int powerHistoryIndex_ = 0;
+
+  float power3sAvg_ = 0.0f;
+  float power60sAvg_ = 0.0f;
+  int requestedPowerMode_ = -1;
+  int selectedPowerMode_ = 0;
+  bool touchReady_ = false;
+
+  static void lvglFlushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);
+  static void lvglTouchReadCb(lv_indev_drv_t *drv, lv_indev_data_t *data);
+  static void onPowerSourceButton(lv_event_t *event);
+  static void onBleSelected(lv_event_t *event);
+  static void onAntSelected(lv_event_t *event);
+  static void onAutoSelected(lv_event_t *event);
+  static void onCancelSelection(lv_event_t *event);
+  static uint16_t rgb565FromLvColor(lv_color_t c);
+  bool readTouch(uint16_t &x, uint16_t &y);
+  bool initTouch();
+  bool touchCommand(uint16_t reg);
+  bool touchReadRegister(uint16_t reg, uint8_t *data, size_t len);
+  bool touchWriteRegister(uint16_t reg, uint8_t value);
+  void buildPowerSourcePanel();
 };

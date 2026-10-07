@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <NimBLEDevice.h>
 
 // BLE 客户端：维特智能（WitMotion）WT9011DCL-BT50 蓝牙姿态传感器
 //
@@ -22,6 +23,7 @@ public:
   float pitchDeg() const { return s_pitch; }   // 俯仰角（度）
 
 private:
+  static void witNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, bool isNotify);
   static bool   s_connected;
   static float  s_pitch;
 };

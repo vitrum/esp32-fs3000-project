@@ -22,8 +22,8 @@ static uint16_t  s_lastCrankTime = 0;
 // ---------------------------------------------------------------------------
 // 0x2A63 notify 回调：按 CPS 规范解析 Flags 之后按位序取字段
 // ---------------------------------------------------------------------------
-static void cpmNotify(NimBLERemoteCharacteristic *chr, uint8_t *d, size_t n,
-                      bool isNotify) {
+void BlePowerMeter::cpmNotify(NimBLERemoteCharacteristic *chr, uint8_t *d, size_t n,
+                             bool isNotify) {
   (void)chr; (void)isNotify;
   if (n < 4) return;
 
@@ -81,10 +81,10 @@ bool BlePowerMeter::tryConnect() {
   if (s_connected) return true;
 
   NimBLEDevice::getScan()->clearResults();
-  NimBLEScanResults results = NimBLEDevice::getScan()->start(4, false);
+  NimBLEScanResults results = NimBLEDevice::getScan()->getResults(4, false);
 
   for (int i = 0; i < results.getCount(); i++) {
-    NimBLEAdvertisedDevice *ad = results.getDevice(i);
+    const NimBLEAdvertisedDevice *ad = results.getDevice(i);
     if (!ad->isAdvertisingService(kSvcCP)) continue;   // 只找功率计
 
     NimBLEClient *cli = NimBLEDevice::createClient();

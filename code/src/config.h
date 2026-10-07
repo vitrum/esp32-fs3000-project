@@ -13,13 +13,18 @@
 #define PIN_LCD_RST   39
 #define PIN_LCD_BL    5
 
-// ---- 外接 I2C #1（板载排针，与 QMI8658/PCF85063 共用总线）----
-// 传感器 #1（V 形左臂）与 BME280（可选）挂此总线
+// ---- 板载触摸屏 (V1: CST328, I2C) ----
+#define PIN_TOUCH_SDA  1
+#define PIN_TOUCH_SCL  3
+#define PIN_TOUCH_INT  4
+#define PIN_TOUCH_RST  2
+
+// ---- 外接 I2C #1 ----
+// 原型阶段单 FS3000 与 BME280（可选）共用此总线
 #define PIN_I2C1_SDA  11
 #define PIN_I2C1_SCL  10
 
-// ---- 外接 I2C #2（12 针排针空闲引脚 IO15/IO18）----
-// 传感器 #2（V 形右臂）挂此总线（两片 FS3000 地址都是 0x28，必须分总线）
+// ---- 外接 I2C #2（预留二期扩展，12 针排针 IO15/IO18）----
 #define PIN_I2C2_SDA  15
 #define PIN_I2C2_SCL  18
 
@@ -48,6 +53,12 @@
 #define BLE_DEVICE_NAME      "AeroProbe"
 #define BLE_WHEEL_CIRC_M     2.105f   // 轮周长(m)，700x25C 约 2.105，按实际外胎设置
 #define BLE_RECONNECT_MS     5000     // 未连接时的重试间隔
+
+// ---- 单传感器 CdA 粗略估算（平路、匀速、静风假设；仅用于趋势参考）----
+#define CDA_TOTAL_MASS_KG          85.0f
+#define CDA_ROLLING_RESISTANCE     0.004f
+#define CDA_DRIVETRAIN_EFFICIENCY  0.975f
+#define CDA_MIN_AIRSPEED_MPS       3.0f
 
 // ============================================================================
 // BLE 姿态传感器（WitMotion WT9011DCL-BT50，服务 0xFFE0 / 数据 0xFFE1）

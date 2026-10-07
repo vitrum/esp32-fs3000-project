@@ -14,8 +14,8 @@ float  BlePosture::s_pitch = 0;
 //   [0]=0x55 [1]=0x53 [2..3]=Roll [4..5]=Pitch [6..7]=Yaw [8..9]=温度
 //   [10]=校验和（前 10 字节和低 8 位）；int16 小端，单位 0.01°
 // ---------------------------------------------------------------------------
-static void witNotify(NimBLERemoteCharacteristic *chr, uint8_t *d, size_t n,
-                      bool isNotify) {
+void BlePosture::witNotify(NimBLERemoteCharacteristic *chr, uint8_t *d, size_t n,
+                           bool isNotify) {
   (void)chr; (void)isNotify;
   if (n < 11) return;
 
@@ -42,10 +42,10 @@ bool BlePosture::tryConnect() {
   if (s_connected) return true;
 
   NimBLEDevice::getScan()->clearResults();
-  NimBLEScanResults results = NimBLEDevice::getScan()->start(4, false);
+  NimBLEScanResults results = NimBLEDevice::getScan()->getResults(4, false);
 
   for (int i = 0; i < results.getCount(); i++) {
-    NimBLEAdvertisedDevice *ad = results.getDevice(i);
+    const NimBLEAdvertisedDevice *ad = results.getDevice(i);
 
     // 过滤：广播服务 0xFFE0 或设备名以 BLE_POSTURE_NAME_PREFIX 开头
     std::string name = ad->getName();
