@@ -122,6 +122,10 @@ void DisplayLcd::lvglTouchReadCb(lv_indev_drv_t *, lv_indev_data_t *data) {
 
 void DisplayLcd::onPowerSourceButton(lv_event_t *) {
   if (g_display && g_display->powerSourcePanel_) {
+    lv_obj_add_flag(g_display->virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_display->bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
   }
 }
@@ -157,7 +161,9 @@ void DisplayLcd::onBleDeviceSelected(lv_event_t *event) {
                               ? (g_display->bleDevices_[index].fitnessMachine
                                      ? "Cycling Power + FTMS trainer"
                                      : "Cycling Power")
-                              : "FTMS smart trainer";
+                              : (g_display->bleDevices_[index].fitnessMachine
+                                     ? "FTMS smart trainer"
+                                     : "CSC cadence/speed only");
     char details[64];
     snprintf(details, sizeof(details), "%s\n%s",
              g_display->bleDevices_[index].address, profile);
@@ -178,17 +184,15 @@ void DisplayLcd::onBleConfirm(lv_event_t *) {
 void DisplayLcd::onBleBack(lv_event_t *) {
   if (!g_display) return;
   g_display->requestedBleCancel_ = true;
-  g_display->requestedPowerMode_ = 0;
-  g_display->selectedPowerMode_ = 0;
   lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
-void DisplayLcd::onBleConfirmCancel(lv_event_t *) {
-  if (g_display && g_display->bleConfirmPanel_) {
-    lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
-  }
+void DisplayLcd::onBleConfirmBack(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::onBleLoadingBack(lv_event_t *) {
@@ -211,15 +215,48 @@ void DisplayLcd::onAntSelected(lv_event_t *) {
   if (!g_display) return;
   g_display->requestedPowerMode_ = 2;
   g_display->selectedPowerMode_ = 2;
-  lv_label_set_text(lv_obj_get_child(g_display->powerSourceButton_, 0), "METER: ANT+");
+  lv_label_set_text(g_display->powerSourceLabel_, "METER: ANT+");
   lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onVirtualSelected(lv_event_t *) {
+  if (!g_display) return;
+  g_display->requestedPowerMode_ = 3;
+  g_display->selectedPowerMode_ = 3;
+  lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onVirtualBack(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onVirtualSliderChanged(lv_event_t *event) {
+  if (!g_display) return;
+  lv_obj_t *slider = lv_event_get_target(event);
+  const int value = lv_slider_get_value(slider);
+  char text[24];
+  if ((uintptr_t)lv_event_get_user_data(event) == 1) {
+    g_display->virtualPowerW_ = (float)value;
+    snprintf(text, sizeof(text), "%d W", value);
+    lv_label_set_text(g_display->virtualPowerValueLabel_, text);
+  } else {
+    g_display->virtualCadenceRpm_ = (float)value;
+    snprintf(text, sizeof(text), "%d rpm", value);
+    lv_label_set_text(g_display->virtualCadenceValueLabel_, text);
+  }
 }
 
 void DisplayLcd::onAutoSelected(lv_event_t *) {
   if (!g_display) return;
   g_display->requestedPowerMode_ = 0;
   g_display->selectedPowerMode_ = 0;
-  lv_label_set_text(lv_obj_get_child(g_display->powerSourceButton_, 0), "METER: AUTO");
+  lv_label_set_text(g_display->powerSourceLabel_, "METER: AUTO");
   lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -227,6 +264,34 @@ void DisplayLcd::onCancelSelection(lv_event_t *) {
   if (g_display && g_display->powerSourcePanel_) {
     lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
   }
+}
+
+void DisplayLcd::buildPanelHeader(lv_obj_t *panel, const char *title,
+                                  lv_event_cb_t backCallback) {
+  lv_obj_t *backButton = lv_btn_create(panel);
+  lv_obj_set_size(backButton, 64, 30);
+  lv_obj_set_style_radius(backButton, 0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(backButton, lv_color_make(40, 43, 50), 0);
+  lv_obj_align(backButton, LV_ALIGN_TOP_LEFT, 10, 10);
+  lv_obj_add_event_cb(backButton, backCallback, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *backLabel = lv_label_create(backButton);
+  lv_label_set_text(backLabel, LV_SYMBOL_LEFT " BACK");
+  lv_obj_set_style_text_font(backLabel, &lv_font_montserrat_14, 0);
+  lv_obj_center(backLabel);
+
+  lv_obj_t *titleLabel = lv_label_create(panel);
+  lv_label_set_text(titleLabel, title);
+  lv_obj_set_width(titleLabel, 142);
+  lv_label_set_long_mode(titleLabel, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(titleLabel, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(titleLabel, lv_color_make(93, 214, 197), 0);
+  lv_obj_align(titleLabel, LV_ALIGN_TOP_LEFT, 84, 16);
+
+  lv_obj_t *divider = lv_obj_create(panel);
+  lv_obj_set_size(divider, 216, 1);
+  lv_obj_align(divider, LV_ALIGN_TOP_LEFT, 12, 48);
+  lv_obj_set_style_bg_color(divider, lv_color_make(61, 90, 120), 0);
+  lv_obj_set_style_border_width(divider, 0, 0);
 }
 
 void DisplayLcd::buildPowerSourcePanel() {
@@ -239,29 +304,26 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_radius(powerSourcePanel_, 0, 0);
   lv_obj_set_style_border_width(powerSourcePanel_, 0, 0);
   lv_obj_set_style_bg_color(powerSourcePanel_, lv_color_make(8, 15, 25), 0);
-  lv_obj_set_style_bg_opa(powerSourcePanel_, LV_OPA_90, 0);
-
-  lv_obj_t *title = lv_label_create(powerSourcePanel_);
-  lv_label_set_text(title, "SELECT POWER METER");
-  lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(title, lv_color_make(93, 214, 197), 0);
-  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 14, 20);
+  lv_obj_set_style_bg_opa(powerSourcePanel_, LV_OPA_COVER, 0);
+  buildPanelHeader(powerSourcePanel_, "POWER SOURCE", onCancelSelection);
 
   lv_obj_t *hint = lv_label_create(powerSourcePanel_);
-  lv_label_set_text(hint, "Choose BLE or ANT+");
+  lv_label_set_text(hint, "Choose a power source");
   lv_obj_set_width(hint, 216);
   lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(hint, lv_color_make(164, 183, 198), 0);
-  lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 14, 52);
+  lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 12, 60);
 
-  const char *labels[] = {"SCAN BLE DEVICES", "ANT+ POWER METER", "AUTO SELECT", "BACK"};
-  lv_event_cb_t callbacks[] = {onBleSelected, onAntSelected, onAutoSelected, onCancelSelection};
+  const char *labels[] = {"SCAN BLE DEVICES", "ANT+ POWER METER",
+                          "VIRTUAL POWER METER", "AUTO SELECT"};
+  lv_event_cb_t callbacks[] = {onBleSelected, onAntSelected,
+                               onVirtualSelected, onAutoSelected};
   const lv_color_t colors[] = {
     lv_color_make(22, 55, 62), lv_color_make(24, 47, 73),
-    lv_color_make(38, 49, 61), lv_color_make(40, 43, 50)
+    lv_color_make(38, 49, 61), lv_color_make(38, 49, 61)
   };
-  const lv_coord_t heights[] = {42, 42, 40, 34};
-  lv_coord_t y = 92;
+  const lv_coord_t heights[] = {38, 38, 38, 38};
+  lv_coord_t y = 98;
   for (size_t i = 0; i < 4; ++i) {
     lv_obj_t *button = lv_btn_create(powerSourcePanel_);
     lv_obj_set_size(button, 208, heights[i]);
@@ -273,9 +335,11 @@ void DisplayLcd::buildPowerSourcePanel() {
     lv_label_set_text(label, labels[i]);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
     lv_obj_center(label);
-    y += heights[i] + 8;
+    y += heights[i] + 6;
   }
   lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+
+  buildVirtualPowerPanel();
 
   bleDevicePanel_ = lv_obj_create(screen_);
   lv_obj_set_size(bleDevicePanel_, 240, 320);
@@ -288,13 +352,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_bg_color(bleDevicePanel_, lv_color_make(8, 15, 25), 0);
   lv_obj_set_style_bg_opa(bleDevicePanel_, LV_OPA_COVER, 0);
 
-  title = lv_label_create(bleDevicePanel_);
-  lv_label_set_text(title, "BLE POWER METERS");
-  lv_obj_set_width(title, 216);
-  lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(title, lv_color_make(93, 214, 197), 0);
-  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 10);
+  buildPanelHeader(bleDevicePanel_, "BLE DEVICES", onBleBack);
 
   hint = lv_label_create(bleDevicePanel_);
   lv_label_set_text(hint, "Tap device, then confirm");
@@ -302,12 +360,12 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(hint, lv_color_make(164, 183, 198), 0);
-  lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 12, 34);
+  lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 12, 56);
 
   lv_obj_t *scanButton = lv_btn_create(bleDevicePanel_);
   lv_obj_set_size(scanButton, 216, 32);
   lv_obj_set_style_radius(scanButton, 0, LV_PART_MAIN);
-  lv_obj_align(scanButton, LV_ALIGN_TOP_LEFT, 12, 58);
+  lv_obj_align(scanButton, LV_ALIGN_TOP_LEFT, 12, 80);
   lv_obj_set_style_bg_color(scanButton, lv_color_make(22, 55, 62), 0);
   lv_obj_add_event_cb(scanButton, onBleScanAgain, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *scanLabel = lv_label_create(scanButton);
@@ -321,14 +379,14 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_label_set_long_mode(bleStatusLabel_, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_font(bleStatusLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(bleStatusLabel_, lv_color_make(255, 209, 102), 0);
-  lv_obj_align(bleStatusLabel_, LV_ALIGN_TOP_LEFT, 12, 96);
+  lv_obj_align(bleStatusLabel_, LV_ALIGN_TOP_LEFT, 12, 116);
 
   for (size_t i = 0; i < 4; ++i) {
     bleDeviceButtons_[i] = lv_btn_create(bleDevicePanel_);
     lv_obj_set_size(bleDeviceButtons_[i], 216, 38);
     lv_obj_set_style_radius(bleDeviceButtons_[i], 0, LV_PART_MAIN);
     lv_obj_align(bleDeviceButtons_[i], LV_ALIGN_TOP_LEFT, 12,
-                 (lv_coord_t)(116 + i * 40));
+                 (lv_coord_t)(136 + i * 40));
     lv_obj_set_style_bg_color(bleDeviceButtons_[i], lv_color_make(18, 36, 50), 0);
     lv_obj_set_style_pad_all(bleDeviceButtons_[i], 1, 0);
     lv_obj_set_style_border_width(bleDeviceButtons_[i], 0, 0);
@@ -342,16 +400,6 @@ void DisplayLcd::buildPowerSourcePanel() {
     lv_obj_add_flag(bleDeviceButtons_[i], LV_OBJ_FLAG_HIDDEN);
   }
 
-  lv_obj_t *backButton = lv_btn_create(bleDevicePanel_);
-  lv_obj_set_size(backButton, 216, 28);
-  lv_obj_set_style_radius(backButton, 0, LV_PART_MAIN);
-  lv_obj_align(backButton, LV_ALIGN_TOP_LEFT, 12, 284);
-  lv_obj_set_style_bg_color(backButton, lv_color_make(40, 43, 50), 0);
-  lv_obj_add_event_cb(backButton, onBleBack, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t *backLabel = lv_label_create(backButton);
-  lv_label_set_text(backLabel, "BACK");
-  lv_obj_set_style_text_font(backLabel, &lv_font_montserrat_14, 0);
-  lv_obj_center(backLabel);
   lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
 
   bleConfirmPanel_ = lv_obj_create(screen_);
@@ -365,13 +413,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_bg_color(bleConfirmPanel_, lv_color_make(8, 15, 25), 0);
   lv_obj_set_style_bg_opa(bleConfirmPanel_, LV_OPA_COVER, 0);
 
-  title = lv_label_create(bleConfirmPanel_);
-  lv_label_set_text(title, "CONFIRM CONNECTION");
-  lv_obj_set_width(title, 216);
-  lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(title, lv_color_make(93, 214, 197), 0);
-  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 22);
+  buildPanelHeader(bleConfirmPanel_, "CONFIRM DEVICE", onBleConfirmBack);
 
   bleConfirmNameLabel_ = lv_label_create(bleConfirmPanel_);
   lv_label_set_text(bleConfirmNameLabel_, "BLE device");
@@ -379,7 +421,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_label_set_long_mode(bleConfirmNameLabel_, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_font(bleConfirmNameLabel_, &lv_font_montserrat_16, 0);
   lv_obj_set_style_text_color(bleConfirmNameLabel_, lv_color_white(), 0);
-  lv_obj_align(bleConfirmNameLabel_, LV_ALIGN_TOP_LEFT, 12, 84);
+  lv_obj_align(bleConfirmNameLabel_, LV_ALIGN_TOP_LEFT, 12, 76);
 
   bleConfirmAddressLabel_ = lv_label_create(bleConfirmPanel_);
   lv_label_set_text(bleConfirmAddressLabel_, "");
@@ -388,7 +430,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_label_set_long_mode(bleConfirmAddressLabel_, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(bleConfirmAddressLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(bleConfirmAddressLabel_, lv_color_make(164, 183, 198), 0);
-  lv_obj_align(bleConfirmAddressLabel_, LV_ALIGN_TOP_LEFT, 12, 112);
+  lv_obj_align(bleConfirmAddressLabel_, LV_ALIGN_TOP_LEFT, 12, 104);
 
   lv_obj_t *confirmButton = lv_btn_create(bleConfirmPanel_);
   lv_obj_set_size(confirmButton, 216, 42);
@@ -401,16 +443,6 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_text_font(confirmLabel, &lv_font_montserrat_14, 0);
   lv_obj_center(confirmLabel);
 
-  lv_obj_t *cancelButton = lv_btn_create(bleConfirmPanel_);
-  lv_obj_set_size(cancelButton, 216, 36);
-  lv_obj_set_style_radius(cancelButton, 0, LV_PART_MAIN);
-  lv_obj_align(cancelButton, LV_ALIGN_TOP_LEFT, 12, 242);
-  lv_obj_set_style_bg_color(cancelButton, lv_color_make(40, 43, 50), 0);
-  lv_obj_add_event_cb(cancelButton, onBleConfirmCancel, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t *cancelLabel = lv_label_create(cancelButton);
-  lv_label_set_text(cancelLabel, "CANCEL");
-  lv_obj_set_style_text_font(cancelLabel, &lv_font_montserrat_14, 0);
-  lv_obj_center(cancelLabel);
   lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
 
   bleLoadingPanel_ = lv_obj_create(screen_);
@@ -424,25 +456,10 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_bg_color(bleLoadingPanel_, lv_color_make(8, 15, 25), 0);
   lv_obj_set_style_bg_opa(bleLoadingPanel_, LV_OPA_COVER, 0);
 
-  bleLoadingBackButton_ = lv_btn_create(bleLoadingPanel_);
-  lv_obj_set_size(bleLoadingBackButton_, 64, 30);
-  lv_obj_set_style_radius(bleLoadingBackButton_, 0, LV_PART_MAIN);
-  lv_obj_align(bleLoadingBackButton_, LV_ALIGN_TOP_LEFT, 10, 10);
-  lv_obj_set_style_bg_color(bleLoadingBackButton_, lv_color_make(40, 43, 50), 0);
-  lv_obj_add_event_cb(bleLoadingBackButton_, onBleLoadingBack, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t *loadingBackLabel = lv_label_create(bleLoadingBackButton_);
-  lv_label_set_text(loadingBackLabel, "BACK");
-  lv_obj_set_style_text_font(loadingBackLabel, &lv_font_montserrat_14, 0);
-  lv_obj_center(loadingBackLabel);
+  buildPanelHeader(bleLoadingPanel_, "LOADING", onBleLoadingBack);
+  bleLoadingBackButton_ = lv_obj_get_child(bleLoadingPanel_, 0);
 
-  bleLoadingTitle_ = lv_label_create(bleLoadingPanel_);
-  lv_label_set_text(bleLoadingTitle_, "LOADING");
-  lv_obj_set_width(bleLoadingTitle_, 142);
-  lv_label_set_long_mode(bleLoadingTitle_, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(bleLoadingTitle_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(bleLoadingTitle_, lv_color_make(93, 214, 197), 0);
-  lv_obj_align(bleLoadingTitle_, LV_ALIGN_TOP_LEFT, 86, 16);
-
+  bleLoadingTitle_ = lv_obj_get_child(bleLoadingPanel_, 1);
   bleLoadingSpinner_ = lv_spinner_create(bleLoadingPanel_, 900, 60);
   lv_obj_set_size(bleLoadingSpinner_, 42, 42);
   lv_obj_align(bleLoadingSpinner_, LV_ALIGN_TOP_MID, 0, 76);
@@ -457,6 +474,70 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_align(bleLoadingLabel_, LV_ALIGN_TOP_LEFT, 12, 132);
 
   lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::buildVirtualPowerPanel() {
+  virtualPowerPanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(virtualPowerPanel_, 240, 320);
+  lv_obj_center(virtualPowerPanel_);
+  lv_obj_clear_flag(virtualPowerPanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(virtualPowerPanel_, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_style_pad_all(virtualPowerPanel_, 0, 0);
+  lv_obj_set_style_radius(virtualPowerPanel_, 0, 0);
+  lv_obj_set_style_border_width(virtualPowerPanel_, 0, 0);
+  lv_obj_set_style_bg_color(virtualPowerPanel_, lv_color_make(8, 15, 25), 0);
+  lv_obj_set_style_bg_opa(virtualPowerPanel_, LV_OPA_COVER, 0);
+  buildPanelHeader(virtualPowerPanel_, "VIRTUAL POWER", onVirtualBack);
+
+  lv_obj_t *powerTitle = lv_label_create(virtualPowerPanel_);
+  lv_label_set_text(powerTitle, "POWER");
+  lv_obj_set_style_text_font(powerTitle, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(powerTitle, lv_color_make(164, 183, 198), 0);
+  lv_obj_align(powerTitle, LV_ALIGN_TOP_LEFT, 16, 64);
+
+  virtualPowerValueLabel_ = lv_label_create(virtualPowerPanel_);
+  lv_label_set_text(virtualPowerValueLabel_, "0 W");
+  lv_obj_set_style_text_font(virtualPowerValueLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(virtualPowerValueLabel_, lv_color_white(), 0);
+  lv_obj_align(virtualPowerValueLabel_, LV_ALIGN_TOP_RIGHT, -16, 62);
+
+  lv_obj_t *powerSlider = lv_slider_create(virtualPowerPanel_);
+  lv_obj_set_size(powerSlider, 208, 24);
+  lv_slider_set_range(powerSlider, 0, 1500);
+  lv_slider_set_value(powerSlider, (int)virtualPowerW_, LV_ANIM_OFF);
+  lv_obj_align(powerSlider, LV_ALIGN_TOP_LEFT, 16, 94);
+  lv_obj_add_event_cb(powerSlider, onVirtualSliderChanged, LV_EVENT_VALUE_CHANGED,
+                      (void *)(uintptr_t)1);
+
+  lv_obj_t *cadenceTitle = lv_label_create(virtualPowerPanel_);
+  lv_label_set_text(cadenceTitle, "CADENCE");
+  lv_obj_set_style_text_font(cadenceTitle, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(cadenceTitle, lv_color_make(164, 183, 198), 0);
+  lv_obj_align(cadenceTitle, LV_ALIGN_TOP_LEFT, 16, 146);
+
+  virtualCadenceValueLabel_ = lv_label_create(virtualPowerPanel_);
+  lv_label_set_text(virtualCadenceValueLabel_, "0 rpm");
+  lv_obj_set_style_text_font(virtualCadenceValueLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(virtualCadenceValueLabel_, lv_color_white(), 0);
+  lv_obj_align(virtualCadenceValueLabel_, LV_ALIGN_TOP_RIGHT, -16, 144);
+
+  lv_obj_t *cadenceSlider = lv_slider_create(virtualPowerPanel_);
+  lv_obj_set_size(cadenceSlider, 208, 24);
+  lv_slider_set_range(cadenceSlider, 0, 180);
+  lv_slider_set_value(cadenceSlider, (int)virtualCadenceRpm_, LV_ANIM_OFF);
+  lv_obj_align(cadenceSlider, LV_ALIGN_TOP_LEFT, 16, 176);
+  lv_obj_add_event_cb(cadenceSlider, onVirtualSliderChanged, LV_EVENT_VALUE_CHANGED,
+                      (void *)(uintptr_t)2);
+
+  lv_obj_t *hint = lv_label_create(virtualPowerPanel_);
+  lv_label_set_text(hint, "Drag either slider to update\nlive power and cadence.");
+  lv_obj_set_width(hint, 208);
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(hint, lv_color_make(164, 183, 198), 0);
+  lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 16, 224);
+
+  lv_obj_add_flag(virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::begin() {
@@ -638,10 +719,18 @@ void DisplayLcd::begin() {
   lv_obj_set_style_radius(powerSourceButton_, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_color(powerSourceButton_, lv_color_make(18, 49, 55), 0);
   lv_obj_add_event_cb(powerSourceButton_, onPowerSourceButton, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t *powerSourceLabel = lv_label_create(powerSourceButton_);
-  lv_label_set_text(powerSourceLabel, "SELECT POWER METER");
-  lv_obj_center(powerSourceLabel);
-  lv_obj_set_style_text_font(powerSourceLabel, &lv_font_montserrat_16, 0);
+  lv_obj_t *powerSourceIcon = lv_label_create(powerSourceButton_);
+  lv_label_set_text(powerSourceIcon, LV_SYMBOL_SETTINGS);
+  lv_obj_align(powerSourceIcon, LV_ALIGN_LEFT_MID, 8, 0);
+  lv_obj_set_style_text_font(powerSourceIcon, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(powerSourceIcon, lv_color_make(131, 230, 215), 0);
+  powerSourceLabel_ = lv_label_create(powerSourceButton_);
+  lv_label_set_text(powerSourceLabel_, "SELECT POWER METER");
+  lv_obj_set_width(powerSourceLabel_, 178);
+  lv_label_set_long_mode(powerSourceLabel_, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(powerSourceLabel_, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(powerSourceLabel_, LV_ALIGN_LEFT_MID, 28, 0);
+  lv_obj_set_style_text_font(powerSourceLabel_, &lv_font_montserrat_16, 0);
 
   buildPowerSourcePanel();
   lv_scr_load(screen_);
@@ -680,7 +769,8 @@ void DisplayLcd::showBleLoading(const char *status) {
   bleOperationActive_ = true;
   requestedBleCancel_ = false;
   lv_obj_clear_state(bleLoadingBackButton_, LV_STATE_DISABLED);
-  lv_label_set_text(lv_obj_get_child(bleLoadingBackButton_, 0), "BACK");
+  lv_label_set_text(lv_obj_get_child(bleLoadingBackButton_, 0),
+                    LV_SYMBOL_LEFT " BACK");
   lv_label_set_text(bleLoadingTitle_, "LOADING");
   lv_label_set_text(bleLoadingLabel_, status ? status : "Waiting for BLE device...");
   lv_obj_clear_flag(bleLoadingSpinner_, LV_OBJ_FLAG_HIDDEN);
@@ -704,8 +794,10 @@ void DisplayLcd::showBleConnectFailure(const char *error) {
                     error ? error : "BLE connection failed without an error description.");
   lv_obj_add_flag(bleLoadingSpinner_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_y(bleLoadingLabel_, 66);
+  lv_obj_set_height(bleLoadingLabel_, 240);
   lv_obj_clear_state(bleLoadingBackButton_, LV_STATE_DISABLED);
-  lv_label_set_text(lv_obj_get_child(bleLoadingBackButton_, 0), "BACK");
+  lv_label_set_text(lv_obj_get_child(bleLoadingBackButton_, 0),
+                    LV_SYMBOL_LEFT " BACK");
   lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
 }
@@ -721,7 +813,8 @@ void DisplayLcd::setBleDevices(const BlePowerDevice *devices, size_t count,
       char label[64];
       const char *profile = bleDevices_[i].cyclingPower
                                 ? (bleDevices_[i].fitnessMachine ? "CPS + FTMS" : "CPS")
-                                : (bleDevices_[i].fitnessMachine ? "FTMS trainer" : "BLE device");
+                                : (bleDevices_[i].fitnessMachine ? "FTMS trainer" :
+                                   (bleDevices_[i].speedCadence ? "CSC cadence only" : "BLE device"));
       snprintf(label, sizeof(label), "%s\n%s  %d dBm",
                bleDevices_[i].name, profile, bleDevices_[i].rssi);
       lv_label_set_text(lv_obj_get_child(button, 0), label);
@@ -746,6 +839,7 @@ void DisplayLcd::setBleDevices(const BlePowerDevice *devices, size_t count,
 void DisplayLcd::closePowerMeterPanels() {
   bleOperationActive_ = false;
   lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -845,17 +939,21 @@ void DisplayLcd::update(const WindVector &w, float powerW, float cadRpm,
   } else if (pmSrc == 1) {
     srcName = "BLE";
     srcColor = lv_color_make(142, 235, 171);
+  } else if (pmSrc == 3) {
+    srcName = "VIRTUAL";
+    srcColor = lv_color_make(255, 209, 102);
   }
-  lv_obj_t *powerSourceLabel = lv_obj_get_child(powerSourceButton_, 0);
   if (selectedPowerMode_ == 0) {
     snprintf(buf, sizeof(buf), "PM: AUTO%s", pmSrc == 2 ? " / ANT+" : (pmSrc == 1 ? " / BLE" : " / SCAN"));
   } else if (selectedPowerMode_ == 1) {
     snprintf(buf, sizeof(buf), "PM: BLE%s", pmSrc == 1 ? " / CONNECTED" : " / SCANNING");
+  } else if (selectedPowerMode_ == 3) {
+    snprintf(buf, sizeof(buf), "PM: VIRTUAL / ACTIVE");
   } else {
     snprintf(buf, sizeof(buf), "PM: ANT+%s", pmSrc == 2 ? " / CONNECTED" : " / SEARCHING");
   }
-  lv_label_set_text(powerSourceLabel, buf);
-  lv_obj_set_style_text_color(powerSourceLabel, srcColor, 0);
+  lv_label_set_text(powerSourceLabel_, buf);
+  lv_obj_set_style_text_color(powerSourceLabel_, srcColor, 0);
 
   snprintf(buf, sizeof(buf), "Log: %s", logOk ? "OK" : "OFF");
   lv_label_set_text(statusLabel_, buf);

@@ -9,7 +9,7 @@
 #include "ble_power.h"
 #include "wind_probe.h"
 
-// ST7789 屏（240x320）状态显示：风速 / CdA / 实时功率 / 踏频 / 状态
+// ST7789 240x320 display for wind, CdA, live power, cadence, and status.
 class DisplayLcd {
 public:
   void begin();
@@ -17,6 +17,8 @@ public:
   void update(const WindVector &w, float powerW, float cadRpm, float vgMps,
               float postureDeg, float rho, int pmSrc, bool logOk);
   bool takePowerSourceRequest(int &mode);
+  float virtualPowerW() const { return virtualPowerW_; }
+  float virtualCadenceRpm() const { return virtualCadenceRpm_; }
   bool takeBleScanRequest();
   bool takeBleConnectRequest(char *address, size_t capacity);
   bool takeBleCancelRequest();
@@ -39,7 +41,11 @@ private:
   lv_obj_t *timeLabel_ = nullptr;
   lv_obj_t *statusLabel_ = nullptr;
   lv_obj_t *powerSourceButton_ = nullptr;
+  lv_obj_t *powerSourceLabel_ = nullptr;
   lv_obj_t *powerSourcePanel_ = nullptr;
+  lv_obj_t *virtualPowerPanel_ = nullptr;
+  lv_obj_t *virtualPowerValueLabel_ = nullptr;
+  lv_obj_t *virtualCadenceValueLabel_ = nullptr;
   lv_obj_t *bleDevicePanel_ = nullptr;
   lv_obj_t *bleConfirmPanel_ = nullptr;
   lv_obj_t *bleLoadingPanel_ = nullptr;
@@ -61,6 +67,8 @@ private:
   int powerHistoryIndex_ = 0;
 
   float power3sAvg_ = 0.0f;
+  float virtualPowerW_ = 0.0f;
+  float virtualCadenceRpm_ = 0.0f;
   int requestedPowerMode_ = -1;
   int selectedPowerMode_ = 0;
   bool requestedBleScan_ = false;
@@ -81,10 +89,13 @@ private:
   static void onBleDeviceSelected(lv_event_t *event);
   static void onBleConfirm(lv_event_t *event);
   static void onBleBack(lv_event_t *event);
-  static void onBleConfirmCancel(lv_event_t *event);
+  static void onBleConfirmBack(lv_event_t *event);
   static void onBleLoadingBack(lv_event_t *event);
   static void onAntSelected(lv_event_t *event);
   static void onAutoSelected(lv_event_t *event);
+  static void onVirtualSelected(lv_event_t *event);
+  static void onVirtualBack(lv_event_t *event);
+  static void onVirtualSliderChanged(lv_event_t *event);
   static void onCancelSelection(lv_event_t *event);
   static uint16_t rgb565FromLvColor(lv_color_t c);
   bool readTouch(uint16_t &x, uint16_t &y);
@@ -93,4 +104,6 @@ private:
   bool touchReadRegister(uint16_t reg, uint8_t *data, size_t len);
   bool touchWriteRegister(uint16_t reg, uint8_t value);
   void buildPowerSourcePanel();
+  void buildVirtualPowerPanel();
+  void buildPanelHeader(lv_obj_t *panel, const char *title, lv_event_cb_t backCallback);
 };

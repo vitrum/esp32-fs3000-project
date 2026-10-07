@@ -152,12 +152,12 @@ img/wiring-diagram.svg   ← 二期双传感器接线示意图；当前原型按
 | 2 | 串口传感器状态 | `FS3000 OK`、`[TOUCH] CST328 ready` |
 | 3 | 零风读数 | 静止时单传感器读数接近 0.0 m/s（≤0.3 可接受） |
 | 4 | 手扇/吹风 | 风速读数随气流增强 |
-| 5 | 功率计/骑行台 | 触摸功率源按钮，BLE 选择 SCAN BLE DEVICES 后会显示 LOADING；点设备并二次确认 CONNECT。支持 BLE Cycling Power 与 FTMS Indoor Bike Data 骑行台；ANT+ 自动搜索 Bike Power。收到数据后功率/踏频更新 |
+| 5 | 功率计/骑行台 | 触摸功率源按钮，可选择 VIRTUAL POWER METER 并拖动滑块模拟功率/踏频；BLE 选择 SCAN BLE DEVICES 后会显示 LOADING，点设备并二次确认 CONNECT。支持 BLE Cycling Power 与 FTMS Indoor Bike Data 骑行台；CSC 仅提供踏频/速度；ANT+ 自动搜索 Bike Power |
 | 6 | 屏显 | 风速以 km/h 显示；触摸屏可打开功率源选择面板。有效功率与风速数据下显示粗略 CdA/ZONE。FS3000 不测温，可选 BME280 温度仅用于空气密度计算 |
 | 7 | TF 卡（可选） | 插卡后检查串口/屏幕日志状态；当前固件已集成 CSV 记录 |
 | 8 | 二期扩展 | 双传感器偏航角检查仅在对应硬件/固件功能接入后验证 |
 
-BLE 扫描、连接和实时数据可在 PlatformIO 的 Device Monitor 查看（115200 baud）：`[BLE]` 显示扫描设备名称/地址/RSSI 与 CPS/FTMS 类型及完整连接错误，`[BLE-DATA]` 显示功率/踏频/车速，`[BLE-POSTURE]` 显示姿态角，`[ANT-DATA]` 显示 ANT+ 设备号/功率/踏频。扫描和连接在后台运行，屏幕保持响应；左上角 BACK 可请求取消，失败后可返回设备列表重选。
+BLE 扫描、连接和实时数据可在 PlatformIO 的 Device Monitor 查看（115200 baud）：`[BLE]` 显示扫描设备名称/地址/RSSI 与广播 CPS/FTMS/CSC 类型及完整连接错误；连接后 `[BLE-GATT]` 输出完整服务/特征 UUID 与通知能力，便于识别设备私有协议或服务发现失败；`[BLE-DATA]` 显示功率/踏频/车速，`[BLE-FTMS]` 显示 FTMS Flags 和数据包中是否实际包含即时功率、踏频、速度字段（Indoor Bike Data 为 0x2AD2；0x2ACC 是 Feature，0x2AD1 是 Rower Data），`[BLE-POSTURE]` 显示姿态角，`[ANT-DATA]` 显示 ANT+ 设备号/功率/踏频。CSC 0x1816 仅提供速度/踏频，不含功率。扫描和连接在后台运行，屏幕保持响应；左上角 BACK 可请求取消，失败后可返回设备列表重选。
 
 > 常见问题：传感器读数卡 0 → 查单片 FS3000 供电与 SDA/SCL；读数乱跳 → 检查线长/绞合/共地，采样间隔保持 ≥125ms。当前原型不显示偏航角，也不要按双传感器的检查步骤诊断。
 

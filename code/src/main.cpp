@@ -56,7 +56,7 @@ static uint32_t lastBleDisconnectCount = 0;
 static bool     powerConnected = false;
 static bool     postureConnected = false;
 static bool     manualBlePairing = false;
-static int      powerMode = 0;      // 0=自动 1=BLE 2=ANT+
+static int      powerMode = 0;      // 0=AUTO 1=BLE 2=ANT+ 3=VIRTUAL
 #ifdef ANT_POWER_ENABLE
 static bool     antStarted = false;   // ANT 节点已启动（此后 BLE 扫描不可用）
 #endif
@@ -71,7 +71,7 @@ struct BleOperationResult {
   bool cancelled = false;
   size_t deviceCount = 0;
   BlePowerDevice devices[4] = {};
-  char error[192] = {};
+  char error[320] = {};
 };
 
 static volatile BleOperationState bleOperationState = BleOperationState::Idle;
@@ -148,8 +148,9 @@ static bool takeBleOperationResult(BleOperationResult &result) {
   return true;
 }
 
-// 当前功率数据源：0=无 1=BLE 2=ANT+（写进 CSV 供后处理区分）
+// Power source IDs are written to CSV: 0=none, 1=BLE, 2=ANT+, 3=virtual.
 static int pmSrc() {
+  if (powerMode == 3) return 3;
 #ifdef ANT_POWER_ENABLE
   if (powerMode == 2) return antPower.started() && antPower.tracking() ? 2 : 0;
   if (powerMode == 1) return powerConnected ? 1 : 0;
@@ -160,6 +161,7 @@ static int pmSrc() {
 
 // 有效功率/踏频（ANT 跟踪时优先用 ANT+，否则退回 BLE 功率计）
 static float pmPower() {
+  if (powerMode == 3) return lcd.virtualPowerW();
 #ifdef ANT_POWER_ENABLE
   if (powerMode == 2) return antPower.power();
   if (powerMode == 1) return powerMeter.power();
@@ -168,6 +170,7 @@ static float pmPower() {
   return powerMeter.power();
 }
 static float pmCadence() {
+  if (powerMode == 3) return lcd.virtualCadenceRpm();
 #ifdef ANT_POWER_ENABLE
   if (powerMode == 2) return antPower.cadence();
   if (powerMode == 1) return powerMeter.cadence();
@@ -180,7 +183,7 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.println("\n== Aero Probe (single FS3000 + touch UI + BLE/ANT+ PM) ==");
-  Serial.println("[PM] Tap SELECT POWER METER -> SCAN BLE DEVICES to choose a device.");
+  Serial.println("[PM] Use SELECT POWER METER to choose BLE, ANT+, virtual, or automatic input.");
   Serial.println("[PM] BLE/ANT+ measurements are streamed to this monitor.");
 
   // 原型阶段单风速传感器；Wire1 由 LCD 初始化为 CST328 触摸总线
@@ -242,9 +245,11 @@ void loop() {
     lcd.update(wv, pmPower(), pmCadence(), vg, post, rho, src, logger.ok());
 
     // 串口同输出一行，便于现场监控
+    const char *sourceName = src == 3 ? "VIRTUAL" :
+                             (src == 2 ? "ANT" : (src == 1 ? "BLE" : "--"));
     Serial.printf("%lu P=%5.0fW(%s) cad=%4.0f vg=%4.2f vAir=%4.2f yaw=%+5.1f pos=%+5.1f rho=%.3f\n",
                   (unsigned long)now, power,
-                  src == 2 ? "ANT" : (src == 1 ? "BLE" : "--"),
+                  sourceName,
                   pmCadence(), vg, vAir, yaw, post, rho);
 
     win = Window();   // 清窗口
@@ -256,9 +261,10 @@ void loop() {
   if (lcd.takePowerSourceRequest(requestedMode)) {
     powerMode = requestedMode;
     Serial.printf("[PM] selected mode: %s\n",
-                  powerMode == 2 ? "ANT+" : (powerMode == 1 ? "BLE" : "AUTO"));
+                  powerMode == 3 ? "VIRTUAL" :
+                  (powerMode == 2 ? "ANT+" : (powerMode == 1 ? "BLE" : "AUTO")));
 #ifdef ANT_POWER_ENABLE
-    if (powerMode == 1 && antStarted) {
+    if ((powerMode == 1 || powerMode == 3) && antStarted) {
       antPower.stop();
       antStarted = false;
     }
@@ -341,6 +347,17 @@ void loop() {
     lastBlePowerNotification = blePowerNotifications;
     Serial.printf("[BLE-DATA] P=%.0f W cad=%.0f rpm speed=%.2f m/s\n",
                   powerMeter.power(), powerMeter.cadence(), powerMeter.speed());
+  }
+  static uint32_t lastBleFtmsNotification = 0;
+  uint32_t bleFtmsNotifications = powerMeter.fitnessMachineNotificationCount();
+  if (bleFtmsNotifications != lastBleFtmsNotification) {
+    lastBleFtmsNotification = bleFtmsNotifications;
+    const uint16_t flags = powerMeter.lastFitnessMachineFlags();
+    Serial.printf("[BLE-FTMS] notify=%lu flags=0x%04X powerField=%s P=%.0f W cadenceField=%s cad=%.1f rpm speedField=%s speed=%.2f m/s\n",
+                  (unsigned long)bleFtmsNotifications, flags,
+                  (flags & 0x0040) ? "yes" : "no", powerMeter.power(),
+                  (flags & 0x0004) ? "yes" : "no", powerMeter.cadence(),
+                  (flags & 0x0001) ? "no" : "yes", powerMeter.speed());
   }
   uint32_t blePostureNotifications = posture.notificationCount();
   if (blePostureNotifications != lastBlePostureNotification) {

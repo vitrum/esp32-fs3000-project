@@ -9,10 +9,10 @@ struct BlePowerDevice {
   int8_t rssi;
   bool cyclingPower;
   bool fitnessMachine;
+  bool speedCadence;
 };
 
-// BLE GATT Central supporting Cycling Power (0x1818) and Fitness Machine
-// Service Indoor Bike Data (0x1826) power trainers.
+// BLE GATT Central supporting Cycling Power, FTMS trainers, and CSC sensors.
 class BlePowerMeter {
 public:
   void begin(const char *deviceName, float wheelCircM);
@@ -26,6 +26,8 @@ public:
   float cadence() const { return s_cadence; }   // rpm（需功率计发送曲柄数据）
   float speed()   const { return s_speed; }     // m/s（需功率计发送轮速数据）
   uint32_t notificationCount() const { return s_notificationCount; }
+  uint32_t fitnessMachineNotificationCount() const { return s_fitnessMachineNotificationCount; }
+  uint16_t lastFitnessMachineFlags() const { return s_lastFitnessMachineFlags; }
   uint32_t disconnectCount() const { return s_disconnectCount; }
   void setWheelCircumference(float m) { s_wheelCirc = m; }
 
@@ -33,6 +35,7 @@ private:
   friend class BlePowerClientCallbacks;
   static void cpmNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, bool isNotify);
   static void indoorBikeNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, bool isNotify);
+  static void speedCadenceNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, bool isNotify);
   static void setError(const char *message);
   static bool   s_connected;
   static bool   s_hasCyclingPower;
@@ -42,8 +45,11 @@ private:
   static float  s_speed;
   static float  s_wheelCirc;
   static uint32_t s_notificationCount;
+  static uint32_t s_fitnessMachineNotificationCount;
+  static uint16_t s_lastFitnessMachineFlags;
   static uint32_t s_disconnectCount;
   static NimBLEClient *s_client;
   static char s_connectedAddress[18];
-  static char s_lastError[192];
+  static char s_lastError[320];
+  static bool s_hasSpeedCadence;
 };

@@ -4,9 +4,8 @@
 
 namespace {
 const NimBLEUUID kSvcCP("0x1818");
-const NimBLEUUID kChrCPM("0x2A63");
 const NimBLEUUID kSvcFTMS("0x1826");
-const NimBLEUUID kChrIndoorBikeData("0x2AD2");
+const NimBLEUUID kSvcCSC("0x1816");
 
 bool s_hasWheel = false;
 bool s_hasCrank = false;
@@ -31,15 +30,18 @@ void logBleError(const char *message) {
 bool BlePowerMeter::s_connected = false;
 bool BlePowerMeter::s_hasCyclingPower = false;
 bool BlePowerMeter::s_hasFitnessMachine = false;
+bool BlePowerMeter::s_hasSpeedCadence = false;
 float BlePowerMeter::s_power = 0;
 float BlePowerMeter::s_cadence = 0;
 float BlePowerMeter::s_speed = 0;
 float BlePowerMeter::s_wheelCirc = BLE_WHEEL_CIRC_M;
 uint32_t BlePowerMeter::s_notificationCount = 0;
+uint32_t BlePowerMeter::s_fitnessMachineNotificationCount = 0;
+uint16_t BlePowerMeter::s_lastFitnessMachineFlags = 0;
 uint32_t BlePowerMeter::s_disconnectCount = 0;
 NimBLEClient *BlePowerMeter::s_client = nullptr;
 char BlePowerMeter::s_connectedAddress[18] = {};
-char BlePowerMeter::s_lastError[192] = {};
+char BlePowerMeter::s_lastError[320] = {};
 
 class BlePowerClientCallbacks : public NimBLEClientCallbacks {
   void onDisconnect(NimBLEClient *, int reason) override {
@@ -48,9 +50,11 @@ class BlePowerClientCallbacks : public NimBLEClientCallbacks {
     BlePowerMeter::s_connectedAddress[0] = '\0';
     BlePowerMeter::s_hasCyclingPower = false;
     BlePowerMeter::s_hasFitnessMachine = false;
+    BlePowerMeter::s_hasSpeedCadence = false;
     BlePowerMeter::s_power = 0;
     BlePowerMeter::s_cadence = 0;
     BlePowerMeter::s_speed = 0;
+    BlePowerMeter::s_lastFitnessMachineFlags = 0;
     BlePowerMeter::s_disconnectCount++;
   }
 };
@@ -124,27 +128,104 @@ void BlePowerMeter::indoorBikeNotify(NimBLERemoteCharacteristic *, uint8_t *data
     index += 2;
   }
 
-  if (flags & 0x0002) index += 2;  // Average Speed
+  if (flags & 0x0002) {
+    if (!hasBytes(length, index, 2)) return;
+    index += 2;  // Average Speed
+  }
   if (flags & 0x0004) {
     if (!hasBytes(length, index, 2)) return;
     s_cadence = (float)readU16(data, index) * 0.5f;
     index += 2;
   }
-  if (flags & 0x0008) index += 2;  // Average Cadence
-  if (flags & 0x0010) index += 3;  // Total Distance
-  if (flags & 0x0020) index += 2;  // Resistance Level
+  if (flags & 0x0008) {
+    if (!hasBytes(length, index, 2)) return;
+    index += 2;
+  }
+  if (flags & 0x0010) {
+    if (!hasBytes(length, index, 3)) return;
+    index += 3;
+  }
+  if (flags & 0x0020) {
+    if (!hasBytes(length, index, 2)) return;
+    index += 2;
+  }
+  bool hasPower = false;
   if (flags & 0x0040) {
     if (!hasBytes(length, index, 2)) return;
     s_power = (float)(int16_t)readU16(data, index);
     index += 2;
-    s_notificationCount++;
+    hasPower = true;
   }
-  if (flags & 0x0080) index += 2;  // Average Power
-  if (flags & 0x0100) index += 5;  // Expended Energy
-  if (flags & 0x0200) index += 1;  // Heart Rate
-  if (flags & 0x0400) index += 1;  // Metabolic Equivalent
-  if (flags & 0x0800) index += 2;  // Elapsed Time
-  if (flags & 0x1000) index += 2;  // Remaining Time
+  if (flags & 0x0080) {
+    if (!hasBytes(length, index, 2)) return;
+    index += 2;
+  }
+  if (flags & 0x0100) {
+    if (!hasBytes(length, index, 5)) return;
+    index += 5;
+  }
+  if (flags & 0x0200) {
+    if (!hasBytes(length, index, 1)) return;
+    index += 1;
+  }
+  if (flags & 0x0400) {
+    if (!hasBytes(length, index, 1)) return;
+    index += 1;
+  }
+  if (flags & 0x0800) {
+    if (!hasBytes(length, index, 2)) return;
+    index += 2;
+  }
+  if (flags & 0x1000) {
+    if (!hasBytes(length, index, 2)) return;
+    index += 2;
+  }
+  s_lastFitnessMachineFlags = flags;
+  s_fitnessMachineNotificationCount++;
+  if (hasPower) s_notificationCount++;
+}
+
+void BlePowerMeter::speedCadenceNotify(NimBLERemoteCharacteristic *, uint8_t *data,
+                                       size_t length, bool) {
+  if (!data || length < 1) return;
+
+  const uint8_t flags = data[0];
+  size_t index = 1;
+  if (flags & 0x01) {
+    if (!hasBytes(length, index, 6)) return;
+    const uint32_t revolutions = (uint32_t)data[index] |
+                                 ((uint32_t)data[index + 1] << 8) |
+                                 ((uint32_t)data[index + 2] << 16) |
+                                 ((uint32_t)data[index + 3] << 24);
+    const uint16_t eventTime = readU16(data, index + 4);
+    if (s_hasWheel) {
+      const uint16_t deltaTime = (uint16_t)(eventTime - s_lastWheelTime);
+      const uint32_t deltaRevs = revolutions - s_lastWheelRevs;
+      if (deltaTime > 0) {
+        s_speed = s_wheelCirc * (float)deltaRevs / ((float)deltaTime / 1024.0f);
+      }
+    }
+    s_lastWheelRevs = revolutions;
+    s_lastWheelTime = eventTime;
+    s_hasWheel = true;
+    index += 6;
+  }
+  if (flags & 0x02) {
+    if (!hasBytes(length, index, 4)) return;
+    const uint16_t revolutions = readU16(data, index);
+    const uint16_t eventTime = readU16(data, index + 2);
+    if (s_hasCrank) {
+      const uint16_t deltaTime = (uint16_t)(eventTime - s_lastCrankTime);
+      const uint16_t deltaRevs = (uint16_t)(revolutions - s_lastCrankRevs);
+      if (deltaTime > 0) {
+        s_cadence = 60.0f * (float)deltaRevs / ((float)deltaTime / 1024.0f);
+      }
+    }
+    s_lastCrankRevs = revolutions;
+    s_lastCrankTime = eventTime;
+    s_hasCrank = true;
+  }
+  s_notificationCount++;
 }
 
 void BlePowerMeter::begin(const char *deviceName, float wheelCircM) {
@@ -175,7 +256,8 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
 
       const bool cyclingPower = ad->isAdvertisingService(kSvcCP);
       const bool fitnessMachine = ad->isAdvertisingService(kSvcFTMS);
-      const bool supported = cyclingPower || fitnessMachine;
+      const bool speedCadence = ad->isAdvertisingService(kSvcCSC);
+      const bool supported = cyclingPower || fitnessMachine || speedCadence;
       if ((pass == 0 && !supported) || (pass == 1 && supported)) continue;
 
       const std::string name = ad->getName();
@@ -198,6 +280,7 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
       device.rssi = ad->getRSSI();
       device.cyclingPower = cyclingPower;
       device.fitnessMachine = fitnessMachine;
+      device.speedCadence = speedCadence;
     }
   }
 
@@ -208,7 +291,8 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
                   (unsigned)(i + 1), devices[i].name, devices[i].address,
                   devices[i].rssi,
                   devices[i].cyclingPower ? " CPS" : "",
-                  devices[i].fitnessMachine ? " FTMS" : "");
+                  devices[i].fitnessMachine ? " FTMS" :
+                      (devices[i].speedCadence ? " CSC (cadence/speed only)" : ""));
   }
   s_lastError[0] = '\0';
   return true;
@@ -224,6 +308,9 @@ void BlePowerMeter::disconnect() {
   s_connectedAddress[0] = '\0';
   s_hasCyclingPower = false;
   s_hasFitnessMachine = false;
+  s_hasSpeedCadence = false;
+  s_hasWheel = false;
+  s_hasCrank = false;
   s_power = 0;
   s_cadence = 0;
   s_speed = 0;
@@ -291,34 +378,91 @@ bool BlePowerMeter::connectDevice(const char *address) {
     return false;
   }
 
-  NimBLERemoteService *cpService = client->getService(kSvcCP);
-  NimBLERemoteService *ftmsService = client->getService(kSvcFTMS);
-  NimBLERemoteCharacteristic *cpMeasurement =
-      cpService ? cpService->getCharacteristic(kChrCPM) : nullptr;
-  NimBLERemoteCharacteristic *indoorBikeData =
-      ftmsService ? ftmsService->getCharacteristic(kChrIndoorBikeData) : nullptr;
+  const std::vector<NimBLERemoteService *> &services = client->getServices(true);
+  NimBLERemoteCharacteristic *cpMeasurement = nullptr;
+  NimBLERemoteCharacteristic *indoorBikeData = nullptr;
+  NimBLERemoteCharacteristic *cscMeasurement = nullptr;
+
+  Serial.printf("[BLE-GATT] %s: discovered %u service(s)\n",
+                address, (unsigned)services.size());
+  for (NimBLERemoteService *service : services) {
+    const std::string serviceUuid = service->getUUID().toString();
+    const bool isCpService = serviceUuid == "0x1818";
+    const bool isFtmsService = serviceUuid == "0x1826";
+    const bool isCscService = serviceUuid == "0x1816";
+    Serial.printf("[BLE-GATT] service %s\n", serviceUuid.c_str());
+    const std::vector<NimBLERemoteCharacteristic *> &characteristics =
+        service->getCharacteristics(true);
+    for (NimBLERemoteCharacteristic *characteristic : characteristics) {
+      const std::string characteristicUuid = characteristic->getUUID().toString();
+      const bool isCpMeasurement =
+          isCpService && characteristicUuid == "0x2a63";
+      const bool isIndoorBikeData =
+          isFtmsService && characteristicUuid == "0x2ad2";
+      const bool isCscMeasurement =
+          isCscService && characteristicUuid == "0x2a5b";
+      Serial.printf("[BLE-GATT]   characteristic %s%s%s\n",
+                    characteristicUuid.c_str(),
+                    characteristic->canNotify() ? " notify" : "",
+                    characteristic->canIndicate() ? " indicate" : "");
+      if (isCpMeasurement) {
+        cpMeasurement = characteristic;
+        Serial.println("[BLE-GATT]   matched Cycling Power Measurement");
+      } else if (isIndoorBikeData) {
+        indoorBikeData = characteristic;
+        Serial.println("[BLE-GATT]   matched FTMS Indoor Bike Data");
+      } else if (isCscMeasurement) {
+        cscMeasurement = characteristic;
+        Serial.println("[BLE-GATT]   matched CSC Measurement");
+      }
+    }
+  }
 
   if (cpMeasurement) {
     s_hasCyclingPower = cpMeasurement->subscribe(true, cpmNotify, true);
+    Serial.printf("[BLE-GATT] subscribe CPS 0x2A63: %s\n",
+                  s_hasCyclingPower ? "OK" : "FAILED");
   }
   if (indoorBikeData) {
     s_hasFitnessMachine = indoorBikeData->subscribe(true, indoorBikeNotify, true);
+    Serial.printf("[BLE-GATT] subscribe FTMS Indoor Bike Data 0x2AD2: %s\n",
+                  s_hasFitnessMachine ? "OK" : "FAILED");
+  }
+  if (cscMeasurement) {
+    s_hasSpeedCadence = cscMeasurement->subscribe(true, speedCadenceNotify, true);
+    Serial.printf("[BLE-GATT] subscribe CSC 0x2A5B: %s\n",
+                  s_hasSpeedCadence ? "OK" : "FAILED");
   }
 
-  if (!s_hasCyclingPower && !s_hasFitnessMachine) {
-    char error[192];
-    if (!cpService && !ftmsService) {
-      snprintf(error, sizeof(error),
-               "Connection to %s succeeded, but neither Cycling Power (0x1818) nor Fitness Machine (0x1826) service is present.",
-               address);
-    } else if ((cpService && !cpMeasurement) || (ftmsService && !indoorBikeData)) {
-      snprintf(error, sizeof(error),
-               "Connection to %s succeeded, but no supported measurement characteristic was found (CPS 0x2A63 / FTMS 0x2AD2).",
-               address);
+  if (!s_hasCyclingPower && !s_hasFitnessMachine && !s_hasSpeedCadence) {
+    char error[320];
+    if (services.empty()) {
+      const int discoveryError = client->getLastError();
+      if (discoveryError != 0) {
+        snprintf(error, sizeof(error),
+                 "Connected to %s but GATT service discovery failed (BLE error %d: %s). Check pairing and whether another app is using the trainer; see [BLE-GATT] monitor logs.",
+                 address, discoveryError,
+                 NimBLEUtils::returnCodeToString(discoveryError));
+      } else {
+        snprintf(error, sizeof(error),
+                 "Connected to %s; GATT discovery completed but returned zero services. The device may require pairing, be claimed by another app, or use a vendor protocol; see [BLE-GATT] monitor logs.",
+                 address);
+      }
     } else {
-      snprintf(error, sizeof(error),
-               "Connection to %s succeeded, but subscribing to power data failed (CPS 0x2A63 / FTMS 0x2AD2).",
-               address);
+      if (cpMeasurement || indoorBikeData || cscMeasurement) {
+        snprintf(error, sizeof(error),
+                 "Connected to %s and found data characteristics, but enabling notifications failed (CPS 0x2A63=%s, FTMS Indoor Bike Data 0x2AD2=%s, CSC 0x2A5B=%s; BLE error %d: %s).",
+                 address,
+                 cpMeasurement ? (s_hasCyclingPower ? "OK" : "FAILED") : "absent",
+                 indoorBikeData ? (s_hasFitnessMachine ? "OK" : "FAILED") : "absent",
+                 cscMeasurement ? (s_hasSpeedCadence ? "OK" : "FAILED") : "absent",
+                 client->getLastError(),
+                 NimBLEUtils::returnCodeToString(client->getLastError()));
+      } else {
+        snprintf(error, sizeof(error),
+                 "Connected to %s. GATT services were found but no usable measurement characteristic: need CPS 0x1818/0x2A63, FTMS Indoor Bike Data 0x1826/0x2AD2, or cadence-only CSC 0x1816/0x2A5B. See [BLE-GATT] service list in monitor.",
+                 address);
+      }
     }
     setError(error);
     disconnect();
@@ -333,10 +477,15 @@ bool BlePowerMeter::connectDevice(const char *address) {
   s_hasWheel = false;
   s_hasCrank = false;
   s_notificationCount = 0;
+  s_fitnessMachineNotificationCount = 0;
+  s_lastFitnessMachineFlags = 0;
   s_lastError[0] = '\0';
-  Serial.printf("[BLE] connected: %s (%s), profiles:%s%s\n",
+  Serial.printf("[BLE] connected: %s (%s), profiles:%s%s%s%s\n",
                 advertised->getName().c_str(), address,
                 s_hasCyclingPower ? " CPS" : "",
-                s_hasFitnessMachine ? " FTMS" : "");
+                s_hasFitnessMachine ? " FTMS" : "",
+                s_hasSpeedCadence ? " CSC cadence/speed" : "",
+                s_hasSpeedCadence && !s_hasCyclingPower && !s_hasFitnessMachine
+                    ? " (no power)" : "");
   return true;
 }

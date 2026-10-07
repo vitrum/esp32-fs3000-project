@@ -6,8 +6,8 @@
 输入列（固件 csv_logger 输出）：
     t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc
     （postureDeg 为可选列：姿态传感器未接入时旧格式数据仍可处理；
-      powerSrc（0=无 1=BLE 2=ANT+）为可选列，脚本按列名读取，多出的列自动忽略，
-      ANT+/BLE 功率计混用数据可直接处理）
+      powerSrc（0=无 1=BLE 2=ANT+ 3=虚拟功率计）为可选列，脚本按列名读取，多出的列自动忽略，
+      ANT+/BLE/虚拟功率计数据可直接处理）
 
 物理模型（逐窗口）：
     P_total = P_aero + P_rr + P_grade + P_accel

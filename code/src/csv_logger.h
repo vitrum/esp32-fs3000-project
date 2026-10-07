@@ -4,9 +4,9 @@
 #include <SPI.h>
 #include <SD.h>
 
-// TF 卡 CSV 日志（SDSPI 模式）
+// SD card CSV log (SDSPI mode)
 // 列：t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc
-//     powerSrc: 0=无功率源 1=BLE 功率计 2=ANT+ 功率计
+//     powerSrc: 0=none, 1=BLE, 2=ANT+, 3=virtual power meter
 class CsvLogger {
 public:
   bool begin();                       // 挂载 SD 并创建新文件，写表头
