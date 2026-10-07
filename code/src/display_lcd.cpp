@@ -34,7 +34,7 @@ void DisplayLcd::lvglFlushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color
     }
   }
 
-  g_display->_gfx->draw16bitBeRGBBitmap(area->x1, area->y1, buf, w, h);
+  g_display->_gfx->draw16bitRGBBitmap(area->x1, area->y1, buf, w, h);
   free(buf);
   lv_disp_flush_ready(drv);
 }
@@ -130,7 +130,7 @@ void DisplayLcd::onBleSelected(lv_event_t *) {
   if (!g_display) return;
   g_display->requestedPowerMode_ = 1;
   g_display->selectedPowerMode_ = 1;
-  lv_label_set_text(lv_obj_get_child(g_display->powerSourceButton_, 0), "功率计: BLE");
+  lv_label_set_text(lv_obj_get_child(g_display->powerSourceButton_, 0), "METER: BLE");
   lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -138,7 +138,7 @@ void DisplayLcd::onAntSelected(lv_event_t *) {
   if (!g_display) return;
   g_display->requestedPowerMode_ = 2;
   g_display->selectedPowerMode_ = 2;
-  lv_label_set_text(lv_obj_get_child(g_display->powerSourceButton_, 0), "功率计: ANT+");
+  lv_label_set_text(lv_obj_get_child(g_display->powerSourceButton_, 0), "METER: ANT+");
   lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -146,7 +146,7 @@ void DisplayLcd::onAutoSelected(lv_event_t *) {
   if (!g_display) return;
   g_display->requestedPowerMode_ = 0;
   g_display->selectedPowerMode_ = 0;
-  lv_label_set_text(lv_obj_get_child(g_display->powerSourceButton_, 0), "功率计: 自动");
+  lv_label_set_text(lv_obj_get_child(g_display->powerSourceButton_, 0), "METER: AUTO");
   lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -244,7 +244,7 @@ void DisplayLcd::begin() {
   titleLabel_ = lv_label_create(screen_);
   lv_label_set_text(titleLabel_, "AERO PROBE");
   lv_obj_align(titleLabel_, LV_ALIGN_TOP_LEFT, 12, 10);
-  lv_obj_set_style_text_font(titleLabel_, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(titleLabel_, &lv_font_montserrat_16, 0);
   lv_obj_set_style_text_color(titleLabel_, lv_color_make(93, 214, 197), 0);
 
   lv_obj_t *headerLine = lv_obj_create(screen_);
@@ -253,12 +253,13 @@ void DisplayLcd::begin() {
   lv_obj_set_style_bg_color(headerLine, lv_color_make(61, 90, 120), 0);
 
   lv_obj_t *cdaCard = lv_obj_create(screen_);
-  lv_obj_set_size(cdaCard, 216, 58);
+  lv_obj_set_size(cdaCard, 216, 74);
   lv_obj_align(cdaCard, LV_ALIGN_TOP_LEFT, 12, 43);
-  lv_obj_set_style_radius(cdaCard, 13, 0);
-  lv_obj_set_style_bg_color(cdaCard, lv_color_make(20, 38, 34), 0);
-  lv_obj_set_style_border_color(cdaCard, lv_color_make(69, 100, 76), 0);
-  lv_obj_set_style_border_width(cdaCard, 1, 0);
+  lv_obj_clear_flag(cdaCard, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_pad_all(cdaCard, 0, 0);
+  lv_obj_set_style_radius(cdaCard, 0, 0);
+  lv_obj_set_style_bg_opa(cdaCard, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(cdaCard, 0, 0);
 
   lv_obj_t *cdaTitle = lv_label_create(cdaCard);
   lv_label_set_text(cdaTitle, "ESTIMATED CdA");
@@ -268,29 +269,40 @@ void DisplayLcd::begin() {
 
   cdaLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(cdaLabel_, "-- m2");
-  lv_obj_align(cdaLabel_, LV_ALIGN_TOP_LEFT, 8, 22);
-  lv_obj_set_style_text_font(cdaLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_width(cdaLabel_, 132);
+  lv_label_set_long_mode(cdaLabel_, LV_LABEL_LONG_CLIP);
+  lv_obj_align(cdaLabel_, LV_ALIGN_TOP_LEFT, 8, 18);
+  lv_obj_set_style_text_font(cdaLabel_, &lv_font_montserrat_20, 0);
   lv_obj_set_style_text_color(cdaLabel_, lv_color_make(233, 255, 240), 0);
 
   postureLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(postureLabel_, "WAITING FOR DATA");
-  lv_obj_align(postureLabel_, LV_ALIGN_BOTTOM_LEFT, 8, -2);
+  lv_obj_set_width(postureLabel_, 190);
+  lv_label_set_long_mode(postureLabel_, LV_LABEL_LONG_CLIP);
+  lv_obj_align(postureLabel_, LV_ALIGN_BOTTOM_LEFT, 8, -1);
   lv_obj_set_style_text_font(postureLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(postureLabel_, lv_color_make(168, 196, 177), 0);
 
   zoneLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(zoneLabel_, "--");
   lv_obj_align(zoneLabel_, LV_ALIGN_RIGHT_MID, -8, 0);
-  lv_obj_set_style_text_font(zoneLabel_, &lv_font_montserrat_40, 0);
+  lv_obj_set_style_text_font(zoneLabel_, &lv_font_montserrat_28, 0);
   lv_obj_set_style_text_color(zoneLabel_, lv_color_make(170, 245, 160), 0);
+
+  lv_obj_t *cdaDivider = lv_obj_create(screen_);
+  lv_obj_set_size(cdaDivider, 216, 1);
+  lv_obj_align(cdaDivider, LV_ALIGN_TOP_LEFT, 12, 119);
+  lv_obj_set_style_bg_color(cdaDivider, lv_color_make(61, 90, 120), 0);
+  lv_obj_set_style_border_width(cdaDivider, 0, 0);
 
   lv_obj_t *windCard = lv_obj_create(screen_);
   lv_obj_set_size(windCard, 216, 56);
-  lv_obj_align(windCard, LV_ALIGN_TOP_LEFT, 12, 107);
-  lv_obj_set_style_radius(windCard, 13, 0);
-  lv_obj_set_style_bg_color(windCard, lv_color_make(17, 29, 41), 0);
-  lv_obj_set_style_border_color(windCard, lv_color_make(45, 75, 102), 0);
-  lv_obj_set_style_border_width(windCard, 1, 0);
+  lv_obj_align(windCard, LV_ALIGN_TOP_LEFT, 12, 123);
+  lv_obj_clear_flag(windCard, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_pad_all(windCard, 0, 0);
+  lv_obj_set_style_radius(windCard, 0, 0);
+  lv_obj_set_style_bg_opa(windCard, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(windCard, 0, 0);
 
   windLabelTitle_ = lv_label_create(windCard);
   lv_label_set_text(windLabelTitle_, "WIND");
@@ -310,41 +322,51 @@ void DisplayLcd::begin() {
   lv_obj_set_style_text_font(tempLabel_, &lv_font_montserrat_16, 0);
   lv_obj_set_style_text_color(tempLabel_, lv_color_make(127, 210, 255), 0);
 
-  lv_obj_t *powerCard = lv_obj_create(screen_);
-  lv_obj_set_size(powerCard, 216, 105);
-  lv_obj_align(powerCard, LV_ALIGN_TOP_LEFT, 12, 170);
-  lv_obj_set_style_radius(powerCard, 14, 0);
-  lv_obj_set_style_bg_color(powerCard, lv_color_make(17, 30, 36), 0);
-  lv_obj_set_style_border_color(powerCard, lv_color_make(62, 108, 115), 0);
-  lv_obj_set_style_border_width(powerCard, 1, 0);
+  lv_obj_t *windDivider = lv_obj_create(screen_);
+  lv_obj_set_size(windDivider, 216, 1);
+  lv_obj_align(windDivider, LV_ALIGN_TOP_LEFT, 12, 181);
+  lv_obj_set_style_bg_color(windDivider, lv_color_make(61, 90, 120), 0);
+  lv_obj_set_style_border_width(windDivider, 0, 0);
 
-  realPowerLabel_ = lv_label_create(powerCard);
-  lv_label_set_text(realPowerLabel_, "0 W");
-  lv_obj_align(realPowerLabel_, LV_ALIGN_TOP_LEFT, 8, 4);
-  lv_obj_set_style_text_font(realPowerLabel_, &lv_font_montserrat_40, 0);
-  lv_obj_set_style_text_color(realPowerLabel_, lv_color_make(130, 235, 255), 0);
+  lv_obj_t *powerCard = lv_obj_create(screen_);
+  lv_obj_set_size(powerCard, 216, 76);
+  lv_obj_align(powerCard, LV_ALIGN_TOP_LEFT, 12, 185);
+  lv_obj_clear_flag(powerCard, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_pad_all(powerCard, 0, 0);
+  lv_obj_set_style_radius(powerCard, 0, 0);
+  lv_obj_set_style_bg_opa(powerCard, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(powerCard, 0, 0);
 
   avg3Label_ = lv_label_create(powerCard);
-  lv_label_set_text(avg3Label_, "3s avg 0 W");
-  lv_obj_align(avg3Label_, LV_ALIGN_TOP_LEFT, 8, 55);
-  lv_obj_set_style_text_font(avg3Label_, &lv_font_montserrat_16, 0);
+  lv_label_set_text(avg3Label_, "3 SEC AVG");
+  lv_obj_align(avg3Label_, LV_ALIGN_TOP_LEFT, 8, 5);
+  lv_obj_set_style_text_font(avg3Label_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(avg3Label_, lv_color_make(255, 209, 102), 0);
 
-  avg60Label_ = lv_label_create(powerCard);
-  lv_label_set_text(avg60Label_, "1m avg 0 W");
-  lv_obj_align(avg60Label_, LV_ALIGN_TOP_LEFT, 8, 78);
-  lv_obj_set_style_text_font(avg60Label_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(avg60Label_, lv_color_make(170, 245, 160), 0);
+  powerLabel_ = lv_label_create(powerCard);
+  lv_label_set_text(powerLabel_, "0 W");
+  lv_obj_set_width(powerLabel_, 190);
+  lv_label_set_long_mode(powerLabel_, LV_LABEL_LONG_CLIP);
+  lv_obj_align(powerLabel_, LV_ALIGN_CENTER, 0, 8);
+  lv_obj_set_style_text_align(powerLabel_, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(powerLabel_, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(powerLabel_, lv_color_make(130, 235, 255), 0);
+
+  lv_obj_t *powerDivider = lv_obj_create(screen_);
+  lv_obj_set_size(powerDivider, 216, 1);
+  lv_obj_align(powerDivider, LV_ALIGN_TOP_LEFT, 12, 265);
+  lv_obj_set_style_bg_color(powerDivider, lv_color_make(61, 90, 120), 0);
+  lv_obj_set_style_border_width(powerDivider, 0, 0);
 
   cadenceLabel_ = lv_label_create(screen_);
   lv_label_set_text(cadenceLabel_, "CADENCE 0 rpm");
-  lv_obj_align(cadenceLabel_, LV_ALIGN_TOP_LEFT, 12, 265);
-  lv_obj_set_style_text_font(cadenceLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_align(cadenceLabel_, LV_ALIGN_TOP_LEFT, 12, 268);
+  lv_obj_set_style_text_font(cadenceLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(cadenceLabel_, lv_color_make(255, 255, 255), 0);
 
   timeLabel_ = lv_label_create(screen_);
   lv_label_set_text(timeLabel_, "00:00:00");
-  lv_obj_align(timeLabel_, LV_ALIGN_TOP_RIGHT, -12, 266);
+  lv_obj_align(timeLabel_, LV_ALIGN_TOP_RIGHT, -12, 268);
   lv_obj_set_style_text_font(timeLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(timeLabel_, lv_color_make(200, 220, 230), 0);
 
@@ -355,8 +377,8 @@ void DisplayLcd::begin() {
   lv_obj_set_style_text_color(statusLabel_, lv_color_make(156, 214, 162), 0);
 
   powerSourceButton_ = lv_btn_create(screen_);
-  lv_obj_set_size(powerSourceButton_, 216, 34);
-  lv_obj_align(powerSourceButton_, LV_ALIGN_TOP_LEFT, 12, 284);
+  lv_obj_set_size(powerSourceButton_, 216, 28);
+  lv_obj_align(powerSourceButton_, LV_ALIGN_TOP_LEFT, 12, 289);
   lv_obj_set_style_radius(powerSourceButton_, 9, 0);
   lv_obj_set_style_bg_color(powerSourceButton_, lv_color_make(18, 49, 55), 0);
   lv_obj_add_event_cb(powerSourceButton_, onPowerSourceButton, LV_EVENT_CLICKED, nullptr);
@@ -401,23 +423,13 @@ void DisplayLcd::update(const WindVector &w, float powerW, float cadRpm,
 
   float sum3 = 0.0f;
   int count3 = 0;
-  int len3 = min(powerHistoryIndex_, 3);
+  int len3 = min(powerHistoryIndex_, powerHistorySize_);
   for (int i = 0; i < len3; ++i) {
     int idx = (powerHistoryIndex_ - 1 - i + powerHistorySize_) % powerHistorySize_;
     sum3 += powerHistory_[idx];
     count3++;
   }
   power3sAvg_ = count3 > 0 ? sum3 / count3 : 0.0f;
-
-  float sum60 = 0.0f;
-  int count60 = 0;
-  int totalHistory = min(powerHistoryIndex_, powerHistorySize_);
-  for (int i = 0; i < totalHistory; ++i) {
-    int idx = (powerHistoryIndex_ - 1 - i + powerHistorySize_) % powerHistorySize_;
-    sum60 += powerHistory_[idx];
-    count60++;
-  }
-  power60sAvg_ = count60 > 0 ? sum60 / count60 : 0.0f;
 
   char buf[64];
   float cda = -1.0f;
@@ -470,14 +482,8 @@ void DisplayLcd::update(const WindVector &w, float powerW, float cadRpm,
   snprintf(buf, sizeof(buf), "%.1f °C", tempC);
   lv_label_set_text(tempLabel_, buf);
 
-  snprintf(buf, sizeof(buf), "%.0f W", powerW);
-  lv_label_set_text(realPowerLabel_, buf);
-
-  snprintf(buf, sizeof(buf), "3s avg %.0f W", power3sAvg_);
-  lv_label_set_text(avg3Label_, buf);
-
-  snprintf(buf, sizeof(buf), "1m avg %.0f W", power60sAvg_);
-  lv_label_set_text(avg60Label_, buf);
+  snprintf(buf, sizeof(buf), "%.0f W", power3sAvg_);
+  lv_label_set_text(powerLabel_, buf);
 
   snprintf(buf, sizeof(buf), "CADENCE %.0f rpm", cadRpm);
   lv_label_set_text(cadenceLabel_, buf);

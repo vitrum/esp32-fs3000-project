@@ -21,51 +21,57 @@
     }
     h1 { margin: 0 0 8px; font-size: 25px; }
     .intro { margin: 0 0 22px; color: #9aafc2; line-height: 1.6; }
-    .layout { display: grid; grid-template-columns: 280px 1fr; gap: 24px; align-items: start; }
-    .device {
-      width: 240px;
-      height: 320px;
-      padding: 10px 12px;
+    .layout { display: grid; grid-template-columns: 266px 1fr; gap: 24px; align-items: start; }
+    .device-shell {
+      width: 266px;
+      height: 346px;
+      padding: 12px;
       border: 1px solid #314a60;
       border-radius: 20px;
       background: #090f19;
       box-shadow: 0 20px 55px #0009, inset 0 0 0 5px #101d2a, 0 0 30px #36d4bf12;
-      overflow: hidden;
       margin: 0 auto;
+    }
+    .device {
+      width: 240px;
+      height: 320px;
+      background: #090f19;
+      overflow: hidden;
       color: white;
       position: relative;
+      font-family: Arial, sans-serif;
     }
-    .top { height: 27px; display: flex; align-items: center; justify-content: space-between; }
-    .brand { color: #5dd6c5; font-weight: 800; letter-spacing: .07em; font-size: 15px; }
-    .badge { color: #9cd6a2; font-size: 10px; }
-    .rule { height: 2px; background: #3d5a78; margin: 0 0 7px; }
-    .card {
-      border: 1px solid #2d4b66;
-      border-radius: 14px;
-      background: #111d29;
-      padding: 10px 12px;
-    }
-    .wind-card { height: 65px; margin-bottom: 7px; padding: 7px 10px; }
-    .wind-row { display: flex; align-items: center; justify-content: space-between; }
-    .wind { font-size: 21px; font-weight: 700; letter-spacing: -.04em; }
-    .temp { color: #7fd2ff; font-size: 13px; white-space: nowrap; }
-    .caption { color: #b4c3d2; font-size: 9px; margin-top: 1px; }
-    .cda-card { height: 59px; margin-bottom: 7px; padding: 5px 10px; border-color: #45644c; background: linear-gradient(130deg, #142a27, #14221f 70%); display: flex; align-items: center; justify-content: space-between; }
-    .cda-details { min-width: 0; }
-    .cda-title { color: #a8c4b1; font-size: 9px; letter-spacing: .08em; }
-    .cda-reading { color: #e9fff0; font-size: 12px; font-weight: 700; margin-top: 2px; white-space: nowrap; }
-    .posture-reading { color: #a8c4b1; font-size: 8px; margin-top: 1px; white-space: nowrap; }
-    .zone-block { display: flex; align-items: center; gap: 4px; color: #aaf5a0; }
-    .zone-caption { font-size: 9px; font-weight: 700; letter-spacing: .04em; }
-    .zone-number { font-size: 30px; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .power-card { height: 88px; background: #111e24; border-color: #3e6c73; padding: 7px 10px; }
-    .power { color: #82ebff; font-size: 21px; font-weight: 700; }
-    .avg3 { color: #ffd166; font-size: 11px; margin-top: 1px; }
-    .avg60 { color: #aaf5a0; font-size: 11px; margin-top: 1px; }
-    .bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 5px; }
-    .cadence { font-size: 12px; font-weight: 600; }
-    .meter-button { display: block; margin-top: 2px; min-height: 19px; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid #2b5c62; border-radius: 6px; padding: 1px 5px; background: #102b32; color: #83e6d7; font-size: 8px; font-weight: 700; cursor: pointer; }
-    .time { color: #c8dce6; font-size: 9px; text-align: right; }
+    .top { position: absolute; inset: 0; pointer-events: none; }
+    .brand { position: absolute; left: 12px; top: 10px; color: #5dd6c5; font-weight: 700; letter-spacing: .04em; font-size: 16px; line-height: 20px; }
+    .badge { position: absolute; right: 12px; top: 8px; color: #9cd6a2; font-size: 14px; line-height: 18px; }
+    .rule, .divider { position: absolute; left: 12px; width: 216px; height: 1px; background: #3d5a78; }
+    .rule { top: 36px; height: 2px; }
+    .divider-cda { top: 119px; }
+    .divider-wind { top: 181px; }
+    .divider-power { top: 265px; }
+    .card { position: absolute; left: 12px; width: 216px; border: 0; border-radius: 0; padding: 0; background: transparent; }
+    .cda-card { top: 43px; height: 74px; }
+    .cda-details { position: absolute; inset: 0; }
+    .cda-title { position: absolute; left: 8px; top: 3px; color: #a8c4b1; font-size: 14px; line-height: 17px; }
+    .cda-reading { position: absolute; left: 8px; top: 18px; width: 132px; overflow: hidden; color: #e9fff0; font-size: 20px; line-height: 24px; white-space: nowrap; }
+    .posture-reading { position: absolute; left: 8px; bottom: 1px; width: 190px; overflow: hidden; color: #a8c4b1; font-size: 14px; line-height: 17px; white-space: nowrap; }
+    .zone-block { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: #aaf5a0; }
+    .zone-caption { display: none; }
+    .zone-number { font-size: 28px; line-height: 34px; font-variant-numeric: tabular-nums; }
+    .wind-card { top: 123px; height: 56px; }
+    .wind-row { position: absolute; inset: 0; }
+    .wind { position: absolute; left: 8px; bottom: 2px; font-size: 20px; line-height: 24px; font-weight: 400; white-space: nowrap; }
+    .temp { position: absolute; right: 8px; top: 50%; transform: translateY(calc(-50% + 4px)); color: #7fd2ff; font-size: 16px; line-height: 20px; white-space: nowrap; }
+    .caption { display: none; }
+    .power-card { top: 185px; height: 76px; }
+    .power { position: absolute; left: 13px; top: 34px; width: 190px; overflow: hidden; transform: translateY(-50%); color: #82ebff; font-size: 20px; line-height: 24px; text-align: center; white-space: nowrap; }
+    .avg3 { position: absolute; left: 8px; top: 5px; color: #ffd166; font-size: 14px; line-height: 17px; }
+    .avg60 { display: none; }
+    .bottom { position: absolute; inset: 0; }
+    .bottom > div:first-child { position: static; }
+    .cadence { position: absolute; left: 12px; top: 268px; font-size: 14px; line-height: 17px; font-weight: 400; white-space: nowrap; }
+    .meter-button { position: absolute; left: 12px; top: 289px; width: 216px; height: 28px; min-height: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: 9px; padding: 0 6px; background: #123137; color: #83e6d7; font-size: 16px; line-height: 28px; font-weight: 400; text-align: center; cursor: pointer; }
+    .time { position: absolute; right: 12px; top: 268px; color: #c8dce6; font-size: 14px; line-height: 17px; text-align: right; }
     .touch-dialog { position: absolute; z-index: 5; inset: 0; display: none; flex-direction: column; padding: 18px 14px; background: #09111bf2; backdrop-filter: blur(8px); }
     .touch-dialog.open { display: flex; }
     .dialog-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; font-size: 15px; font-weight: 750; }
@@ -129,32 +135,34 @@
 <body>
 <main>
   <h1>Aero Probe UI 模拟器</h1>
-  <p class="intro">在没有 ESP32、FS3000 和功率计的情况下，检查仪表布局、数据刷新、功率源状态以及 3 秒 / 1 分钟平均值。</p>
+  <p class="intro">显示区域按实际屏幕像素精确模拟（240×320，1 CSS 像素对应 1 屏幕像素）。</p>
   <div class="layout">
     <section aria-label="240乘320 LCD预览">
+      <div class="device-shell">
       <div class="device">
         <div class="top"><span class="brand">AERO PROBE</span><span class="badge" id="log-status">LOG OK</span></div>
         <div class="rule"></div>
         <div class="card cda-card">
           <div class="cda-details">
             <div class="cda-title">ESTIMATED CdA</div>
-            <div class="cda-reading" id="cda-reading">-- m²</div>
-            <div class="posture-reading" id="posture-reading">等待功率数据</div>
+            <div class="cda-reading" id="cda-reading">-- m2</div>
+            <div class="posture-reading" id="posture-reading">WAITING FOR DATA</div>
           </div>
-          <div class="zone-block"><span class="zone-caption">ZONE</span><span class="zone-number" id="zone-reading">--</span></div>
+          <div class="zone-block"><span class="zone-number" id="zone-reading">--</span></div>
         </div>
+        <div class="divider divider-cda"></div>
         <div class="card wind-card">
           <div class="wind-row"><span class="wind" id="wind-reading">34.2 km/h</span><span class="temp" id="temp-reading">20.0 °C</span></div>
-          <div class="caption">风速</div>
         </div>
+        <div class="divider divider-wind"></div>
         <div class="card power-card">
+          <div class="avg3">3 SEC AVG</div>
           <div class="power" id="power-reading">0 W</div>
-          <div class="avg3" id="avg3-reading">3s avg 0 W</div>
-          <div class="avg60" id="avg60-reading">1m avg 0 W</div>
         </div>
+        <div class="divider divider-power"></div>
         <div class="bottom">
-          <div><div class="cadence" id="cadence-reading">Cadence 0 rpm</div><button type="button" class="meter-button" id="screen-meter-button">选择功率计 ▾</button></div>
-          <div class="time" id="clock-reading">00:00:00<br>SIM</div>
+          <div><div class="cadence" id="cadence-reading">CADENCE 0 rpm</div><button type="button" class="meter-button" id="screen-meter-button">PM: AUTO / SCAN</button></div>
+          <div class="time" id="clock-reading">00:00:00</div>
         </div>
         <div class="touch-dialog" id="touch-dialog" aria-hidden="true">
           <div class="dialog-heading"><span>选择功率计</span><button type="button" class="dialog-close" id="dialog-close" aria-label="关闭">×</button></div>
@@ -163,6 +171,7 @@
           <button type="button" class="device-option" data-source="ANT+"><strong>ANT+ · Bike Power</strong><span>搜索 ANT+ 功率计</span></button>
           <p class="dialog-note">点选设备连接。当前固件演示页模拟设备选择；实际扫描列表需要设备发现后显示。</p>
         </div>
+      </div>
       </div>
       <div class="notice">温度来自可选 BME280 环境传感器，不是 FS3000 测得。CDA 为模拟估算：假设静风、平路、匀速，视风速度近似地速；单风速计不能测出真实地速/风向。</div>
     </section>
@@ -182,7 +191,7 @@
           <button id="connect-ant" type="button">连接 ANT+</button>
           <button id="disconnect" type="button">断开</button>
         </div>
-        <label for="power-input">实时功率 <span class="value" id="power-value">230 W</span></label>
+        <label for="power-input">功率输入 <span class="value" id="power-value">230 W</span></label>
         <input id="power-input" type="range" min="0" max="1500" step="1" value="230">
         <label for="cadence-input">踏频 <span class="value" id="cadence-value">88 rpm</span></label>
         <input id="cadence-input" type="range" min="0" max="180" step="1" value="88">
@@ -196,7 +205,7 @@
           <button id="reset" type="button">重置平均值</button>
           <button id="toggle-run" type="button">暂停自动采样</button>
         </div>
-        <p class="help">自动采样每秒记录一个样本。推进按钮便于快速检查滑动平均，不需要等待真实的一分钟。</p>
+        <p class="help">自动采样每秒记录一个样本。功率区域仅显示最近 3 个样本的平均值。</p>
       </div>
       <div class="panel wide">
         <h2>ZONE 参考分级（按估算 CdA）</h2>
@@ -225,13 +234,13 @@
   const maxSamples = 60;
   const model = { totalMassKg: 85, crr: 0.004, airDensityKgM3: 1.225, drivetrainEfficiency: 0.975 };
   const zones = [
-    { zone: 7, upper: 0.23, posture: "顶级 TT 计时赛车手" },
-    { zone: 6, upper: 0.27, posture: "竞赛级 TT 姿态" },
-    { zone: 5, upper: 0.31, posture: "更激进气动姿态" },
-    { zone: 4, upper: 0.36, posture: "激进下把姿态" },
-    { zone: 3, upper: 0.42, posture: "低趴姿态" },
-    { zone: 2, upper: 0.50, posture: "较低 / 弯把姿态" },
-    { zone: 1, upper: Infinity, posture: "直立坐姿" }
+    { zone: 7, upper: 0.23, posture: "ELITE TT" },
+    { zone: 6, upper: 0.27, posture: "RACE TT" },
+    { zone: 5, upper: 0.31, posture: "VERY AERO" },
+    { zone: 4, upper: 0.36, posture: "AGGRESSIVE" },
+    { zone: 3, upper: 0.42, posture: "AERO" },
+    { zone: 2, upper: 0.50, posture: "LOW / DROPS" },
+    { zone: 1, upper: Infinity, posture: "UPRIGHT" }
   ];
 
   function estimateCda(powerW, windMps) {
@@ -262,21 +271,23 @@
     const zone = zoneFor(cda);
     $("wind-reading").textContent = `${(state.wind * 3.6).toFixed(1)} km/h`;
     $("temp-reading").textContent = `${state.temp.toFixed(1)} °C`;
-    $("power-reading").textContent = `${Math.round(displayedPower)} W`;
-    $("cadence-reading").textContent = `Cadence ${Math.round(displayedCadence)} rpm`;
+    const recent3 = state.samples.slice(-3);
+    const average = (values) => values.length ? values.reduce((sum, item) => sum + item, 0) / values.length : 0;
+    $("power-reading").textContent = `${Math.round(average(recent3))} W`;
+    $("cadence-reading").textContent = `CADENCE ${Math.round(displayedCadence)} rpm`;
     $("screen-meter-button").textContent = state.source ? `${state.source} · ${stateMeter.name || "功率计"} ▾` : "选择功率计 ▾";
     $("screen-meter-button").style.color = state.source === "ANT+" ? "#7ed3ff" : state.source === "BLE" ? "#8eeba7" : "#83e6d7";
-    const recent3 = state.samples.slice(-3);
-    const recent60 = state.samples.slice(-maxSamples);
-    const average = (values) => values.length ? values.reduce((sum, item) => sum + item, 0) / values.length : 0;
-    $("avg3-reading").textContent = `3s avg ${Math.round(average(recent3))} W`;
-    $("avg60-reading").textContent = `1m avg ${Math.round(average(recent60))} W`;
     $("zone-reading").textContent = zone ? String(zone.zone) : "--";
     $("zone-reading").style.color = zone ? "#aaf5a0" : "#9aafc2";
-    $("cda-reading").textContent = cda == null ? "-- m²" : `${cda.toFixed(2)} m²`;
-    $("posture-reading").textContent = zone ? zone.posture : "等待有效数据";
-    $("clock-reading").innerHTML = `${formatTime(state.seconds)}<br>SIM`;
-    $("log-status").textContent = state.running ? "LOG OK" : "PAUSED";
+    $("cda-reading").textContent = cda == null ? "-- m2" : `${cda.toFixed(2)} m2`;
+    $("posture-reading").textContent = zone ? zone.posture : "WAITING FOR DATA";
+    $("screen-meter-button").textContent = state.source === "ANT+"
+      ? "PM: ANT+ / CONNECTED"
+      : state.source === "BLE"
+        ? "PM: BLE / CONNECTED"
+        : "PM: AUTO / SCAN";
+    $("clock-reading").textContent = formatTime(state.seconds);
+    $("log-status").textContent = state.running ? "Log: OK" : "Log: OFF";
     $("log-status").style.color = state.running ? "#9cd6a2" : "#ffd166";
   }
 

@@ -25,9 +25,8 @@ private:
   lv_obj_t *titleLabel_ = nullptr;
   lv_obj_t *windLabel_ = nullptr;
   lv_obj_t *tempLabel_ = nullptr;
-  lv_obj_t *realPowerLabel_ = nullptr;
+  lv_obj_t *powerLabel_ = nullptr;
   lv_obj_t *avg3Label_ = nullptr;
-  lv_obj_t *avg60Label_ = nullptr;
   lv_obj_t *cadenceLabel_ = nullptr;
   lv_obj_t *timeLabel_ = nullptr;
   lv_obj_t *statusLabel_ = nullptr;
@@ -38,12 +37,11 @@ private:
   lv_obj_t *postureLabel_ = nullptr;
   lv_obj_t *windLabelTitle_ = nullptr;
 
-  int powerHistorySize_ = 60;
-  float powerHistory_[60] = {0};
+  int powerHistorySize_ = 3;
+  float powerHistory_[3] = {0};
   int powerHistoryIndex_ = 0;
 
   float power3sAvg_ = 0.0f;
-  float power60sAvg_ = 0.0f;
   int requestedPowerMode_ = -1;
   int selectedPowerMode_ = 0;
   bool touchReady_ = false;
