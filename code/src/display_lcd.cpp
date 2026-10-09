@@ -298,12 +298,13 @@ void DisplayLcd::buildPanelHeader(lv_obj_t *panel, const char *title,
   lv_obj_t *backButton = lv_btn_create(panel);
   lv_obj_set_size(backButton, 64, 30);
   lv_obj_set_style_radius(backButton, 0, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(backButton, lv_color_make(40, 43, 50), 0);
+  lv_obj_set_style_bg_color(backButton, lv_color_make(226, 232, 240), 0);
   lv_obj_align(backButton, LV_ALIGN_TOP_LEFT, 10, 10);
   lv_obj_add_event_cb(backButton, backCallback, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *backLabel = lv_label_create(backButton);
   lv_label_set_text(backLabel, LV_SYMBOL_LEFT " BACK");
   lv_obj_set_style_text_font(backLabel, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(backLabel, lv_color_make(51, 65, 85), 0);
   lv_obj_center(backLabel);
 
   lv_obj_t *titleLabel = lv_label_create(panel);
@@ -311,13 +312,13 @@ void DisplayLcd::buildPanelHeader(lv_obj_t *panel, const char *title,
   lv_obj_set_width(titleLabel, 142);
   lv_label_set_long_mode(titleLabel, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_font(titleLabel, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(titleLabel, lv_color_make(93, 214, 197), 0);
+  lv_obj_set_style_text_color(titleLabel, lv_color_make(37, 99, 235), 0);
   lv_obj_align(titleLabel, LV_ALIGN_TOP_LEFT, 84, 16);
 
   lv_obj_t *divider = lv_obj_create(panel);
   lv_obj_set_size(divider, 216, 1);
   lv_obj_align(divider, LV_ALIGN_TOP_LEFT, 12, 48);
-  lv_obj_set_style_bg_color(divider, lv_color_make(61, 90, 120), 0);
+  lv_obj_set_style_bg_color(divider, lv_color_make(203, 213, 225), 0);
   lv_obj_set_style_border_width(divider, 0, 0);
 }
 
@@ -330,7 +331,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_pad_all(powerSourcePanel_, 0, 0);
   lv_obj_set_style_radius(powerSourcePanel_, 0, 0);
   lv_obj_set_style_border_width(powerSourcePanel_, 0, 0);
-  lv_obj_set_style_bg_color(powerSourcePanel_, lv_color_make(8, 15, 25), 0);
+  lv_obj_set_style_bg_color(powerSourcePanel_, lv_color_make(248, 250, 252), 0);
   lv_obj_set_style_bg_opa(powerSourcePanel_, LV_OPA_COVER, 0);
   buildPanelHeader(powerSourcePanel_, "POWER SOURCE", onCancelSelection);
   powerSourceTitle_ = lv_obj_get_child(powerSourcePanel_, 1);
@@ -339,7 +340,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_label_set_text(powerSourceHint_, "Choose a power source");
   lv_obj_set_width(powerSourceHint_, 216);
   lv_obj_set_style_text_font(powerSourceHint_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(powerSourceHint_, lv_color_make(164, 183, 198), 0);
+  lv_obj_set_style_text_color(powerSourceHint_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(powerSourceHint_, LV_ALIGN_TOP_LEFT, 12, 60);
 
   const char *labels[] = {"SCAN BLE DEVICES", "ANT+ POWER METER",
@@ -347,8 +348,8 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_event_cb_t callbacks[] = {onBleSelected, onAntSelected,
                                onVirtualSelected, onAutoSelected};
   const lv_color_t colors[] = {
-    lv_color_make(22, 55, 62), lv_color_make(24, 47, 73),
-    lv_color_make(38, 49, 61), lv_color_make(38, 49, 61)
+    lv_color_make(219, 234, 254), lv_color_make(239, 244, 248),
+    lv_color_make(239, 244, 248), lv_color_make(239, 244, 248)
   };
   const lv_coord_t heights[] = {38, 38, 38, 38};
   lv_coord_t y = 98;
@@ -358,10 +359,13 @@ void DisplayLcd::buildPowerSourcePanel() {
     lv_obj_set_style_radius(button, 0, LV_PART_MAIN);
     lv_obj_align(button, LV_ALIGN_TOP_LEFT, 16, y);
     lv_obj_set_style_bg_color(button, colors[i], 0);
+    lv_obj_set_style_border_color(button, lv_color_make(203, 213, 225), 0);
+    lv_obj_set_style_border_width(button, 1, 0);
     lv_obj_add_event_cb(button, callbacks[i], LV_EVENT_CLICKED, nullptr);
     powerSourceOptions_[i] = lv_label_create(button);
     lv_label_set_text(powerSourceOptions_[i], labels[i]);
     lv_obj_set_style_text_font(powerSourceOptions_[i], &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(powerSourceOptions_[i], lv_color_make(30, 41, 59), 0);
     lv_obj_center(powerSourceOptions_[i]);
     y += heights[i] + 6;
   }
@@ -377,7 +381,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_pad_all(bleDevicePanel_, 0, 0);
   lv_obj_set_style_radius(bleDevicePanel_, 0, 0);
   lv_obj_set_style_border_width(bleDevicePanel_, 0, 0);
-  lv_obj_set_style_bg_color(bleDevicePanel_, lv_color_make(8, 15, 25), 0);
+  lv_obj_set_style_bg_color(bleDevicePanel_, lv_color_make(248, 250, 252), 0);
   lv_obj_set_style_bg_opa(bleDevicePanel_, LV_OPA_COVER, 0);
 
   buildPanelHeader(bleDevicePanel_, "BLE DEVICES", onBleBack);
@@ -387,18 +391,19 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_label_set_text(bleDeviceHint_, "Tap device, then confirm");
   lv_obj_set_width(bleDeviceHint_, 216);
   lv_obj_set_style_text_font(bleDeviceHint_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(bleDeviceHint_, lv_color_make(164, 183, 198), 0);
+  lv_obj_set_style_text_color(bleDeviceHint_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(bleDeviceHint_, LV_ALIGN_TOP_LEFT, 12, 56);
 
   lv_obj_t *scanButton = lv_btn_create(bleDevicePanel_);
   lv_obj_set_size(scanButton, 216, 32);
   lv_obj_set_style_radius(scanButton, 0, LV_PART_MAIN);
   lv_obj_align(scanButton, LV_ALIGN_TOP_LEFT, 12, 80);
-  lv_obj_set_style_bg_color(scanButton, lv_color_make(22, 55, 62), 0);
+  lv_obj_set_style_bg_color(scanButton, lv_color_make(37, 99, 235), 0);
   lv_obj_add_event_cb(scanButton, onBleScanAgain, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *scanLabel = lv_label_create(scanButton);
   lv_label_set_text(scanLabel, "SCAN AGAIN");
   bleScanLabel_ = scanLabel;
+  lv_obj_set_style_text_color(scanLabel, lv_color_white(), 0);
   lv_obj_set_style_text_font(scanLabel, &lv_font_montserrat_14, 0);
   lv_obj_center(scanLabel);
 
@@ -407,7 +412,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_width(bleStatusLabel_, 216);
   lv_label_set_long_mode(bleStatusLabel_, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_font(bleStatusLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(bleStatusLabel_, lv_color_make(255, 209, 102), 0);
+  lv_obj_set_style_text_color(bleStatusLabel_, lv_color_make(37, 99, 235), 0);
   lv_obj_align(bleStatusLabel_, LV_ALIGN_TOP_LEFT, 12, 116);
 
   for (size_t i = 0; i < 4; ++i) {
@@ -416,15 +421,17 @@ void DisplayLcd::buildPowerSourcePanel() {
     lv_obj_set_style_radius(bleDeviceButtons_[i], 0, LV_PART_MAIN);
     lv_obj_align(bleDeviceButtons_[i], LV_ALIGN_TOP_LEFT, 12,
                  (lv_coord_t)(136 + i * 40));
-    lv_obj_set_style_bg_color(bleDeviceButtons_[i], lv_color_make(18, 36, 50), 0);
+    lv_obj_set_style_bg_color(bleDeviceButtons_[i], lv_color_make(239, 244, 248), 0);
     lv_obj_set_style_pad_all(bleDeviceButtons_[i], 1, 0);
-    lv_obj_set_style_border_width(bleDeviceButtons_[i], 0, 0);
+    lv_obj_set_style_border_color(bleDeviceButtons_[i], lv_color_make(203, 213, 225), 0);
+    lv_obj_set_style_border_width(bleDeviceButtons_[i], 1, 0);
     lv_obj_add_event_cb(bleDeviceButtons_[i], onBleDeviceSelected,
                         LV_EVENT_CLICKED, (void *)(uintptr_t)i);
     lv_obj_t *deviceLabel = lv_label_create(bleDeviceButtons_[i]);
     lv_obj_set_width(deviceLabel, 196);
     lv_label_set_long_mode(deviceLabel, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_font(deviceLabel, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(deviceLabel, lv_color_make(30, 41, 59), 0);
     lv_obj_center(deviceLabel);
     lv_obj_add_flag(bleDeviceButtons_[i], LV_OBJ_FLAG_HIDDEN);
   }
@@ -439,7 +446,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_pad_all(bleConfirmPanel_, 0, 0);
   lv_obj_set_style_radius(bleConfirmPanel_, 0, 0);
   lv_obj_set_style_border_width(bleConfirmPanel_, 0, 0);
-  lv_obj_set_style_bg_color(bleConfirmPanel_, lv_color_make(8, 15, 25), 0);
+  lv_obj_set_style_bg_color(bleConfirmPanel_, lv_color_make(248, 250, 252), 0);
   lv_obj_set_style_bg_opa(bleConfirmPanel_, LV_OPA_COVER, 0);
 
   buildPanelHeader(bleConfirmPanel_, "CONFIRM DEVICE", onBleConfirmBack);
@@ -450,7 +457,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_width(bleConfirmNameLabel_, 216);
   lv_label_set_long_mode(bleConfirmNameLabel_, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_font(bleConfirmNameLabel_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(bleConfirmNameLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_color(bleConfirmNameLabel_, lv_color_make(23, 32, 51), 0);
   lv_obj_align(bleConfirmNameLabel_, LV_ALIGN_TOP_LEFT, 12, 76);
 
   bleConfirmAddressLabel_ = lv_label_create(bleConfirmPanel_);
@@ -459,18 +466,19 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_height(bleConfirmAddressLabel_, 44);
   lv_label_set_long_mode(bleConfirmAddressLabel_, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(bleConfirmAddressLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(bleConfirmAddressLabel_, lv_color_make(164, 183, 198), 0);
+  lv_obj_set_style_text_color(bleConfirmAddressLabel_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(bleConfirmAddressLabel_, LV_ALIGN_TOP_LEFT, 12, 104);
 
   lv_obj_t *confirmButton = lv_btn_create(bleConfirmPanel_);
   lv_obj_set_size(confirmButton, 216, 42);
   lv_obj_set_style_radius(confirmButton, 0, LV_PART_MAIN);
   lv_obj_align(confirmButton, LV_ALIGN_TOP_LEFT, 12, 190);
-  lv_obj_set_style_bg_color(confirmButton, lv_color_make(22, 75, 67), 0);
+  lv_obj_set_style_bg_color(confirmButton, lv_color_make(37, 99, 235), 0);
   lv_obj_add_event_cb(confirmButton, onBleConfirm, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *confirmLabel = lv_label_create(confirmButton);
   lv_label_set_text(confirmLabel, "CONNECT");
   bleConfirmButtonLabel_ = confirmLabel;
+  lv_obj_set_style_text_color(confirmLabel, lv_color_white(), 0);
   lv_obj_set_style_text_font(confirmLabel, &lv_font_montserrat_14, 0);
   lv_obj_center(confirmLabel);
 
@@ -484,7 +492,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_pad_all(bleLoadingPanel_, 0, 0);
   lv_obj_set_style_radius(bleLoadingPanel_, 0, 0);
   lv_obj_set_style_border_width(bleLoadingPanel_, 0, 0);
-  lv_obj_set_style_bg_color(bleLoadingPanel_, lv_color_make(8, 15, 25), 0);
+  lv_obj_set_style_bg_color(bleLoadingPanel_, lv_color_make(248, 250, 252), 0);
   lv_obj_set_style_bg_opa(bleLoadingPanel_, LV_OPA_COVER, 0);
 
   buildPanelHeader(bleLoadingPanel_, "LOADING", onBleLoadingBack);
@@ -495,6 +503,10 @@ void DisplayLcd::buildPowerSourcePanel() {
   bleLoadingSpinner_ = lv_spinner_create(bleLoadingPanel_, 900, 60);
   lv_obj_set_size(bleLoadingSpinner_, 42, 42);
   lv_obj_align(bleLoadingSpinner_, LV_ALIGN_TOP_MID, 0, 76);
+  lv_obj_set_style_arc_color(bleLoadingSpinner_, lv_color_make(219, 227, 236),
+                             LV_PART_MAIN);
+  lv_obj_set_style_arc_color(bleLoadingSpinner_, lv_color_make(37, 99, 235),
+                             LV_PART_INDICATOR);
 
   bleLoadingLabel_ = lv_label_create(bleLoadingPanel_);
   lv_label_set_text(bleLoadingLabel_, "Waiting...");
@@ -502,7 +514,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_height(bleLoadingLabel_, 150);
   lv_label_set_long_mode(bleLoadingLabel_, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(bleLoadingLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(bleLoadingLabel_, lv_color_make(220, 231, 239), 0);
+  lv_obj_set_style_text_color(bleLoadingLabel_, lv_color_make(51, 65, 85), 0);
   lv_obj_align(bleLoadingLabel_, LV_ALIGN_TOP_LEFT, 12, 132);
 
   lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -519,7 +531,7 @@ void DisplayLcd::buildVirtualPowerPanel() {
   lv_obj_set_style_pad_all(virtualPowerPanel_, 0, 0);
   lv_obj_set_style_radius(virtualPowerPanel_, 0, 0);
   lv_obj_set_style_border_width(virtualPowerPanel_, 0, 0);
-  lv_obj_set_style_bg_color(virtualPowerPanel_, lv_color_make(8, 15, 25), 0);
+  lv_obj_set_style_bg_color(virtualPowerPanel_, lv_color_make(248, 250, 252), 0);
   lv_obj_set_style_bg_opa(virtualPowerPanel_, LV_OPA_COVER, 0);
   buildPanelHeader(virtualPowerPanel_, "VIRTUAL POWER", onVirtualBack);
   virtualTitle_ = lv_obj_get_child(virtualPowerPanel_, 1);
@@ -527,19 +539,22 @@ void DisplayLcd::buildVirtualPowerPanel() {
   virtualPowerTitle_ = lv_label_create(virtualPowerPanel_);
   lv_label_set_text(virtualPowerTitle_, "POWER");
   lv_obj_set_style_text_font(virtualPowerTitle_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(virtualPowerTitle_, lv_color_make(164, 183, 198), 0);
+  lv_obj_set_style_text_color(virtualPowerTitle_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(virtualPowerTitle_, LV_ALIGN_TOP_LEFT, 16, 64);
 
   virtualPowerValueLabel_ = lv_label_create(virtualPowerPanel_);
   lv_label_set_text(virtualPowerValueLabel_, "0 W");
   lv_obj_set_style_text_font(virtualPowerValueLabel_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(virtualPowerValueLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_color(virtualPowerValueLabel_, lv_color_make(23, 32, 51), 0);
   lv_obj_align(virtualPowerValueLabel_, LV_ALIGN_TOP_RIGHT, -16, 62);
 
   lv_obj_t *powerSlider = lv_slider_create(virtualPowerPanel_);
   lv_obj_set_size(powerSlider, 208, 24);
   lv_slider_set_range(powerSlider, 0, 1500);
   lv_slider_set_value(powerSlider, (int)virtualPowerW_, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(powerSlider, lv_color_make(219, 227, 236), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(powerSlider, lv_color_make(37, 99, 235), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(powerSlider, lv_color_make(37, 99, 235), LV_PART_KNOB);
   lv_obj_align(powerSlider, LV_ALIGN_TOP_LEFT, 16, 94);
   lv_obj_add_event_cb(powerSlider, onVirtualSliderChanged, LV_EVENT_VALUE_CHANGED,
                       (void *)(uintptr_t)1);
@@ -547,19 +562,22 @@ void DisplayLcd::buildVirtualPowerPanel() {
   virtualCadenceTitle_ = lv_label_create(virtualPowerPanel_);
   lv_label_set_text(virtualCadenceTitle_, "CADENCE");
   lv_obj_set_style_text_font(virtualCadenceTitle_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(virtualCadenceTitle_, lv_color_make(164, 183, 198), 0);
+  lv_obj_set_style_text_color(virtualCadenceTitle_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(virtualCadenceTitle_, LV_ALIGN_TOP_LEFT, 16, 146);
 
   virtualCadenceValueLabel_ = lv_label_create(virtualPowerPanel_);
   lv_label_set_text(virtualCadenceValueLabel_, "0 rpm");
   lv_obj_set_style_text_font(virtualCadenceValueLabel_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(virtualCadenceValueLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_color(virtualCadenceValueLabel_, lv_color_make(23, 32, 51), 0);
   lv_obj_align(virtualCadenceValueLabel_, LV_ALIGN_TOP_RIGHT, -16, 144);
 
   lv_obj_t *cadenceSlider = lv_slider_create(virtualPowerPanel_);
   lv_obj_set_size(cadenceSlider, 208, 24);
   lv_slider_set_range(cadenceSlider, 0, 180);
   lv_slider_set_value(cadenceSlider, (int)virtualCadenceRpm_, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(cadenceSlider, lv_color_make(219, 227, 236), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(cadenceSlider, lv_color_make(37, 99, 235), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(cadenceSlider, lv_color_make(37, 99, 235), LV_PART_KNOB);
   lv_obj_align(cadenceSlider, LV_ALIGN_TOP_LEFT, 16, 176);
   lv_obj_add_event_cb(cadenceSlider, onVirtualSliderChanged, LV_EVENT_VALUE_CHANGED,
                       (void *)(uintptr_t)2);
@@ -569,7 +587,7 @@ void DisplayLcd::buildVirtualPowerPanel() {
   lv_obj_set_width(virtualHint_, 208);
   lv_label_set_long_mode(virtualHint_, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(virtualHint_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(virtualHint_, lv_color_make(164, 183, 198), 0);
+  lv_obj_set_style_text_color(virtualHint_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(virtualHint_, LV_ALIGN_TOP_LEFT, 16, 224);
 
   lv_obj_add_flag(virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -584,7 +602,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_pad_all(settingsPanel_, 0, 0);
   lv_obj_set_style_radius(settingsPanel_, 0, 0);
   lv_obj_set_style_border_width(settingsPanel_, 0, 0);
-  lv_obj_set_style_bg_color(settingsPanel_, lv_color_make(8, 15, 25), 0);
+  lv_obj_set_style_bg_color(settingsPanel_, lv_color_make(248, 250, 252), 0);
   lv_obj_set_style_bg_opa(settingsPanel_, LV_OPA_COVER, 0);
   buildPanelHeader(settingsPanel_, "SETTINGS", onSettingsBack);
   settingsTitle_ = lv_obj_get_child(settingsPanel_, 1);
@@ -592,23 +610,24 @@ void DisplayLcd::buildSettingsPanel() {
   settingsLanguageLabel_ = lv_label_create(settingsPanel_);
   lv_label_set_text(settingsLanguageLabel_, "Interface language");
   lv_obj_set_style_text_font(settingsLanguageLabel_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(settingsLanguageLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_color(settingsLanguageLabel_, lv_color_make(30, 41, 59), 0);
   lv_obj_align(settingsLanguageLabel_, LV_ALIGN_TOP_LEFT, 16, 72);
 
   settingsPowerLabel_ = lv_label_create(settingsPanel_);
   lv_label_set_text(settingsPowerLabel_, "Power meter");
   lv_obj_set_style_text_font(settingsPowerLabel_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(settingsPowerLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_color(settingsPowerLabel_, lv_color_make(30, 41, 59), 0);
   lv_obj_align(settingsPowerLabel_, LV_ALIGN_TOP_LEFT, 16, 220);
   settingsPowerButton_ = lv_btn_create(settingsPanel_);
   lv_obj_set_size(settingsPowerButton_, 208, 42);
   lv_obj_set_style_radius(settingsPowerButton_, 0, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(settingsPowerButton_, lv_color_make(22, 55, 62), 0);
+  lv_obj_set_style_bg_color(settingsPowerButton_, lv_color_make(37, 99, 235), 0);
   lv_obj_align(settingsPowerButton_, LV_ALIGN_TOP_LEFT, 16, 252);
   lv_obj_add_event_cb(settingsPowerButton_, onPowerSourceButton,
                       LV_EVENT_CLICKED, nullptr);
   settingsPowerButtonLabel_ = lv_label_create(settingsPowerButton_);
   lv_label_set_text(settingsPowerButtonLabel_, "Select power meter");
+  lv_obj_set_style_text_color(settingsPowerButtonLabel_, lv_color_white(), 0);
   lv_obj_set_style_text_font(settingsPowerButtonLabel_, &lv_font_montserrat_14, 0);
   lv_obj_center(settingsPowerButtonLabel_);
 
@@ -618,7 +637,10 @@ void DisplayLcd::buildSettingsPanel() {
     lv_obj_set_size(settingsLanguageButtons_[i], 208, 42);
     lv_obj_set_style_radius(settingsLanguageButtons_[i], 0, LV_PART_MAIN);
     lv_obj_set_style_bg_color(settingsLanguageButtons_[i],
-                              lv_color_make(24, 47, 73), 0);
+                              lv_color_make(239, 244, 248), 0);
+    lv_obj_set_style_border_color(settingsLanguageButtons_[i],
+                                  lv_color_make(203, 213, 225), 0);
+    lv_obj_set_style_border_width(settingsLanguageButtons_[i], 1, 0);
     lv_obj_align(settingsLanguageButtons_[i], LV_ALIGN_TOP_LEFT, 16,
                  (lv_coord_t)(112 + i * 52));
     lv_obj_add_event_cb(settingsLanguageButtons_[i], onLanguageSelected,
@@ -785,8 +807,11 @@ void DisplayLcd::refreshLanguage() {
   for (size_t i = 0; i < 2; ++i) {
     const bool selected = chinese_ == (i == 1);
     lv_obj_set_style_bg_color(settingsLanguageButtons_[i],
-                              selected ? lv_color_make(22, 75, 67)
-                                       : lv_color_make(24, 47, 73), 0);
+                              selected ? lv_color_make(219, 234, 254)
+                                       : lv_color_make(239, 244, 248), 0);
+    lv_obj_set_style_text_color(settingsLanguageButtonLabels_[i],
+                                selected ? lv_color_make(29, 78, 216)
+                                         : lv_color_make(51, 65, 85), 0);
   }
 
   lv_obj_t *panels[] = {
@@ -851,34 +876,36 @@ void DisplayLcd::begin() {
   lv_obj_set_size(screen_, 240, 320);
   lv_obj_clear_flag(screen_, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(screen_, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_set_style_bg_color(screen_, lv_color_make(9, 15, 25), 0);
+  lv_obj_set_style_bg_color(screen_, lv_color_make(248, 250, 252), 0);
   lv_obj_set_style_bg_opa(screen_, LV_OPA_COVER, 0);
 
   titleLabel_ = lv_label_create(screen_);
   lv_label_set_text(titleLabel_, "AERO PROBE");
   lv_obj_align(titleLabel_, LV_ALIGN_TOP_LEFT, 12, 10);
   lv_obj_set_style_text_font(titleLabel_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(titleLabel_, lv_color_make(93, 214, 197), 0);
+  lv_obj_set_style_text_color(titleLabel_, lv_color_make(29, 41, 64), 0);
 
   lv_obj_t *headerLine = lv_obj_create(screen_);
   lv_obj_set_size(headerLine, 216, 2);
   lv_obj_align(headerLine, LV_ALIGN_TOP_LEFT, 12, 36);
-  lv_obj_set_style_bg_color(headerLine, lv_color_make(61, 90, 120), 0);
+  lv_obj_set_style_bg_color(headerLine, lv_color_make(203, 213, 225), 0);
 
   lv_obj_t *cdaCard = lv_obj_create(screen_);
   lv_obj_set_size(cdaCard, 216, 74);
   lv_obj_align(cdaCard, LV_ALIGN_TOP_LEFT, 12, 43);
   lv_obj_clear_flag(cdaCard, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_pad_all(cdaCard, 0, 0);
-  lv_obj_set_style_radius(cdaCard, 0, 0);
-  lv_obj_set_style_bg_opa(cdaCard, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(cdaCard, 0, 0);
+  lv_obj_set_style_radius(cdaCard, 8, 0);
+  lv_obj_set_style_bg_color(cdaCard, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(cdaCard, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(cdaCard, lv_color_make(226, 232, 240), 0);
+  lv_obj_set_style_border_width(cdaCard, 1, 0);
 
   cdaTitleLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(cdaTitleLabel_, "ESTIMATED CdA");
   lv_obj_align(cdaTitleLabel_, LV_ALIGN_TOP_LEFT, 8, 3);
   lv_obj_set_style_text_font(cdaTitleLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(cdaTitleLabel_, lv_color_make(168, 196, 177), 0);
+  lv_obj_set_style_text_color(cdaTitleLabel_, lv_color_make(100, 116, 139), 0);
 
   cdaLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(cdaLabel_, "-- m2");
@@ -886,7 +913,7 @@ void DisplayLcd::begin() {
   lv_label_set_long_mode(cdaLabel_, LV_LABEL_LONG_CLIP);
   lv_obj_align(cdaLabel_, LV_ALIGN_TOP_LEFT, 8, 18);
   lv_obj_set_style_text_font(cdaLabel_, &lv_font_montserrat_28, 0);
-  lv_obj_set_style_text_color(cdaLabel_, lv_color_make(233, 255, 240), 0);
+  lv_obj_set_style_text_color(cdaLabel_, lv_color_make(23, 32, 51), 0);
 
   postureLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(postureLabel_, "WAITING FOR DATA");
@@ -894,18 +921,18 @@ void DisplayLcd::begin() {
   lv_label_set_long_mode(postureLabel_, LV_LABEL_LONG_CLIP);
   lv_obj_align(postureLabel_, LV_ALIGN_BOTTOM_LEFT, 8, -1);
   lv_obj_set_style_text_font(postureLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(postureLabel_, lv_color_make(168, 196, 177), 0);
+  lv_obj_set_style_text_color(postureLabel_, lv_color_make(100, 116, 139), 0);
 
   zoneLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(zoneLabel_, "--");
   lv_obj_align(zoneLabel_, LV_ALIGN_RIGHT_MID, -8, 0);
   lv_obj_set_style_text_font(zoneLabel_, &lv_font_montserrat_40, 0);
-  lv_obj_set_style_text_color(zoneLabel_, lv_color_make(170, 245, 160), 0);
+  lv_obj_set_style_text_color(zoneLabel_, lv_color_make(37, 99, 235), 0);
 
   lv_obj_t *cdaDivider = lv_obj_create(screen_);
   lv_obj_set_size(cdaDivider, 216, 1);
   lv_obj_align(cdaDivider, LV_ALIGN_TOP_LEFT, 12, 119);
-  lv_obj_set_style_bg_color(cdaDivider, lv_color_make(61, 90, 120), 0);
+  lv_obj_set_style_bg_color(cdaDivider, lv_color_make(203, 213, 225), 0);
   lv_obj_set_style_border_width(cdaDivider, 0, 0);
 
   lv_obj_t *windCard = lv_obj_create(screen_);
@@ -913,26 +940,28 @@ void DisplayLcd::begin() {
   lv_obj_align(windCard, LV_ALIGN_TOP_LEFT, 12, 123);
   lv_obj_clear_flag(windCard, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_pad_all(windCard, 0, 0);
-  lv_obj_set_style_radius(windCard, 0, 0);
-  lv_obj_set_style_bg_opa(windCard, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(windCard, 0, 0);
+  lv_obj_set_style_radius(windCard, 8, 0);
+  lv_obj_set_style_bg_color(windCard, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(windCard, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(windCard, lv_color_make(226, 232, 240), 0);
+  lv_obj_set_style_border_width(windCard, 1, 0);
 
   windLabelTitle_ = lv_label_create(windCard);
   lv_label_set_text(windLabelTitle_, "WIND SPEED");
   lv_obj_align(windLabelTitle_, LV_ALIGN_TOP_LEFT, 8, 3);
   lv_obj_set_style_text_font(windLabelTitle_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(windLabelTitle_, lv_color_make(180, 195, 210), 0);
+  lv_obj_set_style_text_color(windLabelTitle_, lv_color_make(100, 116, 139), 0);
 
   windLabel_ = lv_label_create(windCard);
   lv_label_set_text(windLabel_, "0.0 km/h");
   lv_obj_align(windLabel_, LV_ALIGN_BOTTOM_LEFT, 8, -2);
   lv_obj_set_style_text_font(windLabel_, &lv_font_montserrat_20, 0);
-  lv_obj_set_style_text_color(windLabel_, lv_color_make(255, 255, 255), 0);
+  lv_obj_set_style_text_color(windLabel_, lv_color_make(23, 32, 51), 0);
 
   lv_obj_t *windDivider = lv_obj_create(screen_);
   lv_obj_set_size(windDivider, 216, 1);
   lv_obj_align(windDivider, LV_ALIGN_TOP_LEFT, 12, 181);
-  lv_obj_set_style_bg_color(windDivider, lv_color_make(61, 90, 120), 0);
+  lv_obj_set_style_bg_color(windDivider, lv_color_make(203, 213, 225), 0);
   lv_obj_set_style_border_width(windDivider, 0, 0);
 
   lv_obj_t *powerCard = lv_obj_create(screen_);
@@ -940,15 +969,17 @@ void DisplayLcd::begin() {
   lv_obj_align(powerCard, LV_ALIGN_TOP_LEFT, 12, 185);
   lv_obj_clear_flag(powerCard, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_pad_all(powerCard, 0, 0);
-  lv_obj_set_style_radius(powerCard, 0, 0);
-  lv_obj_set_style_bg_opa(powerCard, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(powerCard, 0, 0);
+  lv_obj_set_style_radius(powerCard, 8, 0);
+  lv_obj_set_style_bg_color(powerCard, lv_color_make(239, 246, 255), 0);
+  lv_obj_set_style_bg_opa(powerCard, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(powerCard, lv_color_make(191, 219, 254), 0);
+  lv_obj_set_style_border_width(powerCard, 1, 0);
 
   avg3Label_ = lv_label_create(powerCard);
   lv_label_set_text(avg3Label_, "LIVE POWER");
   lv_obj_align(avg3Label_, LV_ALIGN_TOP_LEFT, 8, 5);
   lv_obj_set_style_text_font(avg3Label_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(avg3Label_, lv_color_make(255, 209, 102), 0);
+  lv_obj_set_style_text_color(avg3Label_, lv_color_make(37, 99, 235), 0);
 
   powerLabel_ = lv_label_create(powerCard);
   lv_label_set_text(powerLabel_, "0 W");
@@ -957,25 +988,25 @@ void DisplayLcd::begin() {
   lv_obj_align(powerLabel_, LV_ALIGN_CENTER, 0, 8);
   lv_obj_set_style_text_align(powerLabel_, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(powerLabel_, &lv_font_montserrat_28, 0);
-  lv_obj_set_style_text_color(powerLabel_, lv_color_make(130, 235, 255), 0);
+  lv_obj_set_style_text_color(powerLabel_, lv_color_make(29, 78, 216), 0);
 
   lv_obj_t *powerDivider = lv_obj_create(screen_);
   lv_obj_set_size(powerDivider, 216, 1);
   lv_obj_align(powerDivider, LV_ALIGN_TOP_LEFT, 12, 265);
-  lv_obj_set_style_bg_color(powerDivider, lv_color_make(61, 90, 120), 0);
+  lv_obj_set_style_bg_color(powerDivider, lv_color_make(203, 213, 225), 0);
   lv_obj_set_style_border_width(powerDivider, 0, 0);
 
   cadenceLabel_ = lv_label_create(screen_);
   lv_label_set_text(cadenceLabel_, "CADENCE 0 rpm");
   lv_obj_align(cadenceLabel_, LV_ALIGN_TOP_LEFT, 12, 268);
   lv_obj_set_style_text_font(cadenceLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(cadenceLabel_, lv_color_make(255, 255, 255), 0);
+  lv_obj_set_style_text_color(cadenceLabel_, lv_color_make(51, 65, 85), 0);
 
   timeLabel_ = lv_label_create(screen_);
   lv_label_set_text(timeLabel_, "00:00:00");
   lv_obj_align(timeLabel_, LV_ALIGN_TOP_RIGHT, -12, 268);
   lv_obj_set_style_text_font(timeLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(timeLabel_, lv_color_make(200, 220, 230), 0);
+  lv_obj_set_style_text_color(timeLabel_, lv_color_make(100, 116, 139), 0);
 
   statusLabel_ = lv_label_create(screen_);
   lv_label_set_text(statusLabel_, "LOG: OFF");
@@ -983,24 +1014,25 @@ void DisplayLcd::begin() {
   lv_obj_set_style_text_align(statusLabel_, LV_TEXT_ALIGN_RIGHT, 0);
   lv_obj_align(statusLabel_, LV_ALIGN_TOP_RIGHT, -12, 8);
   lv_obj_set_style_text_font(statusLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(statusLabel_, lv_color_make(156, 214, 162), 0);
+  lv_obj_set_style_text_color(statusLabel_, lv_color_make(100, 116, 139), 0);
 
   powerSourceButton_ = lv_btn_create(screen_);
   lv_obj_set_size(powerSourceButton_, 216, 28);
   lv_obj_align(powerSourceButton_, LV_ALIGN_TOP_LEFT, 12, 289);
   lv_obj_set_style_radius(powerSourceButton_, 0, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(powerSourceButton_, lv_color_make(18, 49, 55), 0);
+  lv_obj_set_style_bg_color(powerSourceButton_, lv_color_make(37, 99, 235), 0);
   lv_obj_add_event_cb(powerSourceButton_, onSettingsButton, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *powerSourceIcon = lv_label_create(powerSourceButton_);
   lv_label_set_text(powerSourceIcon, LV_SYMBOL_SETTINGS);
   lv_obj_align(powerSourceIcon, LV_ALIGN_LEFT_MID, 8, 0);
   lv_obj_set_style_text_font(powerSourceIcon, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(powerSourceIcon, lv_color_make(131, 230, 215), 0);
+  lv_obj_set_style_text_color(powerSourceIcon, lv_color_white(), 0);
   powerSourceLabel_ = lv_label_create(powerSourceButton_);
   lv_label_set_text(powerSourceLabel_, "SET");
   lv_obj_set_width(powerSourceLabel_, 178);
   lv_label_set_long_mode(powerSourceLabel_, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_align(powerSourceLabel_, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_color(powerSourceLabel_, lv_color_white(), 0);
   lv_obj_align(powerSourceLabel_, LV_ALIGN_LEFT_MID, 28, 0);
   lv_obj_set_style_text_font(powerSourceLabel_, &lv_font_montserrat_16, 0);
 
@@ -1197,7 +1229,12 @@ void DisplayLcd::update(const WindVector &w, float powerW, float cadRpm,
                              chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
 
   lv_label_set_text(powerSourceLabel_, localized("SET", "设置"));
-  lv_obj_set_style_text_color(powerSourceLabel_, lv_color_make(131, 230, 215), 0);
+  lv_obj_set_style_text_color(powerSourceLabel_, lv_color_white(), 0);
+  const lv_color_t meterButtonColor =
+      pmSrc == 2 ? lv_color_make(21, 128, 61)
+                 : (pmSrc == 3 ? lv_color_make(217, 119, 6)
+                               : lv_color_make(37, 99, 235));
+  lv_obj_set_style_bg_color(powerSourceButton_, meterButtonColor, LV_PART_MAIN);
   lv_obj_set_style_text_font(powerSourceLabel_,
                              chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_16, 0);
 
@@ -1206,7 +1243,7 @@ void DisplayLcd::update(const WindVector &w, float powerW, float cadRpm,
   lv_label_set_text(statusLabel_, buf);
   lv_obj_set_style_text_font(statusLabel_,
                              chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(statusLabel_, logOk ? lv_color_make(156, 214, 162) : lv_color_make(255, 170, 126), 0);
+  lv_obj_set_style_text_color(statusLabel_, logOk ? lv_color_make(22, 163, 74) : lv_color_make(100, 116, 139), 0);
 
   uint32_t now = millis();
   uint32_t sec = now / 1000;
