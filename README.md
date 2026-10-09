@@ -115,7 +115,7 @@ esp32-fs3000-project/
 
 ## 浏览器 UI 模拟器
 
-无硬件时可直接打开 [code/simulator/index.html](code/simulator/index.html) 预览英文 240×320 仪表 UI，并调整模拟风速（界面单位 km/h，CdA 内部换算为 m/s）、功率、踏频及 BLE/ANT+/虚拟功率计数据源。虚拟功率计选择页提供功率与踏频滑块。FS3000 不测温，仪表不显示温度；只有外接 BME280 时才会使用实测温度参与空气密度计算。该模拟器验证 UI 与估算逻辑，不模拟 ESP32、FS3000 电气行为或真实 BLE/ANT+ 射频连接。
+无硬件时可直接打开 [code/simulator/index.html](code/simulator/index.html) 预览 240×320 仪表 UI，并调整模拟风速（界面单位 km/h，CdA 内部换算为 m/s）、功率、踏频及 BLE/ANT+/虚拟功率计数据源。主屏幕的 **SET** 按钮打开设置页，可切换英文/简体中文或进入功率计选择；虚拟功率计页面提供功率与踏频滑块。功率、CdA 与 ZONE 数字已放大以便阅读。FS3000 不测温，仪表不显示温度；只有外接 BME280 时才会使用实测温度参与空气密度计算。该模拟器验证 UI 与估算逻辑，不模拟 ESP32、FS3000 电气行为或真实 BLE/ANT+ 射频连接。
 
 模拟 CdA 假设静风、平路、匀速，以单传感器视风速度近似地速，并扣除固定滚阻和传动损耗。单 FS3000 无法单独测得地速、风向或坡度，ZONE（1=直立，3=低趴，4–6=更激进，7=顶级 TT）为便于演示的启发式参考区间，不代表真实骑行测量结果。
 
@@ -130,7 +130,7 @@ esp32-fs3000-project/
 
 ## 使用流程
 
-1. 上电后 LCD 显示仪表页面。触摸底部功率源按钮，可选择 **SCAN BLE DEVICES**、**ANT+ POWER METER**、**VIRTUAL POWER METER** 或 **AUTO SELECT**。虚拟功率计页面的功率与踏频滑块会立即更新仪表和日志；页面左上角 **BACK** 返回功率源菜单。BLE 扫描会立即显示 LOADING；扫描与连接期间界面仍可响应触摸，左上角 **BACK** 可取消当前操作。点选设备后，在确认页点击 **CONNECT** 才会连接。连接后会主动发现并输出全部 GATT 服务/特征 UUID（`[BLE-GATT]`），不只依赖广播包中的服务 UUID。CPS 解析 0x1818/0x2A63；FTMS 骑行台解析 Indoor Bike Data **0x1826/0x2AD2**（0x2ACC 才是 Fitness Machine Feature，0x2AD1 是 Rower Data）的即时功率、踏频和速度。CSC 0x1816/0x2A5B 可提供踏频/速度，但**不提供功率**。若服务发现为空、需要配对或设备采用厂商私有协议，失败信息和 `[BLE-GATT]` 日志用于确认根因；可返回设备列表重选。**ANT+ POWER METER** 会搜索并自动记忆 Bike Power 设备；**AUTO SELECT** 在启动延迟后启动 ANT+ 自动搜索。BLE 手动扫描可随时重新打开，但会先停止 ANT+ 射频接收。自动模式的前 20 秒会尝试连接姿态传感器，不会自动连接 BLE 功率计。
+1. 上电后 LCD 显示仪表页面。触摸底部 **SET** 按钮打开设置页；选择 **Select power meter** 后，可选择 **SCAN BLE DEVICES**、**ANT+ POWER METER**、**VIRTUAL POWER METER** 或 **AUTO SELECT**。虚拟功率计页面的功率与踏频滑块会立即更新仪表和日志；页面左上角 **BACK** 返回上一级。BLE 扫描会立即显示 LOADING；扫描与连接期间界面仍可响应触摸，左上角 **BACK** 可取消当前操作。点选设备后，在确认页点击 **CONNECT** 才会连接。连接后会主动发现并输出全部 GATT 服务/特征 UUID（`[BLE-GATT]`），不只依赖广播包中的服务 UUID。CPS 解析 0x1818/0x2A63；FTMS 骑行台解析 Indoor Bike Data **0x1826/0x2AD2**（0x2ACC 才是 Fitness Machine Feature，0x2AD1 是 Rower Data）的即时功率、踏频和速度。CSC 0x1816/0x2A5B 可提供踏频/速度，但**不提供功率**。若服务发现为空、需要配对或设备采用厂商私有协议，失败信息和 `[BLE-GATT]` 日志用于确认根因；可返回设备列表重选。**ANT+ POWER METER** 会搜索并自动记忆 Bike Power 设备；**AUTO SELECT** 在启动延迟后启动 ANT+ 自动搜索。BLE 手动扫描可随时重新打开，但会先停止 ANT+ 射频接收。自动模式的前 20 秒会尝试连接姿态传感器，不会自动连接 BLE 功率计。
 2. PlatformIO 串口监视器使用 115200 波特率（`pio device monitor`）。设备扫描会输出名称、地址、RSSI 和广播 CPS/FTMS/CSC 类型；连接后 `[BLE-GATT]` 列出 GATT 服务和特征 UUID/通知属性；`[BLE-DATA]` 显示功率/踏频/车速，`[BLE-FTMS]` 额外输出 FTMS Flags 及数据包是否包含即时功率/踏频/速度字段，便于判断设备能力与通知数据；`[BLE-POSTURE]` 显示姿态角，`[ANT-DATA]` 显示 ANT+ 设备号、功率和踏频；每秒还会输出汇总行。
 3. 仪表实时显示风速（km/h）、实时功率、踏频及功率源状态。FS3000 不含温度测量功能；可选 BME280 的环境温度仅用于空气密度计算。当前单风速计原型不测偏航角。
 4. TF 卡生成 `fs_<时间>.csv`，每秒一行：

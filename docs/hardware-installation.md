@@ -152,8 +152,8 @@ img/wiring-diagram.svg   ← 二期双传感器接线示意图；当前原型按
 | 2 | 串口传感器状态 | `FS3000 OK`、`[TOUCH] CST328 ready` |
 | 3 | 零风读数 | 静止时单传感器读数接近 0.0 m/s（≤0.3 可接受） |
 | 4 | 手扇/吹风 | 风速读数随气流增强 |
-| 5 | 功率计/骑行台 | 触摸功率源按钮，可选择 VIRTUAL POWER METER 并拖动滑块模拟功率/踏频；BLE 选择 SCAN BLE DEVICES 后会显示 LOADING，点设备并二次确认 CONNECT。支持 BLE Cycling Power 与 FTMS Indoor Bike Data 骑行台；CSC 仅提供踏频/速度；ANT+ 自动搜索 Bike Power |
-| 6 | 屏显 | 风速以 km/h 显示；触摸屏可打开功率源选择面板。有效功率与风速数据下显示粗略 CdA/ZONE。FS3000 不测温，可选 BME280 温度仅用于空气密度计算 |
+| 5 | 功率计/骑行台 | 触摸主屏底部 SET 打开设置页，再选择 Select power meter；可选择 VIRTUAL POWER METER 并拖动滑块模拟功率/踏频。BLE 选择 SCAN BLE DEVICES 后会显示 LOADING，点设备并二次确认 CONNECT。支持 BLE Cycling Power 与 FTMS Indoor Bike Data 骑行台；CSC 仅提供踏频/速度；ANT+ 自动搜索 Bike Power |
+| 6 | 屏显 | 风速以 km/h 显示；SET 页面可切换英文/简体中文并进入功率计选择。实时功率、CdA 和 ZONE 使用较大字体；有效功率与风速数据下显示粗略 CdA/ZONE。FS3000 不测温，可选 BME280 温度仅用于空气密度计算 |
 | 7 | TF 卡（可选） | 插卡后检查串口/屏幕日志状态；当前固件已集成 CSV 记录 |
 | 8 | 二期扩展 | 双传感器偏航角检查仅在对应硬件/固件功能接入后验证 |
 

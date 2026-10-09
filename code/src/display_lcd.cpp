@@ -1,6 +1,8 @@
 #include "display_lcd.h"
 #include "config.h"
 
+extern const lv_font_t lv_font_noto_sans_sc_14;
+
 namespace {
 static DisplayLcd *g_display = nullptr;
 constexpr uint8_t CST328_ADDR = 0x1A;
@@ -121,13 +123,34 @@ void DisplayLcd::lvglTouchReadCb(lv_indev_drv_t *, lv_indev_data_t *data) {
 }
 
 void DisplayLcd::onPowerSourceButton(lv_event_t *) {
-  if (g_display && g_display->powerSourcePanel_) {
-    lv_obj_add_flag(g_display->virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(g_display->bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
-  }
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onSettingsButton(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onSettingsBack(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onLanguageSelected(lv_event_t *event) {
+  if (!g_display) return;
+  const bool chinese = (uintptr_t)lv_event_get_user_data(event) == 1;
+  g_display->setLanguage(chinese);
 }
 
 void DisplayLcd::onBleSelected(lv_event_t *) {
@@ -159,11 +182,12 @@ void DisplayLcd::onBleDeviceSelected(lv_event_t *event) {
       g_display->bleDevices_[index].fitnessMachine) {
     const char *profile = g_display->bleDevices_[index].cyclingPower
                               ? (g_display->bleDevices_[index].fitnessMachine
-                                     ? "Cycling Power + FTMS trainer"
-                                     : "Cycling Power")
+                                     ? g_display->localized("Cycling Power + FTMS trainer",
+                                                            "功率计 + 智能骑行台")
+                                     : g_display->localized("Cycling Power", "功率计"))
                               : (g_display->bleDevices_[index].fitnessMachine
-                                     ? "FTMS smart trainer"
-                                     : "CSC cadence/speed only");
+                                     ? g_display->localized("FTMS smart trainer", "FTMS 智能骑行台")
+                                     : g_display->localized("CSC cadence/speed only", "CSC 仅踏频/速度"));
     char details[64];
     snprintf(details, sizeof(details), "%s\n%s",
              g_display->bleDevices_[index].address, profile);
@@ -200,10 +224,12 @@ void DisplayLcd::onBleLoadingBack(lv_event_t *) {
   if (g_display->bleOperationActive_) {
     g_display->requestedBleCancel_ = true;
     lv_obj_t *buttonLabel = lv_obj_get_child(g_display->bleLoadingBackButton_, 0);
-    lv_label_set_text(buttonLabel, "WAIT...");
+    lv_label_set_text(buttonLabel,
+                      g_display->localized("WAIT...", "请稍候..."));
     lv_obj_add_state(g_display->bleLoadingBackButton_, LV_STATE_DISABLED);
     lv_label_set_text(g_display->bleLoadingLabel_,
-                      "Cancelling operation...\nPlease wait for BLE to release.");
+                      g_display->localized("Cancelling operation...\nPlease wait for BLE to release.",
+                                           "正在取消操作...\n请等待蓝牙释放。"));
     return;
   }
 
@@ -215,7 +241,7 @@ void DisplayLcd::onAntSelected(lv_event_t *) {
   if (!g_display) return;
   g_display->requestedPowerMode_ = 2;
   g_display->selectedPowerMode_ = 2;
-  lv_label_set_text(g_display->powerSourceLabel_, "METER: ANT+");
+  g_display->refreshLanguage();
   lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -256,13 +282,14 @@ void DisplayLcd::onAutoSelected(lv_event_t *) {
   if (!g_display) return;
   g_display->requestedPowerMode_ = 0;
   g_display->selectedPowerMode_ = 0;
-  lv_label_set_text(g_display->powerSourceLabel_, "METER: AUTO");
+  g_display->refreshLanguage();
   lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::onCancelSelection(lv_event_t *) {
   if (g_display && g_display->powerSourcePanel_) {
     lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
   }
 }
 
@@ -306,13 +333,14 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_bg_color(powerSourcePanel_, lv_color_make(8, 15, 25), 0);
   lv_obj_set_style_bg_opa(powerSourcePanel_, LV_OPA_COVER, 0);
   buildPanelHeader(powerSourcePanel_, "POWER SOURCE", onCancelSelection);
+  powerSourceTitle_ = lv_obj_get_child(powerSourcePanel_, 1);
 
-  lv_obj_t *hint = lv_label_create(powerSourcePanel_);
-  lv_label_set_text(hint, "Choose a power source");
-  lv_obj_set_width(hint, 216);
-  lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(hint, lv_color_make(164, 183, 198), 0);
-  lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 12, 60);
+  powerSourceHint_ = lv_label_create(powerSourcePanel_);
+  lv_label_set_text(powerSourceHint_, "Choose a power source");
+  lv_obj_set_width(powerSourceHint_, 216);
+  lv_obj_set_style_text_font(powerSourceHint_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(powerSourceHint_, lv_color_make(164, 183, 198), 0);
+  lv_obj_align(powerSourceHint_, LV_ALIGN_TOP_LEFT, 12, 60);
 
   const char *labels[] = {"SCAN BLE DEVICES", "ANT+ POWER METER",
                           "VIRTUAL POWER METER", "AUTO SELECT"};
@@ -331,10 +359,10 @@ void DisplayLcd::buildPowerSourcePanel() {
     lv_obj_align(button, LV_ALIGN_TOP_LEFT, 16, y);
     lv_obj_set_style_bg_color(button, colors[i], 0);
     lv_obj_add_event_cb(button, callbacks[i], LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *label = lv_label_create(button);
-    lv_label_set_text(label, labels[i]);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-    lv_obj_center(label);
+    powerSourceOptions_[i] = lv_label_create(button);
+    lv_label_set_text(powerSourceOptions_[i], labels[i]);
+    lv_obj_set_style_text_font(powerSourceOptions_[i], &lv_font_montserrat_14, 0);
+    lv_obj_center(powerSourceOptions_[i]);
     y += heights[i] + 6;
   }
   lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
@@ -353,14 +381,14 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_bg_opa(bleDevicePanel_, LV_OPA_COVER, 0);
 
   buildPanelHeader(bleDevicePanel_, "BLE DEVICES", onBleBack);
+  bleDeviceTitle_ = lv_obj_get_child(bleDevicePanel_, 1);
 
-  hint = lv_label_create(bleDevicePanel_);
-  lv_label_set_text(hint, "Tap device, then confirm");
-  lv_obj_set_width(hint, 216);
-  lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(hint, lv_color_make(164, 183, 198), 0);
-  lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 12, 56);
+  bleDeviceHint_ = lv_label_create(bleDevicePanel_);
+  lv_label_set_text(bleDeviceHint_, "Tap device, then confirm");
+  lv_obj_set_width(bleDeviceHint_, 216);
+  lv_obj_set_style_text_font(bleDeviceHint_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(bleDeviceHint_, lv_color_make(164, 183, 198), 0);
+  lv_obj_align(bleDeviceHint_, LV_ALIGN_TOP_LEFT, 12, 56);
 
   lv_obj_t *scanButton = lv_btn_create(bleDevicePanel_);
   lv_obj_set_size(scanButton, 216, 32);
@@ -370,6 +398,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_add_event_cb(scanButton, onBleScanAgain, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *scanLabel = lv_label_create(scanButton);
   lv_label_set_text(scanLabel, "SCAN AGAIN");
+  bleScanLabel_ = scanLabel;
   lv_obj_set_style_text_font(scanLabel, &lv_font_montserrat_14, 0);
   lv_obj_center(scanLabel);
 
@@ -414,6 +443,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_bg_opa(bleConfirmPanel_, LV_OPA_COVER, 0);
 
   buildPanelHeader(bleConfirmPanel_, "CONFIRM DEVICE", onBleConfirmBack);
+  bleConfirmTitle_ = lv_obj_get_child(bleConfirmPanel_, 1);
 
   bleConfirmNameLabel_ = lv_label_create(bleConfirmPanel_);
   lv_label_set_text(bleConfirmNameLabel_, "BLE device");
@@ -440,6 +470,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_add_event_cb(confirmButton, onBleConfirm, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *confirmLabel = lv_label_create(confirmButton);
   lv_label_set_text(confirmLabel, "CONNECT");
+  bleConfirmButtonLabel_ = confirmLabel;
   lv_obj_set_style_text_font(confirmLabel, &lv_font_montserrat_14, 0);
   lv_obj_center(confirmLabel);
 
@@ -458,6 +489,7 @@ void DisplayLcd::buildPowerSourcePanel() {
 
   buildPanelHeader(bleLoadingPanel_, "LOADING", onBleLoadingBack);
   bleLoadingBackButton_ = lv_obj_get_child(bleLoadingPanel_, 0);
+  bleLoadingBackLabel_ = lv_obj_get_child(bleLoadingBackButton_, 0);
 
   bleLoadingTitle_ = lv_obj_get_child(bleLoadingPanel_, 1);
   bleLoadingSpinner_ = lv_spinner_create(bleLoadingPanel_, 900, 60);
@@ -474,6 +506,8 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_align(bleLoadingLabel_, LV_ALIGN_TOP_LEFT, 12, 132);
 
   lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
+
+  buildSettingsPanel();
 }
 
 void DisplayLcd::buildVirtualPowerPanel() {
@@ -488,12 +522,13 @@ void DisplayLcd::buildVirtualPowerPanel() {
   lv_obj_set_style_bg_color(virtualPowerPanel_, lv_color_make(8, 15, 25), 0);
   lv_obj_set_style_bg_opa(virtualPowerPanel_, LV_OPA_COVER, 0);
   buildPanelHeader(virtualPowerPanel_, "VIRTUAL POWER", onVirtualBack);
+  virtualTitle_ = lv_obj_get_child(virtualPowerPanel_, 1);
 
-  lv_obj_t *powerTitle = lv_label_create(virtualPowerPanel_);
-  lv_label_set_text(powerTitle, "POWER");
-  lv_obj_set_style_text_font(powerTitle, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(powerTitle, lv_color_make(164, 183, 198), 0);
-  lv_obj_align(powerTitle, LV_ALIGN_TOP_LEFT, 16, 64);
+  virtualPowerTitle_ = lv_label_create(virtualPowerPanel_);
+  lv_label_set_text(virtualPowerTitle_, "POWER");
+  lv_obj_set_style_text_font(virtualPowerTitle_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(virtualPowerTitle_, lv_color_make(164, 183, 198), 0);
+  lv_obj_align(virtualPowerTitle_, LV_ALIGN_TOP_LEFT, 16, 64);
 
   virtualPowerValueLabel_ = lv_label_create(virtualPowerPanel_);
   lv_label_set_text(virtualPowerValueLabel_, "0 W");
@@ -509,11 +544,11 @@ void DisplayLcd::buildVirtualPowerPanel() {
   lv_obj_add_event_cb(powerSlider, onVirtualSliderChanged, LV_EVENT_VALUE_CHANGED,
                       (void *)(uintptr_t)1);
 
-  lv_obj_t *cadenceTitle = lv_label_create(virtualPowerPanel_);
-  lv_label_set_text(cadenceTitle, "CADENCE");
-  lv_obj_set_style_text_font(cadenceTitle, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(cadenceTitle, lv_color_make(164, 183, 198), 0);
-  lv_obj_align(cadenceTitle, LV_ALIGN_TOP_LEFT, 16, 146);
+  virtualCadenceTitle_ = lv_label_create(virtualPowerPanel_);
+  lv_label_set_text(virtualCadenceTitle_, "CADENCE");
+  lv_obj_set_style_text_font(virtualCadenceTitle_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(virtualCadenceTitle_, lv_color_make(164, 183, 198), 0);
+  lv_obj_align(virtualCadenceTitle_, LV_ALIGN_TOP_LEFT, 16, 146);
 
   virtualCadenceValueLabel_ = lv_label_create(virtualPowerPanel_);
   lv_label_set_text(virtualCadenceValueLabel_, "0 rpm");
@@ -529,19 +564,254 @@ void DisplayLcd::buildVirtualPowerPanel() {
   lv_obj_add_event_cb(cadenceSlider, onVirtualSliderChanged, LV_EVENT_VALUE_CHANGED,
                       (void *)(uintptr_t)2);
 
-  lv_obj_t *hint = lv_label_create(virtualPowerPanel_);
-  lv_label_set_text(hint, "Drag either slider to update\nlive power and cadence.");
-  lv_obj_set_width(hint, 208);
-  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(hint, lv_color_make(164, 183, 198), 0);
-  lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 16, 224);
+  virtualHint_ = lv_label_create(virtualPowerPanel_);
+  lv_label_set_text(virtualHint_, "Drag either slider to update\nlive power and cadence.");
+  lv_obj_set_width(virtualHint_, 208);
+  lv_label_set_long_mode(virtualHint_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(virtualHint_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(virtualHint_, lv_color_make(164, 183, 198), 0);
+  lv_obj_align(virtualHint_, LV_ALIGN_TOP_LEFT, 16, 224);
 
   lv_obj_add_flag(virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
+void DisplayLcd::buildSettingsPanel() {
+  settingsPanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(settingsPanel_, 240, 320);
+  lv_obj_center(settingsPanel_);
+  lv_obj_clear_flag(settingsPanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(settingsPanel_, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_style_pad_all(settingsPanel_, 0, 0);
+  lv_obj_set_style_radius(settingsPanel_, 0, 0);
+  lv_obj_set_style_border_width(settingsPanel_, 0, 0);
+  lv_obj_set_style_bg_color(settingsPanel_, lv_color_make(8, 15, 25), 0);
+  lv_obj_set_style_bg_opa(settingsPanel_, LV_OPA_COVER, 0);
+  buildPanelHeader(settingsPanel_, "SETTINGS", onSettingsBack);
+  settingsTitle_ = lv_obj_get_child(settingsPanel_, 1);
+
+  settingsLanguageLabel_ = lv_label_create(settingsPanel_);
+  lv_label_set_text(settingsLanguageLabel_, "Interface language");
+  lv_obj_set_style_text_font(settingsLanguageLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(settingsLanguageLabel_, lv_color_white(), 0);
+  lv_obj_align(settingsLanguageLabel_, LV_ALIGN_TOP_LEFT, 16, 72);
+
+  settingsPowerLabel_ = lv_label_create(settingsPanel_);
+  lv_label_set_text(settingsPowerLabel_, "Power meter");
+  lv_obj_set_style_text_font(settingsPowerLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(settingsPowerLabel_, lv_color_white(), 0);
+  lv_obj_align(settingsPowerLabel_, LV_ALIGN_TOP_LEFT, 16, 220);
+  settingsPowerButton_ = lv_btn_create(settingsPanel_);
+  lv_obj_set_size(settingsPowerButton_, 208, 42);
+  lv_obj_set_style_radius(settingsPowerButton_, 0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(settingsPowerButton_, lv_color_make(22, 55, 62), 0);
+  lv_obj_align(settingsPowerButton_, LV_ALIGN_TOP_LEFT, 16, 252);
+  lv_obj_add_event_cb(settingsPowerButton_, onPowerSourceButton,
+                      LV_EVENT_CLICKED, nullptr);
+  settingsPowerButtonLabel_ = lv_label_create(settingsPowerButton_);
+  lv_label_set_text(settingsPowerButtonLabel_, "Select power meter");
+  lv_obj_set_style_text_font(settingsPowerButtonLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_center(settingsPowerButtonLabel_);
+
+  const char *labels[] = {"English", "简体中文"};
+  for (size_t i = 0; i < 2; ++i) {
+    settingsLanguageButtons_[i] = lv_btn_create(settingsPanel_);
+    lv_obj_set_size(settingsLanguageButtons_[i], 208, 42);
+    lv_obj_set_style_radius(settingsLanguageButtons_[i], 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(settingsLanguageButtons_[i],
+                              lv_color_make(24, 47, 73), 0);
+    lv_obj_align(settingsLanguageButtons_[i], LV_ALIGN_TOP_LEFT, 16,
+                 (lv_coord_t)(112 + i * 52));
+    lv_obj_add_event_cb(settingsLanguageButtons_[i], onLanguageSelected,
+                        LV_EVENT_CLICKED, (void *)(uintptr_t)(i == 1));
+    settingsLanguageButtonLabels_[i] = lv_label_create(settingsLanguageButtons_[i]);
+    lv_label_set_text(settingsLanguageButtonLabels_[i], labels[i]);
+    lv_obj_set_style_text_font(settingsLanguageButtonLabels_[i],
+                               i == 1 ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
+    lv_obj_center(settingsLanguageButtonLabels_[i]);
+  }
+
+  lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::setLanguage(bool chinese) {
+  chinese_ = chinese;
+  Preferences preferences;
+  if (!preferences.begin("aero-ui", false)) {
+    Serial.println("[UI] Could not open preferences to save language.");
+  } else {
+    size_t written = preferences.putBool("zh", chinese_);
+    if (written == 0) {
+      Serial.println("[UI] Could not save language preference.");
+    }
+    preferences.end();
+  }
+  refreshLanguage();
+}
+
+void DisplayLcd::refreshBleDeviceButtons() {
+  for (size_t i = 0; i < 4; ++i) {
+    lv_obj_t *button = bleDeviceButtons_[i];
+    lv_obj_t *label = lv_obj_get_child(button, 0);
+    if (i >= bleDeviceCount_) {
+      lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+    const char *profile = bleDevices_[i].cyclingPower
+                              ? (bleDevices_[i].fitnessMachine
+                                     ? localized("CPS + FTMS", "功率计 + 骑行台")
+                                     : localized("CPS", "功率计"))
+                              : (bleDevices_[i].fitnessMachine
+                                     ? localized("FTMS trainer", "FTMS 骑行台")
+                                     : (bleDevices_[i].speedCadence
+                                            ? localized("CSC cadence only", "CSC 仅踏频")
+                                            : localized("BLE device", "蓝牙设备")));
+    char text[64];
+    snprintf(text, sizeof(text), "%s\n%s  %d dBm",
+             bleDevices_[i].name, profile, bleDevices_[i].rssi);
+    lv_label_set_text(label, text);
+    lv_obj_clear_flag(button, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+void DisplayLcd::refreshLanguage() {
+  const lv_font_t *font = chinese_ ? &lv_font_noto_sans_sc_14
+                                   : &lv_font_montserrat_14;
+  const lv_font_t *titleFont = chinese_ ? &lv_font_noto_sans_sc_14
+                                        : &lv_font_montserrat_16;
+  lv_obj_set_style_text_font(cdaTitleLabel_, font, 0);
+  lv_label_set_text(cdaTitleLabel_, localized("ESTIMATED CdA", "估算 CdA"));
+  lv_label_set_text(windLabelTitle_, localized("WIND", "风速"));
+  lv_obj_set_style_text_font(windLabelTitle_, font, 0);
+  lv_label_set_text(avg3Label_, localized("LIVE POWER", "实时功率"));
+  lv_obj_set_style_text_font(avg3Label_, font, 0);
+
+  const char *posture = "WAITING FOR DATA";
+  const char *postureChinese = "等待数据";
+  if (currentZone_ == 1) { posture = "UPRIGHT"; postureChinese = "直立"; }
+  else if (currentZone_ == 2) { posture = "LOW / DROPS"; postureChinese = "低位 / 下把"; }
+  else if (currentZone_ == 3) { posture = "AERO"; postureChinese = "气动"; }
+  else if (currentZone_ == 4) { posture = "AGGRESSIVE"; postureChinese = "激进"; }
+  else if (currentZone_ == 5) { posture = "VERY AERO"; postureChinese = "极致气动"; }
+  else if (currentZone_ == 6) { posture = "RACE TT"; postureChinese = "竞赛 TT"; }
+  else if (currentZone_ == 7) { posture = "ELITE TT"; postureChinese = "精英 TT"; }
+  lv_label_set_text(postureLabel_, localized(posture, postureChinese));
+  lv_obj_set_style_text_font(postureLabel_, font, 0);
+
+  lv_label_set_text(powerSourceLabel_, localized("SET", "设置"));
+  lv_obj_set_style_text_font(powerSourceLabel_, titleFont, 0);
+
+  lv_label_set_text(statusLabel_,
+                    localized("LOG: OFF", "日志: 关闭"));
+  lv_obj_set_style_text_font(statusLabel_, font, 0);
+
+  lv_label_set_text(powerSourceTitle_, localized("POWER SOURCE", "功率来源"));
+  lv_label_set_text(powerSourceHint_, localized("Choose a power source", "选择功率来源"));
+  const char *sourceLabels[] = {
+    "SCAN BLE DEVICES", "ANT+ POWER METER",
+    "VIRTUAL POWER METER", "AUTO SELECT"
+  };
+  const char *sourceLabelsZh[] = {
+    "扫描蓝牙设备", "ANT+ 功率计", "虚拟功率计", "自动选择"
+  };
+  for (size_t i = 0; i < 4; ++i) {
+    lv_label_set_text(powerSourceOptions_[i],
+                      localized(sourceLabels[i], sourceLabelsZh[i]));
+    lv_obj_set_style_text_font(powerSourceOptions_[i], font, 0);
+  }
+  lv_obj_set_style_text_font(powerSourceTitle_, titleFont, 0);
+  lv_obj_set_style_text_font(powerSourceHint_, font, 0);
+
+  lv_label_set_text(bleDeviceTitle_, localized("BLE DEVICES", "蓝牙设备"));
+  lv_label_set_text(bleDeviceHint_, localized("Tap a device, then confirm",
+                                               "点击设备后确认连接"));
+  lv_label_set_text(bleScanLabel_, localized("SCAN AGAIN", "重新扫描"));
+  lv_obj_set_style_text_font(bleDeviceTitle_, titleFont, 0);
+  lv_obj_set_style_text_font(bleDeviceHint_, font, 0);
+  lv_obj_set_style_text_font(bleScanLabel_, font, 0);
+  if (!bleScanCompleted_)
+    lv_label_set_text(bleStatusLabel_, localized("No scan yet", "尚未扫描"));
+  else if (bleDeviceCount_ == 0)
+    lv_label_set_text(bleStatusLabel_, localized("No connectable BLE devices found",
+                                                 "未找到可连接的蓝牙设备"));
+  else {
+    char scanStatus[40];
+    snprintf(scanStatus, sizeof(scanStatus),
+             chinese_ ? "找到 %u 个设备" : "%u device(s) found",
+             (unsigned)bleDeviceCount_);
+    lv_label_set_text(bleStatusLabel_, scanStatus);
+  }
+  lv_obj_set_style_text_font(bleStatusLabel_, font, 0);
+  refreshBleDeviceButtons();
+
+  lv_label_set_text(bleConfirmTitle_, localized("CONFIRM DEVICE", "确认设备"));
+  lv_label_set_text(bleConfirmButtonLabel_, localized("CONNECT", "连接"));
+  lv_obj_set_style_text_font(bleConfirmTitle_, titleFont, 0);
+  lv_obj_set_style_text_font(bleConfirmButtonLabel_, font, 0);
+  lv_obj_set_style_text_font(bleConfirmAddressLabel_, font, 0);
+  lv_label_set_text(bleLoadingTitle_,
+                    localized("LOADING", "正在加载"));
+  lv_label_set_text(bleLoadingBackLabel_,
+                    localized(LV_SYMBOL_LEFT " BACK", LV_SYMBOL_LEFT " 返回"));
+  lv_obj_set_style_text_font(bleLoadingTitle_, titleFont, 0);
+  lv_obj_set_style_text_font(bleLoadingBackLabel_, font, 0);
+  lv_obj_set_style_text_font(bleLoadingLabel_, font, 0);
+  for (size_t i = 0; i < 4; ++i)
+    lv_obj_set_style_text_font(lv_obj_get_child(bleDeviceButtons_[i], 0), font, 0);
+
+  lv_label_set_text(virtualTitle_, localized("VIRTUAL POWER", "虚拟功率计"));
+  lv_label_set_text(virtualPowerTitle_, localized("POWER", "功率"));
+  lv_label_set_text(virtualCadenceTitle_, localized("CADENCE", "踏频"));
+  lv_label_set_text(virtualHint_,
+                    localized("Drag either slider to update\nlive power and cadence.",
+                              "拖动滑块设置实时功率\n和踏频。"));
+  lv_obj_set_style_text_font(virtualTitle_, titleFont, 0);
+  lv_obj_set_style_text_font(virtualPowerTitle_, font, 0);
+  lv_obj_set_style_text_font(virtualCadenceTitle_, font, 0);
+  lv_obj_set_style_text_font(virtualHint_, font, 0);
+
+  lv_label_set_text(settingsTitle_, localized("SETTINGS", "设置"));
+  lv_label_set_text(settingsLanguageLabel_, localized("Interface language", "界面语言"));
+  lv_label_set_text(settingsPowerLabel_, localized("Power meter", "功率计"));
+  lv_label_set_text(settingsPowerButtonLabel_,
+                    localized("Select power meter", "选择功率计"));
+  lv_obj_set_style_text_font(settingsTitle_, titleFont, 0);
+  lv_obj_set_style_text_font(settingsLanguageLabel_, font, 0);
+  lv_obj_set_style_text_font(settingsPowerLabel_, font, 0);
+  lv_obj_set_style_text_font(settingsPowerButtonLabel_, font, 0);
+  lv_obj_set_style_text_font(settingsLanguageButtonLabels_[0],
+                             &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(settingsLanguageButtonLabels_[1],
+                             &lv_font_noto_sans_sc_14, 0);
+  for (size_t i = 0; i < 2; ++i) {
+    const bool selected = chinese_ == (i == 1);
+    lv_obj_set_style_bg_color(settingsLanguageButtons_[i],
+                              selected ? lv_color_make(22, 75, 67)
+                                       : lv_color_make(24, 47, 73), 0);
+  }
+
+  lv_obj_t *panels[] = {
+    powerSourcePanel_, bleDevicePanel_, bleConfirmPanel_,
+    bleLoadingPanel_, virtualPowerPanel_, settingsPanel_
+  };
+  for (lv_obj_t *panel : panels) {
+    lv_obj_t *backButton = lv_obj_get_child(panel, 0);
+    lv_obj_t *backLabel = lv_obj_get_child(backButton, 0);
+    lv_label_set_text(backLabel,
+                      localized(LV_SYMBOL_LEFT " BACK", LV_SYMBOL_LEFT " 返回"));
+    lv_obj_set_style_text_font(backLabel, font, 0);
+  }
+}
+
 void DisplayLcd::begin() {
   g_display = this;
+
+  Preferences preferences;
+  if (preferences.begin("aero-ui", true)) {
+    chinese_ = preferences.getBool("zh", false);
+    preferences.end();
+  } else {
+    Serial.println("[UI] Could not read saved language; using English.");
+  }
 
   pinMode(PIN_LCD_BL, OUTPUT);
   digitalWrite(PIN_LCD_BL, HIGH);
@@ -604,18 +874,18 @@ void DisplayLcd::begin() {
   lv_obj_set_style_bg_opa(cdaCard, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(cdaCard, 0, 0);
 
-  lv_obj_t *cdaTitle = lv_label_create(cdaCard);
-  lv_label_set_text(cdaTitle, "ESTIMATED CdA");
-  lv_obj_align(cdaTitle, LV_ALIGN_TOP_LEFT, 8, 3);
-  lv_obj_set_style_text_font(cdaTitle, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(cdaTitle, lv_color_make(168, 196, 177), 0);
+  cdaTitleLabel_ = lv_label_create(cdaCard);
+  lv_label_set_text(cdaTitleLabel_, "ESTIMATED CdA");
+  lv_obj_align(cdaTitleLabel_, LV_ALIGN_TOP_LEFT, 8, 3);
+  lv_obj_set_style_text_font(cdaTitleLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(cdaTitleLabel_, lv_color_make(168, 196, 177), 0);
 
   cdaLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(cdaLabel_, "-- m2");
   lv_obj_set_width(cdaLabel_, 132);
   lv_label_set_long_mode(cdaLabel_, LV_LABEL_LONG_CLIP);
   lv_obj_align(cdaLabel_, LV_ALIGN_TOP_LEFT, 8, 18);
-  lv_obj_set_style_text_font(cdaLabel_, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(cdaLabel_, &lv_font_montserrat_28, 0);
   lv_obj_set_style_text_color(cdaLabel_, lv_color_make(233, 255, 240), 0);
 
   postureLabel_ = lv_label_create(cdaCard);
@@ -629,7 +899,7 @@ void DisplayLcd::begin() {
   zoneLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(zoneLabel_, "--");
   lv_obj_align(zoneLabel_, LV_ALIGN_RIGHT_MID, -8, 0);
-  lv_obj_set_style_text_font(zoneLabel_, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(zoneLabel_, &lv_font_montserrat_40, 0);
   lv_obj_set_style_text_color(zoneLabel_, lv_color_make(170, 245, 160), 0);
 
   lv_obj_t *cdaDivider = lv_obj_create(screen_);
@@ -686,7 +956,7 @@ void DisplayLcd::begin() {
   lv_label_set_long_mode(powerLabel_, LV_LABEL_LONG_CLIP);
   lv_obj_align(powerLabel_, LV_ALIGN_CENTER, 0, 8);
   lv_obj_set_style_text_align(powerLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(powerLabel_, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(powerLabel_, &lv_font_montserrat_28, 0);
   lv_obj_set_style_text_color(powerLabel_, lv_color_make(130, 235, 255), 0);
 
   lv_obj_t *powerDivider = lv_obj_create(screen_);
@@ -708,7 +978,9 @@ void DisplayLcd::begin() {
   lv_obj_set_style_text_color(timeLabel_, lv_color_make(200, 220, 230), 0);
 
   statusLabel_ = lv_label_create(screen_);
-  lv_label_set_text(statusLabel_, "SD --");
+  lv_label_set_text(statusLabel_, "LOG: OFF");
+  lv_obj_set_width(statusLabel_, 68);
+  lv_obj_set_style_text_align(statusLabel_, LV_TEXT_ALIGN_RIGHT, 0);
   lv_obj_align(statusLabel_, LV_ALIGN_TOP_RIGHT, -12, 8);
   lv_obj_set_style_text_font(statusLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(statusLabel_, lv_color_make(156, 214, 162), 0);
@@ -718,14 +990,14 @@ void DisplayLcd::begin() {
   lv_obj_align(powerSourceButton_, LV_ALIGN_TOP_LEFT, 12, 289);
   lv_obj_set_style_radius(powerSourceButton_, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_color(powerSourceButton_, lv_color_make(18, 49, 55), 0);
-  lv_obj_add_event_cb(powerSourceButton_, onPowerSourceButton, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(powerSourceButton_, onSettingsButton, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *powerSourceIcon = lv_label_create(powerSourceButton_);
   lv_label_set_text(powerSourceIcon, LV_SYMBOL_SETTINGS);
   lv_obj_align(powerSourceIcon, LV_ALIGN_LEFT_MID, 8, 0);
   lv_obj_set_style_text_font(powerSourceIcon, &lv_font_montserrat_16, 0);
   lv_obj_set_style_text_color(powerSourceIcon, lv_color_make(131, 230, 215), 0);
   powerSourceLabel_ = lv_label_create(powerSourceButton_);
-  lv_label_set_text(powerSourceLabel_, "SELECT POWER METER");
+  lv_label_set_text(powerSourceLabel_, "SET");
   lv_obj_set_width(powerSourceLabel_, 178);
   lv_label_set_long_mode(powerSourceLabel_, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_align(powerSourceLabel_, LV_TEXT_ALIGN_CENTER, 0);
@@ -733,6 +1005,7 @@ void DisplayLcd::begin() {
   lv_obj_set_style_text_font(powerSourceLabel_, &lv_font_montserrat_16, 0);
 
   buildPowerSourcePanel();
+  refreshLanguage();
   lv_scr_load(screen_);
   _gfx->fillScreen(BLACK);
 }
@@ -769,10 +1042,17 @@ void DisplayLcd::showBleLoading(const char *status) {
   bleOperationActive_ = true;
   requestedBleCancel_ = false;
   lv_obj_clear_state(bleLoadingBackButton_, LV_STATE_DISABLED);
-  lv_label_set_text(lv_obj_get_child(bleLoadingBackButton_, 0),
-                    LV_SYMBOL_LEFT " BACK");
-  lv_label_set_text(bleLoadingTitle_, "LOADING");
-  lv_label_set_text(bleLoadingLabel_, status ? status : "Waiting for BLE device...");
+  lv_label_set_text(bleLoadingBackLabel_,
+                    localized(LV_SYMBOL_LEFT " BACK", LV_SYMBOL_LEFT " 返回"));
+  lv_label_set_text(bleLoadingTitle_, localized("LOADING", "正在搜索"));
+  const char *message = status ? status : "Waiting for BLE device...";
+  if (strcmp(message, "Scanning for BLE power meters and smart trainers...") == 0)
+    message = localized(message, "正在搜索蓝牙功率计和智能骑行台...");
+  else if (strcmp(message, "Connecting to selected BLE device...") == 0)
+    message = localized(message, "正在连接所选蓝牙设备...");
+  else if (strcmp(message, "Waiting for BLE device...") == 0)
+    message = localized(message, "等待蓝牙设备...");
+  lv_label_set_text(bleLoadingLabel_, message);
   lv_obj_clear_flag(bleLoadingSpinner_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_y(bleLoadingLabel_, 132);
   lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
@@ -789,15 +1069,16 @@ void DisplayLcd::finishBleCancelled() {
 
 void DisplayLcd::showBleConnectFailure(const char *error) {
   bleOperationActive_ = false;
-  lv_label_set_text(bleLoadingTitle_, "CONNECTION FAILED");
+  lv_label_set_text(bleLoadingTitle_,
+                    localized("CONNECTION FAILED", "连接失败"));
   lv_label_set_text(bleLoadingLabel_,
                     error ? error : "BLE connection failed without an error description.");
   lv_obj_add_flag(bleLoadingSpinner_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_y(bleLoadingLabel_, 66);
   lv_obj_set_height(bleLoadingLabel_, 240);
   lv_obj_clear_state(bleLoadingBackButton_, LV_STATE_DISABLED);
-  lv_label_set_text(lv_obj_get_child(bleLoadingBackButton_, 0),
-                    LV_SYMBOL_LEFT " BACK");
+  lv_label_set_text(bleLoadingBackLabel_,
+                    localized(LV_SYMBOL_LEFT " BACK", LV_SYMBOL_LEFT " 返回"));
   lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
 }
@@ -805,32 +1086,12 @@ void DisplayLcd::showBleConnectFailure(const char *error) {
 void DisplayLcd::setBleDevices(const BlePowerDevice *devices, size_t count,
                                const char *status) {
   bleOperationActive_ = false;
+  bleScanCompleted_ = true;
   bleDeviceCount_ = min(count, (size_t)4);
-  for (size_t i = 0; i < 4; ++i) {
-    lv_obj_t *button = bleDeviceButtons_[i];
-    if (i < bleDeviceCount_ && devices) {
-      bleDevices_[i] = devices[i];
-      char label[64];
-      const char *profile = bleDevices_[i].cyclingPower
-                                ? (bleDevices_[i].fitnessMachine ? "CPS + FTMS" : "CPS")
-                                : (bleDevices_[i].fitnessMachine ? "FTMS trainer" :
-                                   (bleDevices_[i].speedCadence ? "CSC cadence only" : "BLE device"));
-      snprintf(label, sizeof(label), "%s\n%s  %d dBm",
-               bleDevices_[i].name, profile, bleDevices_[i].rssi);
-      lv_label_set_text(lv_obj_get_child(button, 0), label);
-      lv_obj_clear_flag(button, LV_OBJ_FLAG_HIDDEN);
-    } else {
-      lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
-    }
-  }
-
-  if (status) {
-    lv_label_set_text(bleStatusLabel_, status);
-  } else if (bleDeviceCount_ == 0) {
-    lv_label_set_text(bleStatusLabel_, "No connectable BLE devices found");
-  } else {
-    lv_label_set_text(bleStatusLabel_, "Select your power meter");
-  }
+  if (devices)
+    for (size_t i = 0; i < bleDeviceCount_; ++i) bleDevices_[i] = devices[i];
+  (void)status;
+  refreshLanguage();
   lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
@@ -900,21 +1161,23 @@ void DisplayLcd::update(const WindVector &w, float powerW, float cadRpm,
     }
   }
 
+  currentZone_ = (uint32_t)zone;
   const char *posture = "WAITING FOR DATA";
-  if (zone == 1) posture = "UPRIGHT";
-  else if (zone == 2) posture = "LOW / DROPS";
-  else if (zone == 3) posture = "AERO";
-  else if (zone == 4) posture = "AGGRESSIVE";
-  else if (zone == 5) posture = "VERY AERO";
-  else if (zone == 6) posture = "RACE TT";
-  else if (zone == 7) posture = "ELITE TT";
+  const char *postureChinese = "等待数据";
+  if (zone == 1) { posture = "UPRIGHT"; postureChinese = "直立"; }
+  else if (zone == 2) { posture = "LOW / DROPS"; postureChinese = "低位 / 下把"; }
+  else if (zone == 3) { posture = "AERO"; postureChinese = "气动"; }
+  else if (zone == 4) { posture = "AGGRESSIVE"; postureChinese = "激进"; }
+  else if (zone == 5) { posture = "VERY AERO"; postureChinese = "极致气动"; }
+  else if (zone == 6) { posture = "RACE TT"; postureChinese = "竞赛 TT"; }
+  else if (zone == 7) { posture = "ELITE TT"; postureChinese = "精英 TT"; }
   if (cda >= 0.0f) {
     snprintf(buf, sizeof(buf), "%.2f m2", cda);
     lv_label_set_text(cdaLabel_, buf);
   } else {
     lv_label_set_text(cdaLabel_, "-- m2");
   }
-  lv_label_set_text(postureLabel_, posture);
+  lv_label_set_text(postureLabel_, localized(posture, postureChinese));
   if (zone > 0) {
     snprintf(buf, sizeof(buf), "%d", zone);
     lv_label_set_text(zoneLabel_, buf);
@@ -928,35 +1191,21 @@ void DisplayLcd::update(const WindVector &w, float powerW, float cadRpm,
   snprintf(buf, sizeof(buf), "%.0f W", powerW);
   lv_label_set_text(powerLabel_, buf);
 
-  snprintf(buf, sizeof(buf), "CADENCE %.0f rpm", cadRpm);
+  snprintf(buf, sizeof(buf), localized("CADENCE %.0f rpm", "踏频 %.0f rpm"), cadRpm);
   lv_label_set_text(cadenceLabel_, buf);
+  lv_obj_set_style_text_font(cadenceLabel_,
+                             chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
 
-  const char *srcName = "--";
-  lv_color_t srcColor = lv_color_make(200, 220, 230);
-  if (pmSrc == 2) {
-    srcName = "ANT";
-    srcColor = lv_color_make(126, 211, 255);
-  } else if (pmSrc == 1) {
-    srcName = "BLE";
-    srcColor = lv_color_make(142, 235, 171);
-  } else if (pmSrc == 3) {
-    srcName = "VIRTUAL";
-    srcColor = lv_color_make(255, 209, 102);
-  }
-  if (selectedPowerMode_ == 0) {
-    snprintf(buf, sizeof(buf), "PM: AUTO%s", pmSrc == 2 ? " / ANT+" : (pmSrc == 1 ? " / BLE" : " / SCAN"));
-  } else if (selectedPowerMode_ == 1) {
-    snprintf(buf, sizeof(buf), "PM: BLE%s", pmSrc == 1 ? " / CONNECTED" : " / SCANNING");
-  } else if (selectedPowerMode_ == 3) {
-    snprintf(buf, sizeof(buf), "PM: VIRTUAL / ACTIVE");
-  } else {
-    snprintf(buf, sizeof(buf), "PM: ANT+%s", pmSrc == 2 ? " / CONNECTED" : " / SEARCHING");
-  }
-  lv_label_set_text(powerSourceLabel_, buf);
-  lv_obj_set_style_text_color(powerSourceLabel_, srcColor, 0);
+  lv_label_set_text(powerSourceLabel_, localized("SET", "设置"));
+  lv_obj_set_style_text_color(powerSourceLabel_, lv_color_make(131, 230, 215), 0);
+  lv_obj_set_style_text_font(powerSourceLabel_,
+                             chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_16, 0);
 
-  snprintf(buf, sizeof(buf), "Log: %s", logOk ? "OK" : "OFF");
+  snprintf(buf, sizeof(buf), localized("LOG %s", "日志 %s"),
+           logOk ? "OK" : localized("OFF", "关闭"));
   lv_label_set_text(statusLabel_, buf);
+  lv_obj_set_style_text_font(statusLabel_,
+                             chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(statusLabel_, logOk ? lv_color_make(156, 214, 162) : lv_color_make(255, 170, 126), 0);
 
   uint32_t now = millis();

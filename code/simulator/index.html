@@ -43,7 +43,7 @@
     }
     .top { position: absolute; inset: 0; pointer-events: none; }
     .brand { position: absolute; left: 12px; top: 10px; color: #5dd6c5; font-weight: 700; letter-spacing: .04em; font-size: 16px; line-height: 20px; }
-    .badge { position: absolute; right: 12px; top: 8px; color: #9cd6a2; font-size: 14px; line-height: 18px; }
+    .badge { position: absolute; right: 52px; top: 8px; color: #9cd6a2; font-size: 12px; line-height: 18px; }
     .rule, .divider { position: absolute; left: 12px; width: 216px; height: 1px; background: #3d5a78; }
     .rule { top: 36px; height: 2px; }
     .divider-cda { top: 119px; }
@@ -53,17 +53,17 @@
     .cda-card { top: 43px; height: 74px; }
     .cda-details { position: absolute; inset: 0; }
     .cda-title { position: absolute; left: 8px; top: 3px; color: #a8c4b1; font-size: 14px; line-height: 17px; }
-    .cda-reading { position: absolute; left: 8px; top: 18px; width: 132px; overflow: hidden; color: #e9fff0; font-size: 20px; line-height: 24px; white-space: nowrap; }
+    .cda-reading { position: absolute; left: 8px; top: 16px; width: 142px; overflow: hidden; color: #e9fff0; font-size: 28px; line-height: 34px; white-space: nowrap; }
     .posture-reading { position: absolute; left: 8px; bottom: 1px; width: 190px; overflow: hidden; color: #a8c4b1; font-size: 14px; line-height: 17px; white-space: nowrap; }
     .zone-block { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: #aaf5a0; }
     .zone-caption { display: none; }
-    .zone-number { font-size: 28px; line-height: 34px; font-variant-numeric: tabular-nums; }
+    .zone-number { font-size: 40px; line-height: 46px; font-variant-numeric: tabular-nums; }
     .wind-card { top: 123px; height: 56px; }
     .wind-row { position: absolute; inset: 0; }
     .wind { position: absolute; left: 8px; bottom: 2px; font-size: 20px; line-height: 24px; font-weight: 400; white-space: nowrap; }
     .caption { display: none; }
     .power-card { top: 185px; height: 76px; }
-    .power { position: absolute; left: 13px; top: 34px; width: 190px; overflow: hidden; transform: translateY(-50%); color: #82ebff; font-size: 20px; line-height: 24px; text-align: center; white-space: nowrap; }
+    .power { position: absolute; left: 13px; top: 36px; width: 190px; overflow: hidden; transform: translateY(-50%); color: #82ebff; font-size: 28px; line-height: 34px; text-align: center; white-space: nowrap; }
     .avg3 { position: absolute; left: 8px; top: 5px; color: #ffd166; font-size: 14px; line-height: 17px; }
     .avg60 { display: none; }
     .bottom { position: absolute; inset: 0; }
@@ -85,6 +85,16 @@
     .virtual-field label { margin: 0 0 8px; color: #a4b7c6; font-size: 12px; }
     .virtual-field input { width: 100%; margin: 0; }
     .virtual-hint { position: absolute; left: 16px; top: 224px; width: 208px; color: #a4b7c6; font-size: 12px; line-height: 1.5; }
+    .settings-dialog { position: absolute; z-index: 8; inset: 0; display: none; padding: 12px; background: #080f19; }
+    .settings-dialog.open { display: block; }
+    .settings-back { width: 64px; height: 30px; min-height: 0; border-radius: 0; padding: 0; font-size: 11px; }
+    .settings-title { position: absolute; left: 86px; top: 19px; color: #5dd6c5; font-size: 14px; font-weight: 750; }
+    .settings-language { position: absolute; left: 16px; top: 72px; color: #fff; font-size: 14px; }
+    .settings-meter-label { position: absolute; left: 16px; top: 220px; color: #fff; font-size: 14px; }
+    .settings-choice { position: absolute; left: 16px; width: 208px; }
+    #language-en { top: 112px; }
+    #language-zh { top: 164px; }
+    #settings-meter { top: 252px; }
     .loading-back { width: 64px; height: 30px; min-height: 0; border-radius: 0; padding: 0; font-size: 11px; }
     .loading-title { position: absolute; left: 86px; top: 19px; color: #5dd6c5; font-size: 14px; font-weight: 750; }
     .loading-spinner { position: absolute; top: 84px; left: 96px; width: 42px; height: 42px; border: 4px solid #294052; border-top-color: #5dd6c5; border-radius: 50%; animation: spin .8s linear infinite; }
@@ -162,7 +172,7 @@
     <section aria-label="240 by 320 LCD preview">
       <div class="device-shell">
       <div class="device">
-        <div class="top"><span class="brand">AERO PROBE</span><span class="badge" id="log-status">LOG OK</span></div>
+        <div class="top"><span class="brand">AERO PROBE</span><span class="badge" id="log-status">LOG OFF</span></div>
         <div class="rule"></div>
         <div class="card cda-card">
           <div class="cda-details">
@@ -183,7 +193,7 @@
         </div>
         <div class="divider divider-power"></div>
         <div class="bottom">
-          <div><div class="cadence" id="cadence-reading">CADENCE 0 rpm</div><button type="button" class="meter-button" id="screen-meter-button">⚙　PM: AUTO / SCAN</button></div>
+          <div><div class="cadence" id="cadence-reading">CADENCE 0 rpm</div><button type="button" class="meter-button" id="screen-meter-button">⚙ SET</button></div>
           <div class="time" id="clock-reading">00:00:00</div>
         </div>
         <div class="touch-dialog" id="touch-dialog" aria-hidden="true">
@@ -204,13 +214,13 @@
         </div>
         <div class="loading-dialog" id="ble-loading" aria-hidden="true">
           <button type="button" class="loading-back" id="loading-back">‹ BACK</button>
-          <div class="loading-title">LOADING</div>
+          <div class="loading-title" id="loading-title">LOADING</div>
           <div class="loading-spinner" id="loading-spinner"></div>
           <div class="loading-message" id="loading-message">Connecting to BLE device...</div>
         </div>
         <div class="virtual-dialog" id="virtual-dialog" aria-hidden="true">
           <button type="button" class="virtual-back" id="virtual-back">‹ BACK</button>
-          <div class="virtual-title">VIRTUAL POWER</div>
+          <div class="virtual-title" id="virtual-title">VIRTUAL POWER</div>
           <div class="virtual-field power-field">
             <label for="virtual-power-input">POWER <span class="value" id="virtual-power-value">230 W</span></label>
             <input id="virtual-power-input" type="range" min="0" max="1500" step="1" value="230">
@@ -220,6 +230,15 @@
             <input id="virtual-cadence-input" type="range" min="0" max="180" step="1" value="88">
           </div>
           <div class="virtual-hint">Drag either slider to update live power and cadence.</div>
+        </div>
+        <div class="settings-dialog" id="settings-dialog" aria-hidden="true">
+          <button type="button" class="settings-back" id="settings-back">‹ BACK</button>
+          <div class="settings-title" id="settings-title">SETTINGS</div>
+          <div class="settings-language" id="settings-language">Interface language</div>
+          <button type="button" class="settings-choice" id="language-en">English</button>
+          <button type="button" class="settings-choice" id="language-zh">简体中文</button>
+          <div class="settings-meter-label" id="settings-meter-label">Power meter</div>
+          <button type="button" class="settings-choice" id="settings-meter">Select power meter</button>
         </div>
       </div>
       </div>
@@ -277,7 +296,8 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { source: null, power: 230, cadence: 88, wind: 9.5, samples: [], seconds: 0, running: false };
+  const query = (selector) => document.querySelector(selector);
+  const state = { source: null, power: 230, cadence: 88, wind: 9.5, samples: [], seconds: 0, running: false, language: localStorage.getItem("aero-language") === "zh" ? "zh" : "en" };
   const stateMeter = { name: null };
   const maxSamples = 60;
   const model = { totalMassKg: 85, crr: 0.004, airDensityKgM3: 1.225, drivetrainEfficiency: 0.975 };
@@ -312,6 +332,43 @@
     return [hours, minutes, secs].map((v) => String(v).padStart(2, "0")).join(":");
   }
 
+  function updateLanguage() {
+    const zh = state.language === "zh";
+    document.documentElement.lang = zh ? "zh-CN" : "en";
+    $("settings-title").textContent = zh ? "设置" : "SETTINGS";
+    $("settings-language").textContent = zh ? "界面语言" : "Interface language";
+    $("settings-back").textContent = zh ? "‹ 返回" : "‹ BACK";
+    $("language-en").classList.toggle("selected", !zh);
+    $("language-zh").classList.toggle("selected", zh);
+    $("dialog-close").textContent = zh ? "‹ 返回" : "‹ BACK";
+    $("touch-dialog").querySelector(".dialog-heading span").textContent = zh ? "功率来源" : "POWER SOURCE";
+    const options = document.querySelectorAll(".dialog-list .device-option");
+    const labels = zh
+      ? [["扫描蓝牙设备", "查找功率计和智能骑行台"], ["BLE · Assioma Duo", "骑行功率 · 可用"], ["BLE · Smart Trainer", "FTMS 室内骑行数据 · 可用"], ["ANT+ · Bike Power", "搜索 ANT+ 功率计"], ["虚拟功率计", "手动设置功率和踏频"]]
+      : [["SCAN BLE DEVICES", "Find power meters and smart trainers"], ["BLE · Assioma Duo", "Cycling Power · Available"], ["BLE · Smart Trainer", "FTMS Indoor Bike Data · Available"], ["ANT+ · Bike Power", "Search for ANT+ power meters"], ["VIRTUAL POWER METER", "Set live power and cadence"]];
+    options.forEach((option, i) => {
+      option.querySelector("strong").textContent = labels[i][0];
+      option.querySelector("span").textContent = labels[i][1];
+    });
+    document.querySelector(".dialog-note").textContent = zh
+      ? "选择设备后确认连接。使用左上角返回。"
+      : "Select a device to confirm. Use the top-left back button to return.";
+    $("confirm-connect").textContent = zh ? "连接" : "CONNECT";
+    $("loading-back").textContent = zh ? "‹ 返回" : "‹ BACK";
+    $("loading-title").textContent = zh ? "正在加载" : "LOADING";
+    $("virtual-back").textContent = zh ? "‹ 返回" : "‹ BACK";
+    $("virtual-title").textContent = zh ? "虚拟功率计" : "VIRTUAL POWER";
+    $("virtual-power-input").previousElementSibling.firstChild.textContent = zh ? "功率 " : "POWER ";
+    $("virtual-cadence-input").previousElementSibling.firstChild.textContent = zh ? "踏频 " : "CADENCE ";
+    query(".virtual-hint").textContent = zh ? "拖动滑块设置实时功率和踏频。" : "Drag either slider to update live power and cadence.";
+    query(".cda-title").textContent = zh ? "估算 CdA" : "ESTIMATED CdA";
+    query(".wind-card .wind-row").setAttribute("aria-label", zh ? "风速" : "Wind speed");
+    query(".avg3").textContent = zh ? "实时功率" : "LIVE POWER";
+    $("settings-meter-label").textContent = zh ? "功率计" : "Power meter";
+    $("settings-meter").textContent = zh ? "选择功率计" : "Select power meter";
+    render();
+  }
+
   function render() {
     const displayedPower = state.source ? state.power : 0;
     const displayedCadence = state.source ? state.cadence : 0;
@@ -321,21 +378,22 @@
     const recent3 = state.samples.slice(-3);
     const average = (values) => values.length ? values.reduce((sum, item) => sum + item, 0) / values.length : 0;
     $("power-reading").textContent = `${Math.round(displayedPower)} W`;
-    $("cadence-reading").textContent = `CADENCE ${Math.round(displayedCadence)} rpm`;
+    $("cadence-reading").textContent = state.language === "zh"
+      ? `踏频 ${Math.round(displayedCadence)} rpm`
+      : `CADENCE ${Math.round(displayedCadence)} rpm`;
     $("screen-meter-button").style.color = state.source === "ANT+" ? "#7ed3ff" : state.source === "BLE" ? "#8eeba7" : state.source === "VIRTUAL" ? "#ffd166" : "#83e6d7";
     $("zone-reading").textContent = zone ? String(zone.zone) : "--";
     $("zone-reading").style.color = zone ? "#aaf5a0" : "#9aafc2";
     $("cda-reading").textContent = cda == null ? "-- m2" : `${cda.toFixed(2)} m2`;
-    $("posture-reading").textContent = zone ? zone.posture : "WAITING FOR DATA";
-    $("screen-meter-button").textContent = state.source === "ANT+"
-      ? "⚙ PM: ANT+ / CONNECTED"
-      : state.source === "BLE"
-        ? "⚙ PM: BLE / CONNECTED"
-        : state.source === "VIRTUAL"
-          ? "⚙ PM: VIRTUAL / ACTIVE"
-          : "⚙ PM: AUTO / SCAN";
+    const postureZh = { "ELITE TT": "精英 TT", "RACE TT": "竞赛 TT", "VERY AERO": "极致气动", AGGRESSIVE: "激进", AERO: "气动", "LOW / DROPS": "低位 / 下把", UPRIGHT: "直立" };
+    $("posture-reading").textContent = zone
+      ? (state.language === "zh" ? postureZh[zone.posture] : zone.posture)
+      : (state.language === "zh" ? "等待数据" : "WAITING FOR DATA");
+    $("screen-meter-button").textContent = state.language === "zh" ? "⚙ 设置" : "⚙ SET";
     $("clock-reading").textContent = formatTime(state.seconds);
-    $("log-status").textContent = state.running ? "Log: OK" : "Log: OFF";
+    $("log-status").textContent = state.language === "zh"
+      ? (state.running ? "日志: 正常" : "日志: 关闭")
+      : (state.running ? "LOG: OK" : "LOG: OFF");
     $("log-status").style.color = state.running ? "#9cd6a2" : "#ffd166";
   }
 
@@ -381,7 +439,9 @@
     $("virtual-cadence-value").textContent = `${Math.round(state.cadence)} rpm`;
     render();
   });
-  function openMeterDialog() {
+  let pickerFromSettings = false;
+  function openMeterDialog(fromSettings = false) {
+    pickerFromSettings = fromSettings;
     $("touch-dialog").classList.add("open");
     $("touch-dialog").setAttribute("aria-hidden", "false");
   }
@@ -393,6 +453,10 @@
   }
   let loadingTimer = null;
   function beginLoading(message, done) {
+    if (state.language === "zh") {
+      if (message.startsWith("Scanning for")) message = "正在搜索附近的蓝牙功率计和智能骑行台...";
+      else if (message.startsWith("Connecting to")) message = `正在连接 ${message.slice("Connecting to ".length, -3)}...`;
+    }
     $("loading-message").textContent = message;
     $("loading-spinner").style.display = "block";
     $("ble-loading").classList.add("open");
@@ -459,8 +523,30 @@
   }
   $("connect-ble").addEventListener("click", () => connect("BLE"));
   $("connect-ant").addEventListener("click", () => connect("ANT+"));
-  $("screen-meter-button").addEventListener("click", openMeterDialog);
-  $("choose-meter").addEventListener("click", openMeterDialog);
+  $("screen-meter-button").addEventListener("click", () => {
+    $("settings-dialog").classList.add("open");
+    $("settings-dialog").setAttribute("aria-hidden", "false");
+  });
+  $("choose-meter").addEventListener("click", () => openMeterDialog());
+  $("settings-meter").addEventListener("click", () => {
+    $("settings-dialog").classList.remove("open");
+    $("settings-dialog").setAttribute("aria-hidden", "true");
+    openMeterDialog(true);
+  });
+  $("settings-back").addEventListener("click", () => {
+    $("settings-dialog").classList.remove("open");
+    $("settings-dialog").setAttribute("aria-hidden", "true");
+  });
+  $("language-en").addEventListener("click", () => {
+    state.language = "en";
+    localStorage.setItem("aero-language", "en");
+    updateLanguage();
+  });
+  $("language-zh").addEventListener("click", () => {
+    state.language = "zh";
+    localStorage.setItem("aero-language", "zh");
+    updateLanguage();
+  });
   $("dialog-close").addEventListener("click", () => {
     if ($("dialog-confirm").classList.contains("open")) {
       $("dialog-confirm").classList.remove("open");
@@ -468,6 +554,10 @@
       selectedDevice = null;
     } else {
       closeMeterDialog();
+      if (pickerFromSettings) {
+        $("settings-dialog").classList.add("open");
+        $("settings-dialog").setAttribute("aria-hidden", "false");
+      }
     }
   });
   $("confirm-connect").addEventListener("click", confirmSelected);
@@ -486,7 +576,7 @@
   $("virtual-back").addEventListener("click", () => {
     $("virtual-dialog").classList.remove("open");
     $("virtual-dialog").setAttribute("aria-hidden", "true");
-    openMeterDialog();
+    openMeterDialog(pickerFromSettings);
   });
   document.querySelectorAll(".device-option[data-source]").forEach((option) => {
     option.addEventListener("click", () => connectSelected(option));
@@ -538,7 +628,7 @@
       };
     }
   };
-  render();
+  updateLanguage();
 })();
 </script>
 </body>

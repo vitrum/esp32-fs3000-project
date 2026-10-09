@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
+#include <Preferences.h>
 
 #include "lv_conf.h"
 #include <lvgl.h>
@@ -34,6 +35,7 @@ private:
 
   lv_obj_t *screen_ = nullptr;
   lv_obj_t *titleLabel_ = nullptr;
+  lv_obj_t *cdaTitleLabel_ = nullptr;
   lv_obj_t *windLabel_ = nullptr;
   lv_obj_t *powerLabel_ = nullptr;
   lv_obj_t *avg3Label_ = nullptr;
@@ -43,9 +45,24 @@ private:
   lv_obj_t *powerSourceButton_ = nullptr;
   lv_obj_t *powerSourceLabel_ = nullptr;
   lv_obj_t *powerSourcePanel_ = nullptr;
+  lv_obj_t *powerSourceTitle_ = nullptr;
+  lv_obj_t *powerSourceHint_ = nullptr;
+  lv_obj_t *powerSourceOptions_[4] = {};
+  lv_obj_t *settingsPanel_ = nullptr;
+  lv_obj_t *settingsTitle_ = nullptr;
+  lv_obj_t *settingsLanguageLabel_ = nullptr;
+  lv_obj_t *settingsPowerLabel_ = nullptr;
+  lv_obj_t *settingsPowerButton_ = nullptr;
+  lv_obj_t *settingsPowerButtonLabel_ = nullptr;
+  lv_obj_t *settingsLanguageButtons_[2] = {};
+  lv_obj_t *settingsLanguageButtonLabels_[2] = {};
   lv_obj_t *virtualPowerPanel_ = nullptr;
   lv_obj_t *virtualPowerValueLabel_ = nullptr;
   lv_obj_t *virtualCadenceValueLabel_ = nullptr;
+  lv_obj_t *virtualTitle_ = nullptr;
+  lv_obj_t *virtualPowerTitle_ = nullptr;
+  lv_obj_t *virtualCadenceTitle_ = nullptr;
+  lv_obj_t *virtualHint_ = nullptr;
   lv_obj_t *bleDevicePanel_ = nullptr;
   lv_obj_t *bleConfirmPanel_ = nullptr;
   lv_obj_t *bleLoadingPanel_ = nullptr;
@@ -54,6 +71,12 @@ private:
   lv_obj_t *bleLoadingSpinner_ = nullptr;
   lv_obj_t *bleLoadingBackButton_ = nullptr;
   lv_obj_t *bleStatusLabel_ = nullptr;
+  lv_obj_t *bleDeviceTitle_ = nullptr;
+  lv_obj_t *bleDeviceHint_ = nullptr;
+  lv_obj_t *bleScanLabel_ = nullptr;
+  lv_obj_t *bleConfirmTitle_ = nullptr;
+  lv_obj_t *bleConfirmButtonLabel_ = nullptr;
+  lv_obj_t *bleLoadingBackLabel_ = nullptr;
   lv_obj_t *bleConfirmNameLabel_ = nullptr;
   lv_obj_t *bleConfirmAddressLabel_ = nullptr;
   lv_obj_t *bleDeviceButtons_[4] = {};
@@ -69,6 +92,9 @@ private:
   float power3sAvg_ = 0.0f;
   float virtualPowerW_ = 0.0f;
   float virtualCadenceRpm_ = 0.0f;
+  bool chinese_ = false;
+  bool bleScanCompleted_ = false;
+  uint32_t currentZone_ = 0;
   int requestedPowerMode_ = -1;
   int selectedPowerMode_ = 0;
   bool requestedBleScan_ = false;
@@ -84,6 +110,9 @@ private:
   static void lvglFlushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);
   static void lvglTouchReadCb(lv_indev_drv_t *drv, lv_indev_data_t *data);
   static void onPowerSourceButton(lv_event_t *event);
+  static void onSettingsButton(lv_event_t *event);
+  static void onSettingsBack(lv_event_t *event);
+  static void onLanguageSelected(lv_event_t *event);
   static void onBleSelected(lv_event_t *event);
   static void onBleScanAgain(lv_event_t *event);
   static void onBleDeviceSelected(lv_event_t *event);
@@ -105,5 +134,12 @@ private:
   bool touchWriteRegister(uint16_t reg, uint8_t value);
   void buildPowerSourcePanel();
   void buildVirtualPowerPanel();
+  void buildSettingsPanel();
+  void refreshLanguage();
+  void refreshBleDeviceButtons();
+  void setLanguage(bool chinese);
+  const char *localized(const char *english, const char *chinese) const {
+    return chinese_ ? chinese : english;
+  }
   void buildPanelHeader(lv_obj_t *panel, const char *title, lv_event_cb_t backCallback);
 };
