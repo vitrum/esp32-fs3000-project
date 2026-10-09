@@ -725,6 +725,7 @@ void DisplayLcd::refreshLanguage() {
   lv_label_set_text(statusLabel_,
                     localized("LOG: OFF", "日志: 关闭"));
   lv_obj_set_style_text_font(statusLabel_, font, 0);
+  lv_obj_set_style_text_font(cadenceLabel_, font, 0);
 
   lv_label_set_text(powerSourceTitle_, localized("POWER SOURCE", "功率来源"));
   lv_label_set_text(powerSourceHint_, localized("Choose a power source", "选择功率来源"));
@@ -1150,8 +1151,8 @@ void DisplayLcd::tick() {
   lv_timer_handler();
 }
 
-void DisplayLcd::update(const WindVector &w, float powerW, float cadRpm,
-                        float vgMps, float postureDeg, float rho,
+void DisplayLcd::update(const WindVector &w, bool windValid, float powerW,
+                        float cadRpm, float vgMps, float postureDeg, float rho,
                         int pmSrc, bool logOk) {
   if (!screen_) {
     return;
@@ -1217,7 +1218,10 @@ void DisplayLcd::update(const WindVector &w, float powerW, float cadRpm,
     lv_label_set_text(zoneLabel_, "--");
   }
 
-  snprintf(buf, sizeof(buf), "%.1f km/h", w.vAir * 3.6f);
+  if (windValid)
+    snprintf(buf, sizeof(buf), "%.1f km/h", w.vAir * 3.6f);
+  else
+    snprintf(buf, sizeof(buf), "-- km/h");
   lv_label_set_text(windLabel_, buf);
 
   snprintf(buf, sizeof(buf), "%.0f W", powerW);

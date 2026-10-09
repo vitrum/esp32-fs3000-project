@@ -15,8 +15,8 @@ class DisplayLcd {
 public:
   void begin();
   void tick();
-  void update(const WindVector &w, float powerW, float cadRpm, float vgMps,
-              float postureDeg, float rho, int pmSrc, bool logOk);
+  void update(const WindVector &w, bool windValid, float powerW, float cadRpm,
+              float vgMps, float postureDeg, float rho, int pmSrc, bool logOk);
   bool takePowerSourceRequest(int &mode);
   float virtualPowerW() const { return virtualPowerW_; }
   float virtualCadenceRpm() const { return virtualCadenceRpm_; }

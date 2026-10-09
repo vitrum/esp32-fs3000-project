@@ -49,6 +49,10 @@ Window win;
 
 static uint32_t lastSampleMs = 0;
 static uint32_t lastLogMs    = 0;
+static uint32_t lastUiMs     = 0;
+static uint32_t lastWindProbeMs = 0;
+static uint32_t lastWindValidMs = 0;
+static uint32_t windWindowSamples = 0;
 static uint32_t lastBleMs    = 0;
 static uint32_t lastBlePowerNotification = 0;
 static uint32_t lastBlePostureNotification = 0;
@@ -190,7 +194,9 @@ void setup() {
   Wire.begin(PIN_I2C1_SDA, PIN_I2C1_SCL, 400000);
 
   bool windOk = windSensor.begin(Wire);
-  Serial.printf("FS3000 %s\n", windOk ? "OK" : "FAIL");
+  Serial.printf("FS3000 %s addr=0x%02X bus=GPIO%d/%d clock=400kHz\n",
+                windOk ? "OK" : "FAIL", FS3000_ADDR,
+                PIN_I2C1_SDA, PIN_I2C1_SCL);
 
   env.begin(Wire);                   // 可选 BME280（挂在 I2C1）
   Serial.printf("BME280 %s\n", env.present() ? "OK" : "absent");
@@ -220,6 +226,8 @@ void loop() {
       wv = WindVector();
       wv.vAlong = windMps;
       wv.vAir = windMps;
+      lastWindValidMs = now;
+      ++windWindowSamples;
       win.n++;
       win.sumPower   += pmPower();
       win.sumVg      += powerMeter.speed();
@@ -229,30 +237,54 @@ void loop() {
     }
   }
 
-  // 2) 每秒输出一条日志 + 刷新屏幕
-  if (now - lastLogMs >= LOG_WINDOW_MS && win.n > 0) {
+  // Log and refresh on schedule even if the wind sensor misses a sample window.
+  if (now - lastLogMs >= LOG_WINDOW_MS) {
     lastLogMs = now;
 
-    float power   = win.sumPower   / (float)win.n;
-    float vg      = win.sumVg      / (float)win.n;
-    float vAir    = win.sumVAir    / (float)win.n;
-    float yaw     = win.sumYaw     / (float)win.n;
-    float post    = win.sumPosture / (float)win.n;
+    float power   = win.n > 0 ? win.sumPower / (float)win.n : pmPower();
+    float vg      = win.n > 0 ? win.sumVg / (float)win.n : powerMeter.speed();
+    float vAir    = win.n > 0 ? win.sumVAir / (float)win.n : wv.vAir;
+    float yaw     = win.n > 0 ? win.sumYaw / (float)win.n : wv.yawDeg;
+    float post    = win.n > 0 ? win.sumPosture / (float)win.n : posture.pitchDeg();
     float rho     = env.rhoKgM3();
     int   src     = pmSrc();
 
     logger.log(now, power, pmCadence(), vg, vAir, yaw, post, rho, src);
-    lcd.update(wv, pmPower(), pmCadence(), vg, post, rho, src, logger.ok());
 
-    // 串口同输出一行，便于现场监控
     const char *sourceName = src == 3 ? "VIRTUAL" :
                              (src == 2 ? "ANT" : (src == 1 ? "BLE" : "--"));
-    Serial.printf("%lu P=%5.0fW(%s) cad=%4.0f vg=%4.2f vAir=%4.2f yaw=%+5.1f pos=%+5.1f rho=%.3f\n",
+    const uint8_t *frame = windSensor.lastFrame();
+    Serial.printf("%lu P=%5.0fW(%s) cad=%4.0f vg=%4.2f vAir=%4.2f yaw=%+5.1f pos=%+5.1f rho=%.3f windSamples=%lu fs=%s err=%s short=%lu checksum=%lu bytes=%u raw=%02X%02X%02X%02X%02X sd=%s\n",
                   (unsigned long)now, power,
                   sourceName,
-                  pmCadence(), vg, vAir, yaw, post, rho);
+                  pmCadence(), vg, vAir, yaw, post, rho,
+                  (unsigned long)windWindowSamples,
+                  windSensor.present() ? "ACK" : "NO_ACK",
+                  windSensor.lastErrorName(),
+                  (unsigned long)windSensor.shortReads(),
+                  (unsigned long)windSensor.checksumErrors(),
+                  windSensor.lastBytesReceived(), frame[0], frame[1], frame[2],
+                  frame[3], frame[4], logger.ok() ? "OK" : "OFF");
 
-    win = Window();   // 清窗口
+    win = Window();
+    windWindowSamples = 0;
+  }
+
+  if (now - lastUiMs >= LOG_WINDOW_MS) {
+    lastUiMs = now;
+    const bool windValid = lastWindValidMs != 0 &&
+                           now - lastWindValidMs <= 2000;
+    lcd.update(wv, windValid, pmPower(), pmCadence(), powerMeter.speed(),
+               posture.pitchDeg(), env.rhoKgM3(), pmSrc(), logger.ok());
+  }
+
+  if (!windSensor.present() && now - lastWindProbeMs >= 5000) {
+    lastWindProbeMs = now;
+    if (windSensor.begin(Wire))
+      Serial.println("[FS3000] Sensor recovered on I2C bus");
+    else
+      Serial.printf("[FS3000] Not found at 0x%02X on GPIO%d/%d; retrying\n",
+                    FS3000_ADDR, PIN_I2C1_SDA, PIN_I2C1_SCL);
   }
 
   lcd.tick();

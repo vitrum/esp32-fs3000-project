@@ -1,4 +1,5 @@
 #include "fs3000.h"
+#include <string.h>
 
 // FS3000-1015 官方典型输出曲线（Renesas 数据手册 Figure 3, Rev.1.01）
 // 风速 m/s → 输出计数
@@ -20,21 +21,55 @@ bool FS3000::probe() {
 }
 
 bool FS3000::readMps(float &mps) {
-  if (!_present) return false;
+  ++_readAttempts;
+  if (!_present) {
+    _lastError = ReadError::NotPresent;
+    return false;
+  }
 
-  _w->requestFrom(_addr, (uint8_t)5);
-  if (_w->available() < 5) return false;
-
-  uint8_t b[5];
-  for (int i = 0; i < 5; i++) b[i] = _w->read();
+  memset(_lastFrame, 0, sizeof(_lastFrame));
+  const uint8_t received = _w->requestFrom(_addr, (uint8_t)sizeof(_lastFrame));
+  _lastBytesReceived = 0;
+  while (_w->available() > 0) {
+    const int value = _w->read();
+    if (value < 0) break;
+    if (_lastBytesReceived < sizeof(_lastFrame))
+      _lastFrame[_lastBytesReceived++] = (uint8_t)value;
+  }
+  if (received != sizeof(_lastFrame) || _lastBytesReceived != sizeof(_lastFrame)) {
+    ++_shortReads;
+    if (++_consecutiveFailures >= 8) _present = false;
+    _lastError = ReadError::ShortRead;
+    return false;
+  }
 
   // 校验和：5 字节之和的低 8 位必须为 0
-  if (((b[0] + b[1] + b[2] + b[3] + b[4]) & 0xFF) != 0) return false;
+  uint8_t checksum = 0;
+  for (uint8_t byte : _lastFrame) checksum += byte;
+  if (checksum != 0) {
+    ++_checksumErrors;
+    if (++_consecutiveFailures >= 8) _present = false;
+    _lastError = ReadError::Checksum;
+    return false;
+  }
 
   // 12 位流量数据，仅高字节低 4 位有效
-  _raw = ((b[1] & 0x0F) << 8) | b[2];
+  _raw = ((uint16_t)(_lastFrame[1] & 0x0F) << 8) | _lastFrame[2];
   mps  = countToMps(_raw);
+  ++_readSuccesses;
+  _consecutiveFailures = 0;
+  _lastError = ReadError::None;
   return true;
+}
+
+const char *FS3000::lastErrorName() const {
+  switch (_lastError) {
+    case ReadError::None: return "OK";
+    case ReadError::NotPresent: return "NOT_PRESENT";
+    case ReadError::ShortRead: return "SHORT_READ";
+    case ReadError::Checksum: return "CHECKSUM";
+  }
+  return "UNKNOWN";
 }
 
 float FS3000::countToMps(uint16_t count) {
