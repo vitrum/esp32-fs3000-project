@@ -60,8 +60,8 @@
     .zone-number { font-size: 40px; line-height: 46px; font-variant-numeric: tabular-nums; }
     .wind-card { top: 123px; height: 56px; }
     .wind-row { position: absolute; inset: 0; }
+    .wind-title { position: absolute; left: 8px; top: 3px; color: #b4c3d2; font-size: 14px; line-height: 17px; }
     .wind { position: absolute; left: 8px; bottom: 2px; font-size: 20px; line-height: 24px; font-weight: 400; white-space: nowrap; }
-    .caption { display: none; }
     .power-card { top: 185px; height: 76px; }
     .power { position: absolute; left: 13px; top: 36px; width: 190px; overflow: hidden; transform: translateY(-50%); color: #82ebff; font-size: 28px; line-height: 34px; text-align: center; white-space: nowrap; }
     .avg3 { position: absolute; left: 8px; top: 5px; color: #ffd166; font-size: 14px; line-height: 17px; }
@@ -184,7 +184,10 @@
         </div>
         <div class="divider divider-cda"></div>
         <div class="card wind-card">
-          <div class="wind-row"><span class="wind" id="wind-reading">34.2 km/h</span></div>
+          <div class="wind-row">
+            <span class="wind-title" id="wind-title">WIND SPEED</span>
+            <span class="wind" id="wind-reading">34.2 km/h</span>
+          </div>
         </div>
         <div class="divider divider-wind"></div>
         <div class="card power-card">
@@ -362,6 +365,7 @@
     $("virtual-cadence-input").previousElementSibling.firstChild.textContent = zh ? "踏频 " : "CADENCE ";
     query(".virtual-hint").textContent = zh ? "拖动滑块设置实时功率和踏频。" : "Drag either slider to update live power and cadence.";
     query(".cda-title").textContent = zh ? "估算 CdA" : "ESTIMATED CdA";
+    $("wind-title").textContent = zh ? "风速" : "WIND SPEED";
     query(".wind-card .wind-row").setAttribute("aria-label", zh ? "风速" : "Wind speed");
     query(".avg3").textContent = zh ? "实时功率" : "LIVE POWER";
     $("settings-meter-label").textContent = zh ? "功率计" : "Power meter";

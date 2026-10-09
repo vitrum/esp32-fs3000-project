@@ -680,7 +680,7 @@ void DisplayLcd::refreshLanguage() {
                                         : &lv_font_montserrat_16;
   lv_obj_set_style_text_font(cdaTitleLabel_, font, 0);
   lv_label_set_text(cdaTitleLabel_, localized("ESTIMATED CdA", "估算 CdA"));
-  lv_label_set_text(windLabelTitle_, localized("WIND", "风速"));
+  lv_label_set_text(windLabelTitle_, localized("WIND SPEED", "风速"));
   lv_obj_set_style_text_font(windLabelTitle_, font, 0);
   lv_label_set_text(avg3Label_, localized("LIVE POWER", "实时功率"));
   lv_obj_set_style_text_font(avg3Label_, font, 0);
@@ -918,7 +918,7 @@ void DisplayLcd::begin() {
   lv_obj_set_style_border_width(windCard, 0, 0);
 
   windLabelTitle_ = lv_label_create(windCard);
-  lv_label_set_text(windLabelTitle_, "WIND");
+  lv_label_set_text(windLabelTitle_, "WIND SPEED");
   lv_obj_align(windLabelTitle_, LV_ALIGN_TOP_LEFT, 8, 3);
   lv_obj_set_style_text_font(windLabelTitle_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(windLabelTitle_, lv_color_make(180, 195, 210), 0);
