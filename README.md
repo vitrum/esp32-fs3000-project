@@ -188,7 +188,7 @@ esp32-fs3000-project/
 ## 参考
 
 - Renesas FS3000 数据手册（地址 0x28、校验和、1015 典型曲线）
-- Waveshare ESP32-S3-Touch-LCD-2.8 官方文档（引脚定义）
+- Waveshare ESP32-S3-Touch-LCD-2.8 （[官方文档](https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8)）
 - 蓝牙 SIG Cycling Power Service（0x1818 / 0x2A63）规范
 - WitMotion WT9011DCL-BT50 数据手册与 BLE 协议（服务 0xFFE0 / 数据 0xFFE1，0x55 帧）
 - esp32-ant（RaemondBW，Apache-2.0）：纯软件 ANT/ANT+ 栈，驱动 ESP32-S3 自带 BLE 射频（库源码已随工程放在 `code/lib/ant/`，官方仓库 https://github.com/RaemondBW/esp32-ant ）
