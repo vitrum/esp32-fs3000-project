@@ -6,6 +6,10 @@
 > **相关文档**
 > - [手机端 APP 与「ESP32 记录 × 码表 FIT」时间对齐合并方案](./app-merge.md)
 >   —— BLE 对时 + 功率互相关，React Native APP。
+> - [Wi-Fi 网页实时数据服务方案](./wifi-web.md)
+>   —— 教练/采集员通过电脑浏览器远程实时察看分析。
+> - [绝对时间源方案（GPS / NTP / RTC / BLE）](./time-source.md)
+>   —— 为 FIT 时间戳、与码表对齐提供时间地基。
 
 ---
 
