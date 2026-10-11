@@ -3,6 +3,11 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <SD.h>
+#include <freertos/FreeRTOS.h>
+
+bool beginSdCardMutex();
+bool lockSdCard(TickType_t timeout = portMAX_DELAY);
+void unlockSdCard();
 
 // SD card CSV log (SDSPI mode)
 // 列：t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc
@@ -10,6 +15,8 @@
 class CsvLogger {
 public:
   bool begin();                       // 挂载 SD 并创建新文件，写表头
+  bool start();
+  bool stop();
   bool ok() const { return _ok; }
   void log(uint32_t tMs, float powerW, float cadRpm, float vgMps,
            float vAirMps, float yawDeg, float postureDeg, float rho,
@@ -18,6 +25,7 @@ public:
 
 private:
   bool   _ok = false;
+  bool   _sdReady = false;
   File   _f;
   char   _name[40];
   uint32_t _lastFlush = 0;

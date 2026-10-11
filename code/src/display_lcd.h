@@ -28,6 +28,9 @@ public:
   void showBleConnectFailure(const char *error);
   void setBleDevices(const BlePowerDevice *devices, size_t count, const char *status);
   void closePowerMeterPanels();
+  bool takeWifiEnableRequest(bool &enabled);
+  void updateWifiStatus(bool enabled, bool connected, bool provisioning,
+                        const char *ssid, const char *ip);
 
 private:
   Arduino_DataBus *_bus = nullptr;
@@ -56,6 +59,9 @@ private:
   lv_obj_t *settingsPowerButtonLabel_ = nullptr;
   lv_obj_t *settingsLanguageButtons_[2] = {};
   lv_obj_t *settingsLanguageButtonLabels_[2] = {};
+  lv_obj_t *settingsWifiLabel_ = nullptr;
+  lv_obj_t *settingsWifiSwitch_ = nullptr;
+  lv_obj_t *settingsWifiStatus_ = nullptr;
   lv_obj_t *virtualPowerPanel_ = nullptr;
   lv_obj_t *virtualPowerValueLabel_ = nullptr;
   lv_obj_t *virtualCadenceValueLabel_ = nullptr;
@@ -93,6 +99,13 @@ private:
   float virtualPowerW_ = 0.0f;
   float virtualCadenceRpm_ = 0.0f;
   bool chinese_ = false;
+  bool wifiEnabled_ = false;
+  bool wifiConnected_ = false;
+  bool wifiProvisioning_ = false;
+  bool requestedWifiEnable_ = false;
+  bool wifiEnableRequestPending_ = false;
+  char wifiSsid_[33] = {};
+  char wifiIp_[16] = {};
   bool bleScanCompleted_ = false;
   uint32_t currentZone_ = 0;
   int requestedPowerMode_ = -1;
@@ -113,6 +126,7 @@ private:
   static void onSettingsButton(lv_event_t *event);
   static void onSettingsBack(lv_event_t *event);
   static void onLanguageSelected(lv_event_t *event);
+  static void onWifiSwitchChanged(lv_event_t *event);
   static void onBleSelected(lv_event_t *event);
   static void onBleScanAgain(lv_event_t *event);
   static void onBleDeviceSelected(lv_event_t *event);
@@ -138,6 +152,7 @@ private:
   void refreshLanguage();
   void refreshBleDeviceButtons();
   void setLanguage(bool chinese);
+  void refreshWifiStatus();
   const char *localized(const char *english, const char *chinese) const {
     return chinese_ ? chinese : english;
   }

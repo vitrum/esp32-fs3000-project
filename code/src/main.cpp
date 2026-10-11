@@ -25,6 +25,9 @@
 #ifdef ANT_POWER_ENABLE
 #include "ant_power.h"
 #endif
+#if WIFI_WEB_ENABLE
+#include "wifi_web.h"
+#endif
 
 FS3000       windSensor;
 BlePowerMeter powerMeter;
@@ -54,6 +57,9 @@ static uint32_t lastWindProbeMs = 0;
 static uint32_t lastWindValidMs = 0;
 static uint32_t windWindowSamples = 0;
 static uint32_t lastBleMs    = 0;
+#if WIFI_WEB_ENABLE
+static uint32_t lastWebMs    = 0;
+#endif
 static uint32_t lastBlePowerNotification = 0;
 static uint32_t lastBlePostureNotification = 0;
 static uint32_t lastBleDisconnectCount = 0;
@@ -201,6 +207,8 @@ void setup() {
   env.begin(Wire);                   // 可选 BME280（挂在 I2C1）
   Serial.printf("BME280 %s\n", env.present() ? "OK" : "absent");
 
+  if (!beginSdCardMutex())
+    Serial.println("[SD] Could not create SD card mutex; SD access is unavailable");
   logger.begin();                    // TF 卡（可选，失败不阻塞）
   lcd.begin();                       // 屏幕
 
@@ -217,6 +225,50 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
+
+#if WIFI_WEB_ENABLE
+  bool wifiEnabled = false;
+  if (lcd.takeWifiEnableRequest(wifiEnabled)) {
+    if (!wifiWeb.setEnabled(wifiEnabled))
+      Serial.println("[WiFi] Could not change Wi-Fi state");
+  }
+
+  // Wi-Fi / SmartConfig / Web 服务器事件泵（非阻塞）
+  wifiWeb.tick();
+  const String wifiSsid = wifiWeb.ssid();
+  const String wifiIp = wifiWeb.ip().toString();
+  lcd.updateWifiStatus(wifiWeb.enabled(), wifiWeb.connected(),
+                       wifiWeb.provisioning(), wifiSsid.c_str(), wifiIp.c_str());
+
+  bool startRecording = false;
+  if (wifiWeb.takeRecordingRequest(startRecording)) {
+    if (startRecording) {
+      if (logger.start())
+        Serial.println("[WEB] recording started");
+      else
+        Serial.println("[WEB] recording could not start; check SD card");
+    } else {
+      if (logger.stop())
+        Serial.println("[WEB] recording stopped");
+      else
+        Serial.println("[WEB] recording could not stop; SD card is busy");
+    }
+  }
+
+  // 消费来自网页 /api/control 的控制请求
+  int webSource = -1;
+  if (wifiWeb.takeSourceRequest(webSource) &&
+      webSource >= 0 && webSource <= 3) {
+    powerMode = webSource;
+    Serial.printf("[WEB] power source -> %d\n", powerMode);
+#ifdef ANT_POWER_ENABLE
+    if ((powerMode == 1 || powerMode == 3) && antStarted) {
+      antPower.stop();
+      antStarted = false;
+    }
+#endif
+  }
+#endif
 
   // 1) 探针采样（8Hz，受 125ms 响应限制）
   if (now - lastSampleMs >= PROBE_SAMPLE_MS) {
@@ -250,6 +302,13 @@ void loop() {
     int   src     = pmSrc();
 
     logger.log(now, power, pmCadence(), vg, vAir, yaw, post, rho, src);
+
+#if WIFI_WEB_ENABLE
+    const bool windValid = lastWindValidMs != 0 &&
+                           now - lastWindValidMs <= 2000;
+    wifiWeb.broadcastTelemetry(now, power, pmCadence(), vg, vAir, windValid,
+                               yaw, post, rho, src, logger.ok());
+#endif
 
     const char *sourceName = src == 3 ? "VIRTUAL" :
                              (src == 2 ? "ANT" : (src == 1 ? "BLE" : "--"));

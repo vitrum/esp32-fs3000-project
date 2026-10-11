@@ -83,3 +83,16 @@
 // 可选环境传感器 BME280（计算空气密度 ρ = P/(287.05·T)）
 // ============================================================================
 #define BME280_ADDR          0x76     // BME280 默认地址，与板载地址不冲突
+
+// ============================================================================
+// Wi-Fi 网页实时数据服务（SmartConfig 配网 + Web 服务器）
+// 见 plan/wifi-web.md
+//
+// 注意射频共存：ESP32-S3 单射频，Wi-Fi / BLE / ANT+ 三者共享。
+// 开启 Wi-Fi 后 BLE/ANT+ 可能出现丢包；如绕圈测试只看实时数据，
+// 可考虑暂停 ANT+（见 config.h 的 ANT_POWER_ENABLE）。
+// ============================================================================
+#define WIFI_WEB_ENABLE      1          // 1=启用 Wi-Fi 网页服务；0=关闭（省射频/内存）
+#define WIFI_MDNS_HOST       "aeroprobe" // mDNS 主机名 → http://aeroprobe.local/
+#define WIFI_RECONNECT_MS    10000       // STA 断线重连间隔(ms)
+#define WIFI_SMART_CONFIG_TIMEOUT_MS 120000 // SmartConfig 无人配网时的超时(ms)

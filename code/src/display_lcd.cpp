@@ -1,5 +1,6 @@
 #include "display_lcd.h"
 #include "config.h"
+#include <cstring>
 
 extern const lv_font_t lv_font_noto_sans_sc_14;
 
@@ -151,6 +152,60 @@ void DisplayLcd::onLanguageSelected(lv_event_t *event) {
   if (!g_display) return;
   const bool chinese = (uintptr_t)lv_event_get_user_data(event) == 1;
   g_display->setLanguage(chinese);
+}
+
+void DisplayLcd::onWifiSwitchChanged(lv_event_t *event) {
+  if (!g_display) return;
+  g_display->requestedWifiEnable_ =
+      lv_obj_has_state(lv_event_get_target(event), LV_STATE_CHECKED);
+  g_display->wifiEnableRequestPending_ = true;
+}
+
+bool DisplayLcd::takeWifiEnableRequest(bool &enabled) {
+  if (!wifiEnableRequestPending_) return false;
+  wifiEnableRequestPending_ = false;
+  enabled = requestedWifiEnable_;
+  return true;
+}
+
+void DisplayLcd::updateWifiStatus(bool enabled, bool connected,
+                                  bool provisioning, const char *ssid,
+                                  const char *ip) {
+  wifiEnabled_ = enabled;
+  wifiConnected_ = connected;
+  wifiProvisioning_ = provisioning;
+  snprintf(wifiSsid_, sizeof(wifiSsid_), "%s", ssid ? ssid : "");
+  snprintf(wifiIp_, sizeof(wifiIp_), "%s", ip ? ip : "");
+  refreshWifiStatus();
+}
+
+void DisplayLcd::refreshWifiStatus() {
+  if (!settingsWifiSwitch_ || !settingsWifiStatus_) return;
+  if (wifiEnabled_)
+    lv_obj_add_state(settingsWifiSwitch_, LV_STATE_CHECKED);
+  else
+    lv_obj_clear_state(settingsWifiSwitch_, LV_STATE_CHECKED);
+
+  char status[120];
+  if (!wifiEnabled_) {
+    snprintf(status, sizeof(status), "%s",
+             localized("Wi-Fi is off", "Wi-Fi 已关闭"));
+  } else if (wifiProvisioning_) {
+    snprintf(status, sizeof(status), "%s",
+             localized("Waiting for Wi-Fi setup", "等待 Wi-Fi 配网"));
+  } else if (!wifiConnected_) {
+    snprintf(status, sizeof(status), "%s",
+             localized("Connecting to Wi-Fi...", "正在连接 Wi-Fi..."));
+  } else if (chinese_) {
+    snprintf(status, sizeof(status), "已连接：%.28s\nhttp://aeroprobe.local/\nhttp://%.15s/",
+             wifiSsid_, wifiIp_);
+  } else {
+    snprintf(status, sizeof(status), "Connected: %.28s\nhttp://aeroprobe.local/\nhttp://%.15s/",
+             wifiSsid_, wifiIp_);
+  }
+
+  if (strcmp(lv_label_get_text(settingsWifiStatus_), status) != 0)
+    lv_label_set_text(settingsWifiStatus_, status);
 }
 
 void DisplayLcd::onBleSelected(lv_event_t *) {
@@ -611,18 +666,18 @@ void DisplayLcd::buildSettingsPanel() {
   lv_label_set_text(settingsLanguageLabel_, "Interface language");
   lv_obj_set_style_text_font(settingsLanguageLabel_, &lv_font_montserrat_16, 0);
   lv_obj_set_style_text_color(settingsLanguageLabel_, lv_color_make(30, 41, 59), 0);
-  lv_obj_align(settingsLanguageLabel_, LV_ALIGN_TOP_LEFT, 16, 72);
+  lv_obj_align(settingsLanguageLabel_, LV_ALIGN_TOP_LEFT, 16, 60);
 
   settingsPowerLabel_ = lv_label_create(settingsPanel_);
   lv_label_set_text(settingsPowerLabel_, "Power meter");
   lv_obj_set_style_text_font(settingsPowerLabel_, &lv_font_montserrat_16, 0);
   lv_obj_set_style_text_color(settingsPowerLabel_, lv_color_make(30, 41, 59), 0);
-  lv_obj_align(settingsPowerLabel_, LV_ALIGN_TOP_LEFT, 16, 220);
+  lv_obj_align(settingsPowerLabel_, LV_ALIGN_TOP_LEFT, 16, 232);
   settingsPowerButton_ = lv_btn_create(settingsPanel_);
   lv_obj_set_size(settingsPowerButton_, 208, 42);
   lv_obj_set_style_radius(settingsPowerButton_, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_color(settingsPowerButton_, lv_color_make(37, 99, 235), 0);
-  lv_obj_align(settingsPowerButton_, LV_ALIGN_TOP_LEFT, 16, 252);
+  lv_obj_align(settingsPowerButton_, LV_ALIGN_TOP_LEFT, 16, 260);
   lv_obj_add_event_cb(settingsPowerButton_, onPowerSourceButton,
                       LV_EVENT_CLICKED, nullptr);
   settingsPowerButtonLabel_ = lv_label_create(settingsPowerButton_);
@@ -631,18 +686,35 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_text_font(settingsPowerButtonLabel_, &lv_font_montserrat_14, 0);
   lv_obj_center(settingsPowerButtonLabel_);
 
+  settingsWifiLabel_ = lv_label_create(settingsPanel_);
+  lv_label_set_text(settingsWifiLabel_, "Wi-Fi");
+  lv_obj_set_style_text_font(settingsWifiLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(settingsWifiLabel_, lv_color_make(30, 41, 59), 0);
+  lv_obj_align(settingsWifiLabel_, LV_ALIGN_TOP_LEFT, 16, 132);
+
+  settingsWifiSwitch_ = lv_switch_create(settingsPanel_);
+  lv_obj_align(settingsWifiSwitch_, LV_ALIGN_TOP_RIGHT, -16, 128);
+  lv_obj_add_event_cb(settingsWifiSwitch_, onWifiSwitchChanged,
+                      LV_EVENT_VALUE_CHANGED, nullptr);
+
+  settingsWifiStatus_ = lv_label_create(settingsPanel_);
+  lv_obj_set_width(settingsWifiStatus_, 208);
+  lv_label_set_long_mode(settingsWifiStatus_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(settingsWifiStatus_, lv_color_make(71, 85, 105), 0);
+  lv_obj_align(settingsWifiStatus_, LV_ALIGN_TOP_LEFT, 16, 166);
+
   const char *labels[] = {"English", "简体中文"};
   for (size_t i = 0; i < 2; ++i) {
     settingsLanguageButtons_[i] = lv_btn_create(settingsPanel_);
-    lv_obj_set_size(settingsLanguageButtons_[i], 208, 42);
+    lv_obj_set_size(settingsLanguageButtons_[i], 102, 38);
     lv_obj_set_style_radius(settingsLanguageButtons_[i], 0, LV_PART_MAIN);
     lv_obj_set_style_bg_color(settingsLanguageButtons_[i],
                               lv_color_make(239, 244, 248), 0);
     lv_obj_set_style_border_color(settingsLanguageButtons_[i],
                                   lv_color_make(203, 213, 225), 0);
     lv_obj_set_style_border_width(settingsLanguageButtons_[i], 1, 0);
-    lv_obj_align(settingsLanguageButtons_[i], LV_ALIGN_TOP_LEFT, 16,
-                 (lv_coord_t)(112 + i * 52));
+    lv_obj_align(settingsLanguageButtons_[i], LV_ALIGN_TOP_LEFT,
+                 (lv_coord_t)(16 + i * 106), 84);
     lv_obj_add_event_cb(settingsLanguageButtons_[i], onLanguageSelected,
                         LV_EVENT_CLICKED, (void *)(uintptr_t)(i == 1));
     settingsLanguageButtonLabels_[i] = lv_label_create(settingsLanguageButtons_[i]);
@@ -652,6 +724,7 @@ void DisplayLcd::buildSettingsPanel() {
     lv_obj_center(settingsLanguageButtonLabels_[i]);
   }
 
+  refreshWifiStatus();
   lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -795,12 +868,17 @@ void DisplayLcd::refreshLanguage() {
   lv_label_set_text(settingsTitle_, localized("SETTINGS", "设置"));
   lv_label_set_text(settingsLanguageLabel_, localized("Interface language", "界面语言"));
   lv_label_set_text(settingsPowerLabel_, localized("Power meter", "功率计"));
+  lv_label_set_text(settingsWifiLabel_, localized("Wi-Fi", "Wi-Fi"));
   lv_label_set_text(settingsPowerButtonLabel_,
                     localized("Select power meter", "选择功率计"));
   lv_obj_set_style_text_font(settingsTitle_, titleFont, 0);
   lv_obj_set_style_text_font(settingsLanguageLabel_, font, 0);
   lv_obj_set_style_text_font(settingsPowerLabel_, font, 0);
+  lv_obj_set_style_text_font(settingsWifiLabel_, font, 0);
   lv_obj_set_style_text_font(settingsPowerButtonLabel_, font, 0);
+  lv_obj_set_style_text_font(settingsWifiStatus_,
+                             chinese_ ? &lv_font_noto_sans_sc_14
+                                      : &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_font(settingsLanguageButtonLabels_[0],
                              &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_font(settingsLanguageButtonLabels_[1],
@@ -814,6 +892,7 @@ void DisplayLcd::refreshLanguage() {
                                 selected ? lv_color_make(29, 78, 216)
                                          : lv_color_make(51, 65, 85), 0);
   }
+  refreshWifiStatus();
 
   lv_obj_t *panels[] = {
     powerSourcePanel_, bleDevicePanel_, bleConfirmPanel_,

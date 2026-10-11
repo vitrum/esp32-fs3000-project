@@ -19,6 +19,8 @@
 - [7. 与现有模块的集成](#7-与现有模块的集成)
 - [8. 落地 Checklist](#8-落地-checklist)
 - [9. 待决策项](#9-待决策项)
+- [10. 实现状态（已落地）](#10-实现状态已落地)
+  - [10.7 使用与配置步骤](#107-使用与配置步骤)
 
 ---
 
@@ -46,7 +48,7 @@
 ### 设计原则
 
 - **不影响现有功能**：屏幕 UI、BLE/ANT+ 采集、SD 日志照常运行。
-- **可选开启**：Wi-Fi 是"按需启用"模式（绕圈/室内测试时打开），不做常驻。
+- **可选开启**：Wi-Fi 是"按需启用"模式（绕圈/室内测试时打开），由设备设置页面上的开关手动启动。
 - **渐进增强**：先做"只读实时看"，再做控制与文件下载。
 
 ---
@@ -375,3 +377,112 @@ ws.onmessage = (ev) => {
 | **`plan/wifi-web.md`（本文）** | PC 网页 | Wi-Fi（远场） | 教练/采集员远程实时查看分析 |
 
 三者共享：文件命名规范、meta sidecar、功率源切换、实时指标定义。
+
+---
+
+## 10. 实现状态（已落地）
+
+> 本节记录当前固件中的实际实现，与上文方案对应。
+
+### 10.1 新增/改动的文件
+
+| 文件 | 说明 |
+| ---- | ---- |
+| `src/wifi_web.h` / `src/wifi_web.cpp` | Wi-Fi 子系统：SmartConfig 配网 + STA 连接 + Web 服务 + WebSocket |
+| `src/web_assets.h` | 网页前端（PROGMEM 内嵌单文件 HTML/JS） |
+| `src/config.h` | 新增 `WIFI_WEB_ENABLE`、`WIFI_MDNS_HOST`、`WIFI_RECONNECT_MS`、`WIFI_SMART_CONFIG_TIMEOUT_MS` |
+| `src/main.cpp` | `setup()` 调用 `wifiWeb.begin(true)`；`loop()` 调用 `wifiWeb.tick()` 与 `broadcastTelemetry()`，并消费控制请求 |
+| `platformio.ini` | 新增依赖 `AsyncTCP-esphome`、`ESPAsyncWebServer-esphome` |
+
+### 10.2 已实现的接口
+
+| 路径 | 方法 | 说明 |
+| ---- | ---- | ---- |
+| `/` | GET | 实时监控主页（数值卡片 + WebSocket 刷新 + 记录列表） |
+| `/ws` | WebSocket | 1Hz 实时数据推送 |
+| `/api/status` | GET | 连接状态、SSID、IP、配网中标志、客户端数 |
+| `/api/records` | GET | SD 卡 `.csv`/`.fit` 文件列表（JSON） |
+| `/api/download?name=...` | GET | 下载某记录文件 |
+| `/api/control?cmd=start\|stop\|source&src=N` | POST | 开始/停止记录、切换功率源；仅接受已知命令和功率源 |
+| `/api/wifi/provision` | POST | 断开当前网络并启动 SmartConfig 重新配网 |
+
+### 10.3 关键实现要点
+
+- **SmartConfig（ESP-Touch）**：`WiFi.beginSmartConfig()`；配网成功后取 `WiFi.SSID()/psk()`，
+  经 `Preferences("aero-wifi")` 持久化；后续开机后在 LCD 设置页打开 Wi-Fi 时自动 STA 连接。
+  **带超时**（`WIFI_SMART_CONFIG_TIMEOUT_MS`，默认 120s）；首次无凭据时超时会在 5 秒后重新启动配网。
+- **访问方式**：HTTP 页面、API 和 WebSocket 均不要求用户名或密码，连接到设备所在局域网后可直接访问。
+  当前仅提供 HTTP，没有 TLS，也没有用户认证；仅应在可信局域网使用，勿转发到公网。
+- **凭据管理**：`startSmartConfig()` 重新配网、`clearCredentials()` 清除 Wi-Fi 凭据。
+- **mDNS**：`http://aeroprobe.local/`（`WIFI_MDNS_HOST`）。
+- **WebSocket**：`AsyncWebSocket`，1Hz `textAll` 广播紧凑 JSON。
+- **按需启停**：设备启动时 Wi-Fi 默认关闭；在 LCD 的 Settings 页面打开 Wi-Fi 开关后才启动网络连接与 Web 服务。关闭开关会断开 Wi-Fi 并关闭射频。
+- **非阻塞**：SmartConfig 收到凭据后异步推进 STA 连接；`tick()` 负责轮询与断线重连。
+- **控制解耦**：HTTP 回调只更新受临界区保护的请求标志，由 `main.cpp` 主循环消费。
+- **SD 并发**：CSV logger 与网页记录列表/下载共用 FreeRTOS mutex；下载按块读取，每块持锁期间及时释放。
+- **接口校验**：功率源限制为 0–3；下载只允许根目录 `.csv`/`.fit` 文件名，控制失败使用明确 HTTP 状态码。
+
+### 10.4 射频共存提醒（实测待办）
+
+ESP32-S3 单射频，**Wi-Fi + BLE(功率计/姿态) + ANT+ 三者共享**：
+
+- 开启 Wi-Fi 后 BLE/ANT+ 可能出现丢包；绕圈测试若只看实时数据，建议暂停 ANT+。
+- 整体可通过 `WIFI_WEB_ENABLE=0` 关闭 Wi-Fi 子系统（省射频与内存）。
+- 真机需实测：Wi-Fi + BLE + ANT+ 同时运行的丢包率（见 §8 验证清单）。
+
+### 10.5 编译结果
+
+- `pio run -e esp32s3` **编译通过**（含网页认证、控制、SD 并发修复）。
+- RAM 37.9%，Flash 48.0%（含 LVGL + NimBLE + ANT + AsyncWebServer）。
+- 真实设备上的直接网页访问、WebSocket、下载并发和 SmartConfig 恢复仍需硬件联调。
+
+### 10.6 前端说明
+
+- 单文件原生 HTML/JS（`web_assets.h`），无构建、无外部依赖，内嵌 Flash。
+- 数值卡片实时刷新；断线自动重连；每 10s 拉取一次记录列表。
+- **待增强**：实时时序曲线（接入 uPlot，见 §5）；本项目页面暂以数值卡片 + 记录下载为主。
+
+### 10.7 使用与配置步骤
+
+#### A. 编译并烧录启用 Wi-Fi 的固件
+
+1. 确认 `src/config.h` 中 `WIFI_WEB_ENABLE` 为 `1`。当前项目配置默认启用。
+2. 在项目 `code/` 目录编译 ESP32-S3 固件：
+
+   ```sh
+   pio run -e esp32s3
+   ```
+
+3. 用 USB 将固件烧录到设备：
+
+   ```sh
+   pio run -e esp32s3 -t upload
+   ```
+
+4. 打开串口监视器，波特率设为 `115200`。设备启动后 Wi-Fi 默认关闭；需要在设备屏幕中进入 **SETTINGS** 并打开 **Wi-Fi** 开关，设备才会尝试连接已保存的 Wi-Fi 或启动 SmartConfig。
+
+#### B. 首次连接 Wi-Fi（SmartConfig）
+
+1. 确认要连接的路由器提供 **2.4 GHz Wi-Fi**，手机也连接到目标 2.4 GHz 网络。ESP32-S3 当前使用 2.4 GHz。
+2. 在手机上打开兼容 Espressif ESP-Touch 的 SmartConfig 应用，选择目标 Wi-Fi 并输入该网络密码，然后启动配置。不要输入路由器管理密码。
+3. 配网期间保持手机和设备靠近路由器，并等待串口出现 `SmartConfig received credentials`。成功后设备会异步加入该网络；串口出现 `reconnected. IP=...` 和/或 `mDNS ready` 表示已连接。LCD 设置页也会显示连接状态及访问地址。
+4. SmartConfig 每轮最长等待 120 秒。首次没有已保存网络时，超时后设备会在 5 秒后再次进入配网，可重新从手机发送配置。
+
+> SmartConfig 会将手机当前选择的 Wi-Fi 凭据发送给设备，不会让设备创建独立热点。若手机应用找不到网络或配网失败，确认手机当前连接的是 2.4 GHz 网络，重试时重新选择 SSID 并检查 Wi-Fi 密码。
+
+#### C. 打开监控网页
+
+1. 先确认 LCD 设置页中的 Wi-Fi 开关已打开且显示已连接，然后让运行浏览器的电脑/手机加入与设备相同的局域网。
+2. 设置页会同时展示 mDNS 地址 `http://aeroprobe.local/` 和设备 IP 地址 `http://<设备IP>/`。优先使用 mDNS 地址；若 mDNS 在当前网络或操作系统上不可用，使用页面显示的 IP 地址，例如 `http://192.168.1.80/`。
+3. 打开地址后网页直接加载，不需要输入用户名或密码。若浏览器仍显示此前缓存的登录提示，取消提示并重新打开地址或刷新页面。
+4. 主页通过 WebSocket 显示实时数据；风速传感器读数失效时，风速和偏航角显示为 `--`。
+
+#### D. 开始记录、下载数据和重新配网
+
+1. 在主页的 **Control** 区域点击 **Start recording** 开始写入 SD 卡 CSV；点击 **Stop recording** 结束并关闭当前文件。确认设备已插入可用 SD 卡。
+2. 在 **History** 区域查看记录文件并点击 **Download** 下载 CSV/FIT 文件。下载期间 SD 卡受互斥锁保护；大量下载仍可能增加 Wi-Fi/BLE/ANT+ 共存负载。
+3. 点击 **Reprovision Wi-Fi** 并确认后，设备会断开当前网络并进入 SmartConfig；按照上面的首次配网步骤发送新的网络凭据。
+4. 若设备当前仍连接旧网络但需要从网页发起重新配网，操作后浏览器会与设备断开；新网络配置完成后，使用新 IP 或 `http://aeroprobe.local/` 再次访问。
+5. 不使用网页时，可在 LCD **SETTINGS** 页面关闭 Wi-Fi 开关，断开网络并停止 Wi-Fi 射频；再次使用时重新打开开关。
+
+> 当前网页提供记录控制、记录下载和重新配网操作；功率源切换接口已实现，但网页尚未提供对应按钮。Web 服务使用未加密 HTTP 且不要求登录，局域网内其他设备均可访问和控制；只应在可信局域网使用，不要暴露到公网。
