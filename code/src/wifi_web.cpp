@@ -4,7 +4,7 @@
 #include "web_assets.h"
 #include "csv_logger.h"
 
-#include <SD.h>
+#include "csv_logger.h"  // sdFs()
 
 WifiWeb wifiWeb;
 
@@ -356,7 +356,7 @@ void WifiWeb::registerRoutes() {
       request->send(503, "text/plain", "SD card busy");
       return;
     }
-    File file = SD.open(path, FILE_READ);
+    File file = sdFs().open(path, FILE_READ);
     if (!file || file.isDirectory()) {
       if (file) file.close();
       unlockSdCard();
@@ -371,7 +371,7 @@ void WifiWeb::registerRoutes() {
         "application/octet-stream", fileSize,
         [path](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
           if (!lockSdCard(portMAX_DELAY)) return 0;
-          File chunk = SD.open(path, FILE_READ);
+          File chunk = sdFs().open(path, FILE_READ);
           if (!chunk || chunk.isDirectory() || !chunk.seek(index)) {
             if (chunk) chunk.close();
             unlockSdCard();
@@ -451,7 +451,7 @@ bool WifiWeb::recordsJson(String &out) {
   if (!lockSdCard(pdMS_TO_TICKS(kSdLockWaitMs))) return false;
   out = "[";
   out.reserve(512);
-  File root = SD.open("/");
+  File root = sdFs().open("/");
   if (root && root.isDirectory()) {
     File f = root.openNextFile();
     bool first = true;

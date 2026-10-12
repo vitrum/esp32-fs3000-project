@@ -26,14 +26,18 @@ public:
   // 轮询按键状态，处理长按关机。非阻塞，需在 loop() 中频繁调用。
   void tick();
 
+  // 长按满后置位；由主循环消费（可先播放关机提示音再真正断电）。
+  bool takeShutdownRequest();
+
   // 立即关机（拉低 PWR_Control 断电）。
   void shutdown();
 
   bool shuttingDown() const { return _shuttingDown; }
 
 private:
-  bool _powerHeld = false;       // 是否已锁定供电
-  bool _buttonActive = false;    // 当前按键是否处于按下状态
-  bool _shuttingDown = false;    // 正在关机
-  uint32_t _pressStartMs = 0;    // 本次按下起始时刻
+  bool _powerHeld = false;         // 是否已锁定供电
+  bool _buttonActive = false;      // 当前按键是否处于按下状态
+  bool _shuttingDown = false;      // 正在关机
+  bool _shutdownRequested = false; // 长按已触发，等待主循环处理
+  uint32_t _pressStartMs = 0;      // 本次按下起始时刻
 };

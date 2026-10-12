@@ -126,6 +126,7 @@ void DisplayLcd::lvglTouchReadCb(lv_indev_drv_t *, lv_indev_data_t *data) {
 void DisplayLcd::onPowerSourceButton(lv_event_t *) {
   if (!g_display) return;
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->sdPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(g_display->virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -345,6 +346,128 @@ void DisplayLcd::onCancelSelection(lv_event_t *) {
   if (g_display && g_display->powerSourcePanel_) {
     lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+void DisplayLcd::onSdCardButton(lv_event_t *) {
+  if (!g_display) return;
+  g_display->sdListRequested_ = true;   // 由主循环加载文件列表
+  lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_label_set_text(g_display->sdStatusLabel_,
+                    g_display->localized("Loading files...", "正在读取文件..."));
+  for (size_t i = 0; i < 12; ++i)
+    lv_obj_add_flag(g_display->sdRowButtons_[i], LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->sdPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onSdBack(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->sdPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onSdFileClicked(lv_event_t *event) {
+  if (!g_display) return;
+  const size_t index = (size_t)(uintptr_t)lv_event_get_user_data(event);
+  if (index >= g_display->sdFileCount_) return;
+  if (!g_display->sdFiles_[index].isAudio) {
+    lv_label_set_text(g_display->sdNowPlayingLabel_,
+                      g_display->localized("Not an audio file", "不是音频文件"));
+    return;
+  }
+  snprintf(g_display->sdPlayPath_, sizeof(g_display->sdPlayPath_), "/%s",
+           g_display->sdFiles_[index].name);
+  g_display->sdPlayRequested_ = true;
+}
+
+void DisplayLcd::onSdStopClicked(lv_event_t *) {
+  if (!g_display) return;
+  g_display->sdStopRequested_ = true;
+}
+
+bool DisplayLcd::takeSdListRequest() {
+  if (!sdListRequested_) return false;
+  sdListRequested_ = false;
+  return true;
+}
+
+bool DisplayLcd::takeSdPlayRequest(char *path, size_t capacity) {
+  if (!sdPlayRequested_) return false;
+  sdPlayRequested_ = false;
+  if (!path || capacity == 0) return false;
+  snprintf(path, capacity, "%s", sdPlayPath_);
+  return true;
+}
+
+bool DisplayLcd::takeSdStopRequest() {
+  if (!sdStopRequested_) return false;
+  sdStopRequested_ = false;
+  return true;
+}
+
+void DisplayLcd::setSdFiles(const SdFileEntry *files, size_t count,
+                            const char *status) {
+  sdFileCount_ = min(count, (size_t)12);
+  if (files)
+    for (size_t i = 0; i < sdFileCount_; ++i) sdFiles_[i] = files[i];
+  (void)status;
+  refreshSdList();
+}
+
+void DisplayLcd::updateAudioStatus(bool playing, const char *title) {
+  audioPlaying_ = playing;
+  snprintf(audioTitle_, sizeof(audioTitle_), "%s", title ? title : "");
+  if (sdNowPlayingLabel_) {
+    char text[128];
+    if (playing && audioTitle_[0])
+      snprintf(text, sizeof(text), localized("Playing: %s", "播放中: %s"),
+               audioTitle_);
+    else
+      snprintf(text, sizeof(text), "%s",
+               localized("Stopped", "已停止"));
+    lv_label_set_text(sdNowPlayingLabel_, text);
+  }
+  if (sdStopButton_)
+    lv_obj_set_style_bg_color(sdStopButton_,
+                              playing ? lv_color_make(220, 38, 38)
+                                      : lv_color_make(148, 163, 184), 0);
+}
+
+void DisplayLcd::refreshSdList() {
+  if (!sdList_) return;
+
+  char status[64];
+  if (sdFileCount_ == 0)
+    snprintf(status, sizeof(status), "%s",
+             localized("No files on SD card", "SD 卡内没有文件"));
+  else
+    snprintf(status, sizeof(status), localized("%u file(s)", "%u 个文件"),
+             (unsigned)sdFileCount_);
+  lv_label_set_text(sdStatusLabel_, status);
+
+  for (size_t i = 0; i < 12; ++i) {
+    lv_obj_t *button = sdRowButtons_[i];
+    lv_obj_t *label = sdRowLabels_[i];
+    if (i >= sdFileCount_) {
+      lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+    char text[96];
+    const SdFileEntry &f = sdFiles_[i];
+    // 音频文件显示 ▶，其它显示普通图标；并显示大小(KB)
+    if (f.isAudio)
+      snprintf(text, sizeof(text), LV_SYMBOL_PLAY " %s\n%lu KB",
+               f.name, (unsigned long)(f.size / 1024));
+    else
+      snprintf(text, sizeof(text), LV_SYMBOL_FILE " %s\n%lu KB",
+               f.name, (unsigned long)(f.size / 1024));
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_font(label,
+        chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
+    // 可播放项高亮背景
+    lv_obj_set_style_bg_color(button,
+        f.isAudio ? lv_color_make(219, 234, 254) : lv_color_make(241, 245, 249), 0);
+    lv_obj_clear_flag(button, LV_OBJ_FLAG_HIDDEN);
   }
 }
 
@@ -668,16 +791,33 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_text_color(settingsLanguageLabel_, lv_color_make(30, 41, 59), 0);
   lv_obj_align(settingsLanguageLabel_, LV_ALIGN_TOP_LEFT, 16, 60);
 
+  settingsWifiLabel_ = lv_label_create(settingsPanel_);
+  lv_label_set_text(settingsWifiLabel_, "Wi-Fi");
+  lv_obj_set_style_text_font(settingsWifiLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(settingsWifiLabel_, lv_color_make(30, 41, 59), 0);
+  lv_obj_align(settingsWifiLabel_, LV_ALIGN_TOP_LEFT, 16, 128);
+
+  settingsWifiSwitch_ = lv_switch_create(settingsPanel_);
+  lv_obj_align(settingsWifiSwitch_, LV_ALIGN_TOP_RIGHT, -16, 124);
+  lv_obj_add_event_cb(settingsWifiSwitch_, onWifiSwitchChanged,
+                      LV_EVENT_VALUE_CHANGED, nullptr);
+
+  settingsWifiStatus_ = lv_label_create(settingsPanel_);
+  lv_obj_set_width(settingsWifiStatus_, 208);
+  lv_label_set_long_mode(settingsWifiStatus_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(settingsWifiStatus_, lv_color_make(71, 85, 105), 0);
+  lv_obj_align(settingsWifiStatus_, LV_ALIGN_TOP_LEFT, 16, 158);
+
   settingsPowerLabel_ = lv_label_create(settingsPanel_);
   lv_label_set_text(settingsPowerLabel_, "Power meter");
   lv_obj_set_style_text_font(settingsPowerLabel_, &lv_font_montserrat_16, 0);
   lv_obj_set_style_text_color(settingsPowerLabel_, lv_color_make(30, 41, 59), 0);
-  lv_obj_align(settingsPowerLabel_, LV_ALIGN_TOP_LEFT, 16, 232);
+  lv_obj_align(settingsPowerLabel_, LV_ALIGN_TOP_LEFT, 16, 210);
   settingsPowerButton_ = lv_btn_create(settingsPanel_);
-  lv_obj_set_size(settingsPowerButton_, 208, 42);
+  lv_obj_set_size(settingsPowerButton_, 208, 36);
   lv_obj_set_style_radius(settingsPowerButton_, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_color(settingsPowerButton_, lv_color_make(37, 99, 235), 0);
-  lv_obj_align(settingsPowerButton_, LV_ALIGN_TOP_LEFT, 16, 260);
+  lv_obj_align(settingsPowerButton_, LV_ALIGN_TOP_LEFT, 16, 234);
   lv_obj_add_event_cb(settingsPowerButton_, onPowerSourceButton,
                       LV_EVENT_CLICKED, nullptr);
   settingsPowerButtonLabel_ = lv_label_create(settingsPowerButton_);
@@ -686,22 +826,18 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_text_font(settingsPowerButtonLabel_, &lv_font_montserrat_14, 0);
   lv_obj_center(settingsPowerButtonLabel_);
 
-  settingsWifiLabel_ = lv_label_create(settingsPanel_);
-  lv_label_set_text(settingsWifiLabel_, "Wi-Fi");
-  lv_obj_set_style_text_font(settingsWifiLabel_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(settingsWifiLabel_, lv_color_make(30, 41, 59), 0);
-  lv_obj_align(settingsWifiLabel_, LV_ALIGN_TOP_LEFT, 16, 132);
-
-  settingsWifiSwitch_ = lv_switch_create(settingsPanel_);
-  lv_obj_align(settingsWifiSwitch_, LV_ALIGN_TOP_RIGHT, -16, 128);
-  lv_obj_add_event_cb(settingsWifiSwitch_, onWifiSwitchChanged,
-                      LV_EVENT_VALUE_CHANGED, nullptr);
-
-  settingsWifiStatus_ = lv_label_create(settingsPanel_);
-  lv_obj_set_width(settingsWifiStatus_, 208);
-  lv_label_set_long_mode(settingsWifiStatus_, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_color(settingsWifiStatus_, lv_color_make(71, 85, 105), 0);
-  lv_obj_align(settingsWifiStatus_, LV_ALIGN_TOP_LEFT, 16, 166);
+  // SD 卡文件浏览入口
+  settingsSdButton_ = lv_btn_create(settingsPanel_);
+  lv_obj_set_size(settingsSdButton_, 208, 36);
+  lv_obj_set_style_radius(settingsSdButton_, 0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(settingsSdButton_, lv_color_make(15, 118, 110), 0);
+  lv_obj_align(settingsSdButton_, LV_ALIGN_TOP_LEFT, 16, 276);
+  lv_obj_add_event_cb(settingsSdButton_, onSdCardButton, LV_EVENT_CLICKED, nullptr);
+  settingsSdButtonLabel_ = lv_label_create(settingsSdButton_);
+  lv_label_set_text(settingsSdButtonLabel_, LV_SYMBOL_SD_CARD " SD CARD");
+  lv_obj_set_style_text_color(settingsSdButtonLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_font(settingsSdButtonLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_center(settingsSdButtonLabel_);
 
   const char *labels[] = {"English", "简体中文"};
   for (size_t i = 0; i < 2; ++i) {
@@ -726,6 +862,84 @@ void DisplayLcd::buildSettingsPanel() {
 
   refreshWifiStatus();
   lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+
+  buildSdPanel();
+}
+
+void DisplayLcd::buildSdPanel() {
+  sdPanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(sdPanel_, 240, 320);
+  lv_obj_center(sdPanel_);
+  lv_obj_clear_flag(sdPanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(sdPanel_, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_style_pad_all(sdPanel_, 0, 0);
+  lv_obj_set_style_radius(sdPanel_, 0, 0);
+  lv_obj_set_style_border_width(sdPanel_, 0, 0);
+  lv_obj_set_style_bg_color(sdPanel_, lv_color_make(248, 250, 252), 0);
+  lv_obj_set_style_bg_opa(sdPanel_, LV_OPA_COVER, 0);
+  buildPanelHeader(sdPanel_, "SD CARD", onSdBack);
+  sdTitle_ = lv_obj_get_child(sdPanel_, 1);
+
+  sdStatusLabel_ = lv_label_create(sdPanel_);
+  lv_label_set_text(sdStatusLabel_, "Loading files...");
+  lv_obj_set_width(sdStatusLabel_, 216);
+  lv_obj_set_style_text_font(sdStatusLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(sdStatusLabel_, lv_color_make(100, 116, 139), 0);
+  lv_obj_align(sdStatusLabel_, LV_ALIGN_TOP_LEFT, 12, 54);
+
+  // 可滚动文件列表
+  sdList_ = lv_obj_create(sdPanel_);
+  lv_obj_set_size(sdList_, 216, 178);
+  lv_obj_align(sdList_, LV_ALIGN_TOP_LEFT, 12, 76);
+  lv_obj_set_style_pad_all(sdList_, 0, 0);
+  lv_obj_set_style_radius(sdList_, 0, 0);
+  lv_obj_set_style_border_width(sdList_, 0, 0);
+  lv_obj_set_style_bg_opa(sdList_, LV_OPA_TRANSP, 0);
+  lv_obj_set_flex_flow(sdList_, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(sdList_, 4, 0);
+
+  for (size_t i = 0; i < 12; ++i) {
+    lv_obj_t *button = lv_btn_create(sdList_);
+    lv_obj_set_size(button, 210, 40);
+    lv_obj_set_style_radius(button, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(button, lv_color_make(241, 245, 249), 0);
+    lv_obj_set_style_border_color(button, lv_color_make(203, 213, 225), 0);
+    lv_obj_set_style_border_width(button, 1, 0);
+    lv_obj_set_style_pad_all(button, 2, 0);
+    lv_obj_add_event_cb(button, onSdFileClicked, LV_EVENT_CLICKED,
+                        (void *)(uintptr_t)i);
+    sdRowButtons_[i] = button;
+    lv_obj_t *label = lv_label_create(button);
+    lv_obj_set_width(label, 200);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(label, lv_color_make(30, 41, 59), 0);
+    lv_obj_center(label);
+    sdRowLabels_[i] = label;
+    lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  sdNowPlayingLabel_ = lv_label_create(sdPanel_);
+  lv_label_set_text(sdNowPlayingLabel_, "Stopped");
+  lv_obj_set_width(sdNowPlayingLabel_, 216);
+  lv_label_set_long_mode(sdNowPlayingLabel_, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(sdNowPlayingLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(sdNowPlayingLabel_, lv_color_make(37, 99, 235), 0);
+  lv_obj_align(sdNowPlayingLabel_, LV_ALIGN_TOP_LEFT, 12, 260);
+
+  sdStopButton_ = lv_btn_create(sdPanel_);
+  lv_obj_set_size(sdStopButton_, 216, 34);
+  lv_obj_set_style_radius(sdStopButton_, 0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(sdStopButton_, lv_color_make(148, 163, 184), 0);
+  lv_obj_align(sdStopButton_, LV_ALIGN_TOP_LEFT, 12, 282);
+  lv_obj_add_event_cb(sdStopButton_, onSdStopClicked, LV_EVENT_CLICKED, nullptr);
+  sdStopLabel_ = lv_label_create(sdStopButton_);
+  lv_label_set_text(sdStopLabel_, LV_SYMBOL_STOP " STOP");
+  lv_obj_set_style_text_color(sdStopLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_font(sdStopLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_center(sdStopLabel_);
+
+  lv_obj_add_flag(sdPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::setLanguage(bool chinese) {
@@ -871,11 +1085,31 @@ void DisplayLcd::refreshLanguage() {
   lv_label_set_text(settingsWifiLabel_, localized("Wi-Fi", "Wi-Fi"));
   lv_label_set_text(settingsPowerButtonLabel_,
                     localized("Select power meter", "选择功率计"));
+  lv_label_set_text(settingsSdButtonLabel_,
+                    localized(LV_SYMBOL_SD_CARD " SD CARD", LV_SYMBOL_SD_CARD " SD 卡"));
   lv_obj_set_style_text_font(settingsTitle_, titleFont, 0);
   lv_obj_set_style_text_font(settingsLanguageLabel_, font, 0);
   lv_obj_set_style_text_font(settingsPowerLabel_, font, 0);
   lv_obj_set_style_text_font(settingsWifiLabel_, font, 0);
   lv_obj_set_style_text_font(settingsPowerButtonLabel_, font, 0);
+  lv_obj_set_style_text_font(settingsSdButtonLabel_, font, 0);
+
+  // SD 浏览页文字
+  lv_label_set_text(sdTitle_, localized("SD CARD", "SD 卡"));
+  lv_label_set_text(sdStopLabel_, localized(LV_SYMBOL_STOP " STOP", LV_SYMBOL_STOP " 停止"));
+  lv_obj_set_style_text_font(sdTitle_, titleFont, 0);
+  lv_obj_set_style_text_font(sdStatusLabel_, font, 0);
+  lv_obj_set_style_text_font(sdStopLabel_, font, 0);
+  lv_obj_set_style_text_font(sdNowPlayingLabel_, font, 0);
+  refreshSdList();
+  {
+    char text[128];
+    if (audioPlaying_ && audioTitle_[0])
+      snprintf(text, sizeof(text), localized("Playing: %s", "播放中: %s"), audioTitle_);
+    else
+      snprintf(text, sizeof(text), "%s", localized("Stopped", "已停止"));
+    lv_label_set_text(sdNowPlayingLabel_, text);
+  }
   lv_obj_set_style_text_font(settingsWifiStatus_,
                              chinese_ ? &lv_font_noto_sans_sc_14
                                       : &lv_font_montserrat_14, 0);
@@ -896,7 +1130,7 @@ void DisplayLcd::refreshLanguage() {
 
   lv_obj_t *panels[] = {
     powerSourcePanel_, bleDevicePanel_, bleConfirmPanel_,
-    bleLoadingPanel_, virtualPowerPanel_, settingsPanel_
+    bleLoadingPanel_, virtualPowerPanel_, settingsPanel_, sdPanel_
   };
   for (lv_obj_t *panel : panels) {
     lv_obj_t *backButton = lv_obj_get_child(panel, 0);

@@ -43,12 +43,18 @@ void PowerKey::tick() {
     _buttonActive = false;
   }
 
-  if (_buttonActive && !_shuttingDown &&
+  if (_buttonActive && !_shuttingDown && !_shutdownRequested &&
       millis() - _pressStartMs >= PWR_LONG_PRESS_MS) {
-    Serial.printf("[PWR] long press %lums -> shutting down\n",
+    Serial.printf("[PWR] long press %lums -> shutdown requested\n",
                   (unsigned long)PWR_LONG_PRESS_MS);
-    shutdown();
+    _shutdownRequested = true;   // 交由主循环处理（先播放关机音再断电）
   }
+}
+
+bool PowerKey::takeShutdownRequest() {
+  if (!_shutdownRequested) return false;
+  _shutdownRequested = false;
+  return true;
 }
 
 void PowerKey::shutdown() {

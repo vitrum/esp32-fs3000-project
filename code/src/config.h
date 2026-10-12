@@ -33,6 +33,9 @@
 #define PIN_SD_MISO   16
 #define PIN_SD_MOSI   17
 #define PIN_SD_CS     21
+// SDSPI 频率：该板走 SPI 且线较长，大容量 SDXC 卡在写后偶尔不响应 CMD13
+// 状态查询（Card Failed! cmd:0x0d）。1MHz 最稳，写 CSV 数据量小、够用。
+#define SD_SPI_FREQ_HZ 1000000
 
 // ---- 电源开关（电池开关 / PWR Key）----
 // 依据 Waveshare ESP32-S3-LCD-2.8 官方 PWR_Key 示例：
@@ -43,6 +46,21 @@
 #define PIN_PWR_KEY       6
 #define PIN_PWR_CONTROL   7
 #define PWR_LONG_PRESS_MS 5000   // 长按关机阈值(ms)
+
+// ============================================================================
+// 音频（PCM5101 I2S 外置 DAC + 板载喇叭）
+// 依据 Waveshare ESP32-S3-LCD-2.8 官方 Audio_Driver/PCM5101 示例：
+//   BCLK/SCLK = GPIO48, LRC/WS = GPIO38, DOUT = GPIO47, MCLK = 无
+// 用途：开机/关机提示音（Wahoo 风格）+ 播放 SD 卡内 MP3
+// ============================================================================
+#define AUDIO_ENABLE      1      // 1=启用音频；0=关闭（省内存/引脚）
+#define PIN_I2S_BCLK      48
+#define PIN_I2S_LRC       38
+#define PIN_I2S_DOUT      47
+#define AUDIO_VOLUME      55     // 0~100 默认音量
+#define AUDIO_SYSTEM_DIR  "/system"        // 系统音效目录（SD 卡内）
+#define AUDIO_BOOT_WAV    "/system/boot.wav"
+#define AUDIO_SHUTDOWN_WAV "/system/shutdown.wav"
 
 // ============================================================================
 // FS3000 空气流速传感器

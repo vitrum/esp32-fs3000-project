@@ -9,6 +9,7 @@
 
 #include "ble_power.h"
 #include "wind_probe.h"
+#include "csv_logger.h"   // SdFileEntry
 
 // ST7789 240x320 display for wind, CdA, live power, cadence, and status.
 class DisplayLcd {
@@ -31,6 +32,18 @@ public:
   bool takeWifiEnableRequest(bool &enabled);
   void updateWifiStatus(bool enabled, bool connected, bool provisioning,
                         const char *ssid, const char *ip);
+
+  // ---- SD 卡文件浏览 ----
+  // 用户点击设置里的 "SD CARD" 时置位，主循环据此触发文件列表加载。
+  bool takeSdListRequest();
+  // 主循环加载完文件后回填列表（音频文件带 ▶ 标记）。
+  void setSdFiles(const SdFileEntry *files, size_t count, const char *status);
+  // 用户点击某文件请求播放：输出完整路径（"/name"）到 path。
+  bool takeSdPlayRequest(char *path, size_t capacity);
+  // 用户点击 STOP：停止播放。
+  bool takeSdStopRequest();
+  // 更新当前播放状态文字（由主循环轮询 audio 模块）。
+  void updateAudioStatus(bool playing, const char *title);
 
 private:
   Arduino_DataBus *_bus = nullptr;
@@ -62,6 +75,17 @@ private:
   lv_obj_t *settingsWifiLabel_ = nullptr;
   lv_obj_t *settingsWifiSwitch_ = nullptr;
   lv_obj_t *settingsWifiStatus_ = nullptr;
+  lv_obj_t *settingsSdButton_ = nullptr;
+  lv_obj_t *settingsSdButtonLabel_ = nullptr;
+  lv_obj_t *sdPanel_ = nullptr;
+  lv_obj_t *sdTitle_ = nullptr;
+  lv_obj_t *sdStatusLabel_ = nullptr;
+  lv_obj_t *sdList_ = nullptr;              // 可滚动列表容器
+  lv_obj_t *sdRowButtons_[12] = {};         // 文件行按钮
+  lv_obj_t *sdRowLabels_[12] = {};          // 行文字
+  lv_obj_t *sdStopButton_ = nullptr;
+  lv_obj_t *sdStopLabel_ = nullptr;
+  lv_obj_t *sdNowPlayingLabel_ = nullptr;
   lv_obj_t *virtualPowerPanel_ = nullptr;
   lv_obj_t *virtualPowerValueLabel_ = nullptr;
   lv_obj_t *virtualCadenceValueLabel_ = nullptr;
@@ -120,6 +144,16 @@ private:
   size_t selectedBleDevice_ = 0;
   bool touchReady_ = false;
 
+  // ---- SD 浏览状态 ----
+  bool sdListRequested_ = false;
+  bool sdPlayRequested_ = false;
+  bool sdStopRequested_ = false;
+  char sdPlayPath_[80] = {};
+  SdFileEntry sdFiles_[12] = {};
+  size_t sdFileCount_ = 0;
+  bool audioPlaying_ = false;
+  char audioTitle_[96] = {};
+
   static void lvglFlushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);
   static void lvglTouchReadCb(lv_indev_drv_t *drv, lv_indev_data_t *data);
   static void onPowerSourceButton(lv_event_t *event);
@@ -140,6 +174,10 @@ private:
   static void onVirtualBack(lv_event_t *event);
   static void onVirtualSliderChanged(lv_event_t *event);
   static void onCancelSelection(lv_event_t *event);
+  static void onSdCardButton(lv_event_t *event);
+  static void onSdBack(lv_event_t *event);
+  static void onSdFileClicked(lv_event_t *event);
+  static void onSdStopClicked(lv_event_t *event);
   static uint16_t rgb565FromLvColor(lv_color_t c);
   bool readTouch(uint16_t &x, uint16_t &y);
   bool initTouch();
@@ -149,6 +187,8 @@ private:
   void buildPowerSourcePanel();
   void buildVirtualPowerPanel();
   void buildSettingsPanel();
+  void buildSdPanel();
+  void refreshSdList();
   void refreshLanguage();
   void refreshBleDeviceButtons();
   void setLanguage(bool chinese);

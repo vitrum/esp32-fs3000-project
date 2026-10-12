@@ -23,6 +23,7 @@
 #include "csv_logger.h"
 #include "display_lcd.h"
 #include "power_key.h"
+#include "audio.h"
 #ifdef ANT_POWER_ENABLE
 #include "ant_power.h"
 #endif
@@ -233,7 +234,54 @@ void loop() {
 
   // 电源开关：长按 5 秒关机（非阻塞）
   powerKey.tick();
+  if (powerKey.takeShutdownRequest()) {
+    // 先播放关机提示音，稍作停留，再断电
+    audio.playShutdownChime();
+    uint32_t stopBy = millis() + 800;   // 给提示音一点播放时间
+    while (millis() < stopBy) {
+      audio.tick();
+      delay(10);
+    }
+    powerKey.shutdown();
+    return;
+  }
   if (powerKey.shuttingDown()) return;
+
+  // 音频解码/播放泵 + 状态回显
+  audio.tick();
+  lcd.updateAudioStatus(audio.playing(), audio.currentTitle());
+
+  // 播放音频时自动暂停 CSV 日志，避免音频任务与日志任务争用 SD 总线
+  // （ESP32-audioI2S 用独立任务读 SD，与主循环写盘不加锁会冲突）。
+  static bool audioWasPlaying = false;
+  const bool audioPlaying = audio.playing();
+  if (audioPlaying && !audioWasPlaying) {
+    logger.pause();
+    Serial.println("[SD] audio playback started -> CSV logging paused");
+  } else if (!audioPlaying && audioWasPlaying) {
+    logger.resume();
+    Serial.println("[SD] audio playback ended -> CSV logging resumed");
+  }
+  audioWasPlaying = audioPlaying;
+
+  // SD 卡浏览器：加载文件列表 / 播放 / 停止
+  if (lcd.takeSdListRequest()) {
+    static SdFileEntry files[12];
+    size_t count = listSdFiles(files, 12);
+    lcd.setSdFiles(files, count, nullptr);
+  }
+  char sdPlayPath[80] = {};
+  if (lcd.takeSdPlayRequest(sdPlayPath, sizeof(sdPlayPath))) {
+    if (audio.playFile(sdPlayPath)) {
+      Serial.printf("[SD] play mp3: %s\n", sdPlayPath);
+    } else {
+      Serial.printf("[SD] could not play: %s\n", sdPlayPath);
+    }
+  }
+  if (lcd.takeSdStopRequest()) {
+    audio.stop();
+    Serial.println("[SD] playback stopped");
+  }
 
 #if WIFI_WEB_ENABLE
   bool wifiEnabled = false;
