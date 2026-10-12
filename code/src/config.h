@@ -34,6 +34,16 @@
 #define PIN_SD_MOSI   17
 #define PIN_SD_CS     21
 
+// ---- 电源开关（电池开关 / PWR Key）----
+// 依据 Waveshare ESP32-S3-LCD-2.8 官方 PWR_Key 示例：
+//   PWR_KEY_Input_PIN  = GPIO6  电池开关按键输入（低电平=按下）
+//   PWR_Control_PIN    = GPIO7  电源保持控制（拉高=锁定供电，拉低=断电）
+// 行为：上电后若检测到按键按下 → 拉高 GPIO7 保持开机；
+//       长按 5 秒 → 拉低 GPIO7 断电关机。
+#define PIN_PWR_KEY       6
+#define PIN_PWR_CONTROL   7
+#define PWR_LONG_PRESS_MS 5000   // 长按关机阈值(ms)
+
 // ============================================================================
 // FS3000 空气流速传感器
 // ============================================================================

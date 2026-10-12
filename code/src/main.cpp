@@ -22,6 +22,7 @@
 #include "bme280_env.h"
 #include "csv_logger.h"
 #include "display_lcd.h"
+#include "power_key.h"
 #ifdef ANT_POWER_ENABLE
 #include "ant_power.h"
 #endif
@@ -35,6 +36,7 @@ BlePosture   posture;
 EnvSensor    env;
 CsvLogger    logger;
 DisplayLcd   lcd;
+PowerKey     powerKey;
 #ifdef ANT_POWER_ENABLE
 AntPower     antPower;
 #endif
@@ -190,6 +192,9 @@ static float pmCadence() {
 }
 
 void setup() {
+  // 电源开关管理：尽早初始化以锁定供电（开机需按电池开关）
+  powerKey.begin();
+
   Serial.begin(115200);
   delay(200);
   Serial.println("\n== Aero Probe (single FS3000 + touch UI + BLE/ANT+ PM) ==");
@@ -225,6 +230,10 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
+
+  // 电源开关：长按 5 秒关机（非阻塞）
+  powerKey.tick();
+  if (powerKey.shuttingDown()) return;
 
 #if WIFI_WEB_ENABLE
   bool wifiEnabled = false;
