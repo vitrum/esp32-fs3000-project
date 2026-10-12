@@ -218,6 +218,20 @@ void setup() {
   logger.begin();                    // TF 卡（可选，失败不阻塞）
   lcd.begin();                       // 屏幕
 
+  // 音频 + 保存的音量设置
+  audio.begin();
+  {
+    Preferences prefs;
+    uint8_t v = AUDIO_VOLUME;
+    if (prefs.begin("aero-ui", true)) {
+      v = prefs.getUChar("vol", AUDIO_VOLUME);
+      prefs.end();
+    }
+    audio.setVolume(v);
+    lcd.setVolume(v);
+  }
+  audio.playStartupChime();          // 开机提示音（两短一长）
+
   // BLE 设备（NimBLE 单例，两个客户端共用；init 幂等）
   powerMeter.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
   posture.begin(BLE_DEVICE_NAME);
@@ -263,6 +277,19 @@ void loop() {
     Serial.println("[SD] audio playback ended -> CSV logging resumed");
   }
   audioWasPlaying = audioPlaying;
+
+  // 声音设置：应用音量并用该音量试听
+  uint8_t newVolume = 0;
+  if (lcd.takeVolumeRequest(newVolume)) {
+    audio.setVolume(newVolume);
+    Preferences prefs;
+    if (prefs.begin("aero-ui", false)) {
+      prefs.putUChar("vol", newVolume);
+      prefs.end();
+    }
+    Serial.printf("[AUDIO] volume set to %u%%\n", (unsigned)newVolume);
+    audio.playBeepPreview();
+  }
 
   // SD 卡浏览器：加载文件列表 / 播放 / 停止
   if (lcd.takeSdListRequest()) {

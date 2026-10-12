@@ -45,6 +45,12 @@ public:
   // 更新当前播放状态文字（由主循环轮询 audio 模块）。
   void updateAudioStatus(bool playing, const char *title);
 
+  // ---- 声音设置 ----
+  // 用户在声音页选择了新音量（0~100）：主循环据此设置音量并试听。
+  bool takeVolumeRequest(uint8_t &vol);
+  // 主循环回填当前音量，用于高亮所选档位。
+  void setVolume(uint8_t vol);
+
 private:
   Arduino_DataBus *_bus = nullptr;
   Arduino_GFX     *_gfx = nullptr;
@@ -77,6 +83,17 @@ private:
   lv_obj_t *settingsWifiStatus_ = nullptr;
   lv_obj_t *settingsSdButton_ = nullptr;
   lv_obj_t *settingsSdButtonLabel_ = nullptr;
+  lv_obj_t *settingsSoundButton_ = nullptr;
+  lv_obj_t *settingsSoundButtonLabel_ = nullptr;
+  lv_obj_t *soundPanel_ = nullptr;
+  lv_obj_t *soundTitle_ = nullptr;
+  lv_obj_t *soundVolumeLabel_ = nullptr;
+  lv_obj_t *soundHint_ = nullptr;
+  static constexpr size_t kVolumeOptionCount = 5;
+  lv_obj_t *soundVolumeButtons_[kVolumeOptionCount] = {};
+  lv_obj_t *soundVolumeButtonLabels_[kVolumeOptionCount] = {};
+  uint8_t   currentVolume_ = 70;
+  int       requestedVolume_ = -1;
   lv_obj_t *sdPanel_ = nullptr;
   lv_obj_t *sdTitle_ = nullptr;
   lv_obj_t *sdStatusLabel_ = nullptr;
@@ -174,6 +191,9 @@ private:
   static void onVirtualBack(lv_event_t *event);
   static void onVirtualSliderChanged(lv_event_t *event);
   static void onCancelSelection(lv_event_t *event);
+  static void onSoundButton(lv_event_t *event);
+  static void onSoundBack(lv_event_t *event);
+  static void onVolumeSelected(lv_event_t *event);
   static void onSdCardButton(lv_event_t *event);
   static void onSdBack(lv_event_t *event);
   static void onSdFileClicked(lv_event_t *event);
@@ -187,7 +207,9 @@ private:
   void buildPowerSourcePanel();
   void buildVirtualPowerPanel();
   void buildSettingsPanel();
+  void buildSoundPanel();
   void buildSdPanel();
+  void refreshSoundVolume();
   void refreshSdList();
   void refreshLanguage();
   void refreshBleDeviceButtons();

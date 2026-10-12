@@ -349,6 +349,58 @@ void DisplayLcd::onCancelSelection(lv_event_t *) {
   }
 }
 
+// ---- 声音设置 ----
+void DisplayLcd::onSoundButton(lv_event_t *) {
+  if (!g_display) return;
+  g_display->refreshSoundVolume();
+  lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->soundPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onSoundBack(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->soundPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onVolumeSelected(lv_event_t *event) {
+  if (!g_display) return;
+  const int vol = (int)(uintptr_t)lv_event_get_user_data(event);
+  g_display->requestedVolume_ = vol;
+  g_display->refreshSoundVolume();
+}
+
+bool DisplayLcd::takeVolumeRequest(uint8_t &vol) {
+  if (requestedVolume_ < 0) return false;
+  vol = (uint8_t)requestedVolume_;
+  requestedVolume_ = -1;
+  return true;
+}
+
+void DisplayLcd::setVolume(uint8_t vol) {
+  currentVolume_ = vol > 100 ? 100 : vol;
+  refreshSoundVolume();
+}
+
+void DisplayLcd::refreshSoundVolume() {
+  if (!soundVolumeLabel_) return;
+  char text[32];
+  snprintf(text, sizeof(text), localized("Volume: %u%%", "音量: %u%%"),
+           (unsigned)currentVolume_);
+  lv_label_set_text(soundVolumeLabel_, text);
+
+  static const uint8_t kVolumeOptions[kVolumeOptionCount] = {0, 25, 50, 75, 100};
+  for (size_t i = 0; i < kVolumeOptionCount; ++i) {
+    const bool selected = currentVolume_ == kVolumeOptions[i];
+    lv_obj_set_style_bg_color(soundVolumeButtons_[i],
+                              selected ? lv_color_make(37, 99, 235)
+                                       : lv_color_make(239, 244, 248), 0);
+    lv_obj_set_style_text_color(soundVolumeButtonLabels_[i],
+                                selected ? lv_color_white()
+                                         : lv_color_make(30, 41, 59), 0);
+  }
+}
+
 void DisplayLcd::onSdCardButton(lv_event_t *) {
   if (!g_display) return;
   g_display->sdListRequested_ = true;   // 由主循环加载文件列表
@@ -826,12 +878,25 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_text_font(settingsPowerButtonLabel_, &lv_font_montserrat_14, 0);
   lv_obj_center(settingsPowerButtonLabel_);
 
+  // 声音设置入口（与 SD 卡入口并排）
+  settingsSoundButton_ = lv_btn_create(settingsPanel_);
+  lv_obj_set_size(settingsSoundButton_, 102, 36);
+  lv_obj_set_style_radius(settingsSoundButton_, 0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(settingsSoundButton_, lv_color_make(124, 58, 237), 0);
+  lv_obj_align(settingsSoundButton_, LV_ALIGN_TOP_LEFT, 16, 276);
+  lv_obj_add_event_cb(settingsSoundButton_, onSoundButton, LV_EVENT_CLICKED, nullptr);
+  settingsSoundButtonLabel_ = lv_label_create(settingsSoundButton_);
+  lv_label_set_text(settingsSoundButtonLabel_, LV_SYMBOL_AUDIO " SOUND");
+  lv_obj_set_style_text_color(settingsSoundButtonLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_font(settingsSoundButtonLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_center(settingsSoundButtonLabel_);
+
   // SD 卡文件浏览入口
   settingsSdButton_ = lv_btn_create(settingsPanel_);
-  lv_obj_set_size(settingsSdButton_, 208, 36);
+  lv_obj_set_size(settingsSdButton_, 102, 36);
   lv_obj_set_style_radius(settingsSdButton_, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_color(settingsSdButton_, lv_color_make(15, 118, 110), 0);
-  lv_obj_align(settingsSdButton_, LV_ALIGN_TOP_LEFT, 16, 276);
+  lv_obj_align(settingsSdButton_, LV_ALIGN_TOP_LEFT, 122, 276);
   lv_obj_add_event_cb(settingsSdButton_, onSdCardButton, LV_EVENT_CLICKED, nullptr);
   settingsSdButtonLabel_ = lv_label_create(settingsSdButton_);
   lv_label_set_text(settingsSdButtonLabel_, LV_SYMBOL_SD_CARD " SD CARD");
@@ -863,7 +928,64 @@ void DisplayLcd::buildSettingsPanel() {
   refreshWifiStatus();
   lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 
+  buildSoundPanel();
   buildSdPanel();
+}
+
+void DisplayLcd::buildSoundPanel() {
+  soundPanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(soundPanel_, 240, 320);
+  lv_obj_center(soundPanel_);
+  lv_obj_clear_flag(soundPanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(soundPanel_, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_style_pad_all(soundPanel_, 0, 0);
+  lv_obj_set_style_radius(soundPanel_, 0, 0);
+  lv_obj_set_style_border_width(soundPanel_, 0, 0);
+  lv_obj_set_style_bg_color(soundPanel_, lv_color_make(248, 250, 252), 0);
+  lv_obj_set_style_bg_opa(soundPanel_, LV_OPA_COVER, 0);
+  buildPanelHeader(soundPanel_, "SOUND", onSoundBack);
+  soundTitle_ = lv_obj_get_child(soundPanel_, 1);
+
+  soundHint_ = lv_label_create(soundPanel_);
+  lv_label_set_text(soundHint_, "Tap a level to set volume.\nA test tone plays at that volume.");
+  lv_obj_set_width(soundHint_, 216);
+  lv_label_set_long_mode(soundHint_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(soundHint_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(soundHint_, lv_color_make(100, 116, 139), 0);
+  lv_obj_align(soundHint_, LV_ALIGN_TOP_LEFT, 12, 58);
+
+  soundVolumeLabel_ = lv_label_create(soundPanel_);
+  lv_label_set_text(soundVolumeLabel_, "Volume: 70%");
+  lv_obj_set_style_text_font(soundVolumeLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(soundVolumeLabel_, lv_color_make(23, 32, 51), 0);
+  lv_obj_align(soundVolumeLabel_, LV_ALIGN_TOP_LEFT, 12, 112);
+
+  // 五档音量按钮：0 / 25 / 50 / 75 / 100
+  static const char *const kVolumeLabels[kVolumeOptionCount] = {
+      "MUTE", "25%", "50%", "75%", "100%"};
+  static const uint8_t kVolumeValues[kVolumeOptionCount] = {0, 25, 50, 75, 100};
+  lv_coord_t y = 148;
+  for (size_t i = 0; i < kVolumeOptionCount; ++i) {
+    lv_obj_t *button = lv_btn_create(soundPanel_);
+    lv_obj_set_size(button, 216, 30);
+    lv_obj_set_style_radius(button, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(button, lv_color_make(239, 244, 248), 0);
+    lv_obj_set_style_border_color(button, lv_color_make(203, 213, 225), 0);
+    lv_obj_set_style_border_width(button, 1, 0);
+    lv_obj_align(button, LV_ALIGN_TOP_LEFT, 12, y);
+    lv_obj_add_event_cb(button, onVolumeSelected, LV_EVENT_CLICKED,
+                        (void *)(uintptr_t)kVolumeValues[i]);
+    soundVolumeButtons_[i] = button;
+    lv_obj_t *label = lv_label_create(button);
+    lv_label_set_text(label, kVolumeLabels[i]);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+    lv_obj_center(label);
+    soundVolumeButtonLabels_[i] = label;
+    y += 30 + 4;
+  }
+
+  refreshSoundVolume();
+  lv_obj_add_flag(soundPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::buildSdPanel() {
@@ -1087,12 +1209,36 @@ void DisplayLcd::refreshLanguage() {
                     localized("Select power meter", "选择功率计"));
   lv_label_set_text(settingsSdButtonLabel_,
                     localized(LV_SYMBOL_SD_CARD " SD CARD", LV_SYMBOL_SD_CARD " SD 卡"));
+  lv_label_set_text(settingsSoundButtonLabel_,
+                    localized(LV_SYMBOL_AUDIO " SOUND", LV_SYMBOL_AUDIO " 声音"));
   lv_obj_set_style_text_font(settingsTitle_, titleFont, 0);
   lv_obj_set_style_text_font(settingsLanguageLabel_, font, 0);
   lv_obj_set_style_text_font(settingsPowerLabel_, font, 0);
   lv_obj_set_style_text_font(settingsWifiLabel_, font, 0);
   lv_obj_set_style_text_font(settingsPowerButtonLabel_, font, 0);
   lv_obj_set_style_text_font(settingsSdButtonLabel_, font, 0);
+  lv_obj_set_style_text_font(settingsSoundButtonLabel_, font, 0);
+
+  // 声音设置页文字
+  lv_label_set_text(soundTitle_, localized("SOUND", "声音"));
+  lv_label_set_text(soundHint_,
+                    localized("Tap a level to set volume.\nA test tone plays at that volume.",
+                              "点击档位设置音量，\n并以该音量播放试听音。"));
+  lv_obj_set_style_text_font(soundTitle_, titleFont, 0);
+  lv_obj_set_style_text_font(soundHint_, font, 0);
+  lv_obj_set_style_text_font(soundVolumeLabel_, font, 0);
+  {
+    static const char *const en[kVolumeOptionCount] = {"MUTE", "25%", "50%", "75%", "100%"};
+    static const char *const zh[kVolumeOptionCount] = {"静音", "25%", "50%", "75%", "100%"};
+    for (size_t i = 0; i < kVolumeOptionCount; ++i) {
+      lv_label_set_text(soundVolumeButtonLabels_[i],
+                        localized(en[i], zh[i]));
+      lv_obj_set_style_text_font(soundVolumeButtonLabels_[i],
+                                 chinese_ ? &lv_font_noto_sans_sc_14
+                                          : &lv_font_montserrat_14, 0);
+    }
+    refreshSoundVolume();
+  }
 
   // SD 浏览页文字
   lv_label_set_text(sdTitle_, localized("SD CARD", "SD 卡"));
@@ -1130,7 +1276,7 @@ void DisplayLcd::refreshLanguage() {
 
   lv_obj_t *panels[] = {
     powerSourcePanel_, bleDevicePanel_, bleConfirmPanel_,
-    bleLoadingPanel_, virtualPowerPanel_, settingsPanel_, sdPanel_
+    bleLoadingPanel_, virtualPowerPanel_, settingsPanel_, soundPanel_, sdPanel_
   };
   for (lv_obj_t *panel : panels) {
     lv_obj_t *backButton = lv_obj_get_child(panel, 0);
