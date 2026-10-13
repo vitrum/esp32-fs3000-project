@@ -1,7 +1,8 @@
 // ============================================================================
 // 音频模块
-//   1) 开机 / 关机提示音：直接用 I2S 发「嘟嘟」声（两短一长），
-//      不依赖 SD 卡、不依赖任何音频文件。
+//   1) 开机 / 关机提示音：优先播放编译进固件的 WAV 音效
+//      （assets/boot.wav / assets/shutdown.wav，PCM 16bit 44.1kHz 立体声）；
+//      若内嵌资源缺失或解析失败，回退到 I2S 合成的「嘟嘟」声。
 //   2) 播放 SD 卡内 MP3：用 ESP32-audioI2S 库。
 //
 // 设计：统一使用 I2S_NUM_0（即 PCM5101 所在的 I2S 端口）。
@@ -17,6 +18,15 @@
 #include <Audio.h>
 #include <driver/i2s.h>
 #include <memory>
+
+// 编译进固件的 WAV 音效（见 platformio.ini 的 board_build.embed_files）。
+// 符号名由 PlatformIO 依据文件路径生成：
+//   assets/boot.wav     -> _binary_assets_boot_wav_start     / _binary_assets_boot_wav_end
+//   assets/shutdown.wav -> _binary_assets_shutdown_wav_start / _binary_assets_shutdown_wav_end
+extern const uint8_t boot_wav_start[]     asm("_binary_assets_boot_wav_start");
+extern const uint8_t boot_wav_end[]       asm("_binary_assets_boot_wav_end");
+extern const uint8_t shutdown_wav_start[] asm("_binary_assets_shutdown_wav_start");
+extern const uint8_t shutdown_wav_end[]   asm("_binary_assets_shutdown_wav_end");
 
 AudioPlayer audio;
 
@@ -122,10 +132,104 @@ void beepSilence(uint32_t durMs) {
     produced += chunk;
   }
 }
+
+// 小端读取工具
+inline uint16_t rdU16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
+inline uint32_t rdU32(const uint8_t *p) {
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+         ((uint32_t)p[3] << 24);
+}
+
+// 把一段 PCM 16bit 立体声数据流式写入 I2S（按 256 帧分块，避免大缓冲）。
+void i2sWritePcm16Stereo(const uint8_t *data, size_t bytes,
+                         bool stereo, uint8_t vol) {
+  if (!g_beeperReady || !data || bytes < 2) return;
+  // 按帧对齐：stereo -> 4 字节/帧，mono -> 2 字节/帧
+  const size_t frameBytes = stereo ? 4 : 2;
+  const size_t frames = bytes / frameBytes;
+
+  // 音量：ESP32-audioI2S 的 0~100 曲线近似，这里用线性 + 轻微平方根
+  float gain = (float)vol / 100.0f;
+  if (gain < 0) gain = 0;
+  if (gain > 1) gain = 1;
+
+  constexpr size_t kFrames = 256;
+  int16_t out[kFrames * 2];
+  size_t produced = 0;
+  while (produced < frames) {
+    size_t n = frames - produced;
+    if (n > kFrames) n = kFrames;
+    for (size_t i = 0; i < n; ++i) {
+      const uint8_t *src = data + (produced + i) * frameBytes;
+      int16_t l = (int16_t)rdU16(src);
+      int16_t r = stereo ? (int16_t)rdU16(src + 2) : l;
+      l = (int16_t)((float)l * gain);
+      r = (int16_t)((float)r * gain);
+      out[i * 2] = l;
+      out[i * 2 + 1] = r;
+    }
+    size_t written = 0;
+    i2s_write(kI2sPort, out, n * 2 * sizeof(int16_t), &written, portMAX_DELAY);
+    produced += n;
+  }
+}
 }  // namespace
 
 void AudioPlayer::setTitle(const char *t) {
   snprintf(_title, sizeof(_title), "%s", t ? t : "");
+}
+
+// ============================================================================
+// 从内存 WAV（PCM 16bit）直写 I2S 播放。
+// 解析 RIFF/WAVE，遍历 chunk 找到 fmt 与 data；仅支持 PCM(1)、16bit。
+// 采样率固定按 kSampleRate(44100) 播（本工程音效即 44.1kHz）。
+// 返回 true 表示至少播放了一段 data。
+// ============================================================================
+bool AudioPlayer::playEmbeddedWav(const uint8_t *data, size_t len) {
+  if (!g_beeperReady || !data || len < 44) return false;
+  if (memcmp(data, "RIFF", 4) != 0 || memcmp(data + 8, "WAVE", 4) != 0) {
+    Serial.println("[AUDIO] embedded wav: not RIFF/WAVE");
+    return false;
+  }
+
+  const uint8_t *fmt = nullptr;
+  const uint8_t *pcm = nullptr;
+  size_t pcmLen = 0;
+
+  size_t off = 12;  // 跳过 "RIFF"+size+"WAVE"
+  while (off + 8 <= len) {
+    const uint8_t *ch = data + off;
+    uint32_t csize = rdU32(ch + 4);
+    if (memcmp(ch, "fmt ", 4) == 0) {
+      fmt = ch + 8;
+    } else if (memcmp(ch, "data", 4) == 0) {
+      pcm = ch + 8;
+      pcmLen = csize;
+      // 截断到文件实际长度内
+      if (off + 8 + pcmLen > len) pcmLen = len - (off + 8);
+      break;  // data 之后不再需要解析
+    }
+    off += 8 + csize + (csize & 1);  // chunk 按偶数字节对齐
+  }
+
+  if (!fmt || !pcm || pcmLen == 0) {
+    Serial.println("[AUDIO] embedded wav: no fmt/data chunk");
+    return false;
+  }
+
+  const uint16_t audioFormat = rdU16(fmt + 0);
+  const uint16_t channels = rdU16(fmt + 2);
+  const uint16_t bits = rdU16(fmt + 14);
+  if (audioFormat != 1 || bits != 16 || (channels != 1 && channels != 2)) {
+    Serial.printf("[AUDIO] embedded wav unsupported: fmt=%u ch=%u bits=%u\n",
+                  audioFormat, channels, bits);
+    return false;
+  }
+
+  Serial.printf("[AUDIO] play embedded wav: ch=%u bits=%u pcm=%u bytes\n",
+                channels, bits, (unsigned)pcmLen);
+  i2sWritePcm16Stereo(pcm, pcmLen, channels == 2, _volume);
+  return true;
 }
 
 // ============================================================================
@@ -160,8 +264,19 @@ void AudioPlayer::playStartupChime() {
   if (!_enabled) return;
   if (!beeperInit()) return;
   _playing = false;
-  setTitle("beep");
-  Serial.println("[AUDIO] startup chime (short-short-long)");
+  setTitle("boot");
+
+  // 优先播放编译进固件的开机音效
+  if (playEmbeddedWav(boot_wav_start, (size_t)(boot_wav_end - boot_wav_start))) {
+    Serial.println("[AUDIO] startup chime (embedded wav)");
+    beepSilence(30);
+    beeperDeinit();
+    setTitle("");
+    return;
+  }
+
+  // 回退：合成「嘟嘟」声（两短一长）
+  Serial.println("[AUDIO] startup chime (fallback beep)");
   beepTone(880.0f, 120);
   beepSilence(70);
   beepTone(880.0f, 120);
@@ -176,8 +291,20 @@ void AudioPlayer::playShutdownChime() {
   if (!_enabled) return;
   if (!beeperInit()) return;
   _playing = false;
-  setTitle("beep");
-  Serial.println("[AUDIO] shutdown chime (short-short-long, falling)");
+  setTitle("shutdown");
+
+  // 优先播放编译进固件的关机音效
+  if (playEmbeddedWav(shutdown_wav_start,
+                      (size_t)(shutdown_wav_end - shutdown_wav_start))) {
+    Serial.println("[AUDIO] shutdown chime (embedded wav)");
+    beepSilence(30);
+    beeperDeinit();
+    setTitle("");
+    return;
+  }
+
+  // 回退：合成「嘟嘟」声（两短一长，下行）
+  Serial.println("[AUDIO] shutdown chime (fallback beep)");
   beepTone(880.0f, 120);
   beepSilence(70);
   beepTone(660.0f, 120);

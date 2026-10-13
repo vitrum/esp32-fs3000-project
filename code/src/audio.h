@@ -8,8 +8,10 @@
 // 音频模块（PCM5101 I2S DAC + 板载喇叭）
 //
 // 功能：
-//   1) 开机 / 关机提示音：直接用 I2S 发「嘟嘟」声（两短一长），
-//      不依赖 SD 卡、不依赖任何音频文件。
+//   1) 开机 / 关机提示音：优先播放编译进固件的 WAV 音效
+//      （assets/boot.wav / assets/shutdown.wav，PCM 16bit 44.1kHz 立体声）；
+//      若内嵌资源缺失或解析失败，回退到 I2S 合成的「嘟嘟」声。
+//      不依赖 SD 卡、不依赖任何外部音频文件。
 //   2) 播放 SD 卡内 MP3 文件
 //
 // 实现：
@@ -17,7 +19,6 @@
 //   - 提示音：独立 I2S_NUM_1 直接输出合成 PCM（方波），
 //     仅开机/关机时发声，与 MP3 播放不重叠。
 // ============================================================================
-
 class AudioPlayer {
 public:
   // 初始化 I2S 与引脚。需在 SD.begin() 之后调用。
@@ -49,6 +50,10 @@ public:
 private:
   void  beginPlayback(const char *path);
 
+  // 从内存 WAV 数据（PCM 16bit）直接写 I2S 播放；成功返回 true。
+  // 需已 beeperInit()。解析失败返回 false（调用方可回退合成音）。
+  bool  playEmbeddedWav(const uint8_t *data, size_t len);
+
   bool _enabled = false;
   bool _playing = false;
   uint8_t _volume = AUDIO_VOLUME;
@@ -56,3 +61,5 @@ private:
 };
 
 extern AudioPlayer audio;
+
+
