@@ -1,0 +1,174 @@
+{
+  "status": "F6_COMPLETE_INSPECTION_ONLY",
+  "output": "aerodynamic_cycling_computer_V5_rounded_edges_f6.stl",
+  "triangles": 67274,
+  "bytes": 3363784,
+  "components": 1,
+  "nonmanifold_edges": 0,
+  "degenerate_faces": 73,
+  "volume_mm3": 26758.213240330562,
+  "long_edges": [
+    {
+      "side": -1,
+      "front": false,
+      "z_mm": 72,
+      "samples": [
+        {
+          "angle_degrees": 35,
+          "before_radius_mm": 1.221695065498352,
+          "after_radius_mm": 0.9995109438896179
+        },
+        {
+          "angle_degrees": 45,
+          "before_radius_mm": 1.4141333103179932,
+          "after_radius_mm": 0.9999862313270569
+        },
+        {
+          "angle_degrees": 55,
+          "before_radius_mm": 1.220717191696167,
+          "after_radius_mm": 0.999516487121582
+        }
+      ]
+    },
+    {
+      "side": -1,
+      "front": true,
+      "z_mm": 72,
+      "samples": [
+        {
+          "angle_degrees": 35,
+          "before_radius_mm": 1.0992295742034912,
+          "after_radius_mm": 0.9995234608650208
+        },
+        {
+          "angle_degrees": 45,
+          "before_radius_mm": 1.2588706016540527,
+          "after_radius_mm": 0.9999930262565613
+        },
+        {
+          "angle_degrees": 55,
+          "before_radius_mm": 1.2063815593719482,
+          "after_radius_mm": 0.9995236396789551
+        }
+      ]
+    },
+    {
+      "side": 1,
+      "front": false,
+      "z_mm": 72,
+      "samples": [
+        {
+          "angle_degrees": 35,
+          "before_radius_mm": 1.2186880111694336,
+          "after_radius_mm": 0.9995094537734985
+        },
+        {
+          "angle_degrees": 45,
+          "before_radius_mm": 1.411780595779419,
+          "after_radius_mm": 0.9999969005584717
+        },
+        {
+          "angle_degrees": 55,
+          "before_radius_mm": 1.2208306789398193,
+          "after_radius_mm": 0.9995184540748596
+        }
+      ]
+    },
+    {
+      "side": 1,
+      "front": true,
+      "z_mm": 72,
+      "samples": [
+        {
+          "angle_degrees": 35,
+          "before_radius_mm": 1.2214573621749878,
+          "after_radius_mm": 0.9995276927947998
+        },
+        {
+          "angle_degrees": 45,
+          "before_radius_mm": 1.3855997323989868,
+          "after_radius_mm": 0.9999967217445374
+        },
+        {
+          "angle_degrees": 55,
+          "before_radius_mm": 1.197163462638855,
+          "after_radius_mm": 0.999521791934967
+        }
+      ]
+    }
+  ],
+  "front_corners": [
+    {
+      "side": -1,
+      "tail": false,
+      "samples": [
+        {
+          "test_radius_mm": 1.92,
+          "material_present": true
+        },
+        {
+          "test_radius_mm": 2.04,
+          "material_present": false
+        }
+      ]
+    },
+    {
+      "side": -1,
+      "tail": true,
+      "samples": [
+        {
+          "test_radius_mm": 1.92,
+          "material_present": true
+        },
+        {
+          "test_radius_mm": 2.04,
+          "material_present": false
+        }
+      ]
+    },
+    {
+      "side": 1,
+      "tail": false,
+      "samples": [
+        {
+          "test_radius_mm": 1.92,
+          "material_present": true
+        },
+        {
+          "test_radius_mm": 2.04,
+          "material_present": false
+        }
+      ]
+    },
+    {
+      "side": 1,
+      "tail": true,
+      "samples": [
+        {
+          "test_radius_mm": 1.92,
+          "material_present": true
+        },
+        {
+          "test_radius_mm": 2.04,
+          "material_present": false
+        }
+      ]
+    }
+  ],
+  "changed_edge_wall_sample_count": 12,
+  "changed_edge_wall_minimum_sample_mm": 3.9589885730743406,
+  "original_hole_samples": 640,
+  "original_hole_maximum_error_mm": 5.0067901611328125e-06,
+  "screen_opening_samples": 9,
+  "gps_air_roof_connection_samples": 81,
+  "mount_surface_samples": 1072,
+  "mount_maximum_surface_error_mm": 0.0,
+  "probe_slot_samples": 4,
+  "render_seconds": 205.071,
+  "source_sha256": "8e5a15b8090a1d71066ed69f723fbc9864ab56ca0bae4fe4d0a7c151a0dc3b1b",
+  "limitations": [
+    "73 degenerate triangles remain",
+    "Wall checks cover changed-edge samples only, not a global minimum",
+    "No global self-intersection, stiffness or manufacturing certification"
+  ]
+}
