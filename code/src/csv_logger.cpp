@@ -4,6 +4,8 @@
 
 #include <SPI.h>
 #include <FS.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include <vfs_api.h>
 #include <driver/sdspi_host.h>
 #include <driver/spi_common.h>
@@ -36,6 +38,7 @@ bool    g_sdMounted = false;
 }  // namespace
 
 fs::FS &sdFs() { return g_sdFs; }
+const char *sdMountPoint() { return kSdMountPoint; }
 
 bool beginSdCardMutex() {
   if (g_sdMutex) return true;
@@ -113,6 +116,109 @@ static bool mountSdCard() {
 // 供其它模块查询 SD 是否就绪（替代 Arduino SD.cardType()）
 bool sdCardReady() { return g_sdMounted; }
 
+// 确保目录存在（不存在则创建；已存在直接返回 true）。
+bool CsvLogger::ensureDir(const char *path) {
+  if (!path || !path[0]) return false;
+  if (sdFs().exists(path)) return true;
+  return sdFs().mkdir(path);
+}
+
+// 依据当前日期选定目录并新建文件，写入表头。调用方需已持有 SD 锁。
+bool CsvLogger::openFileForDate() {
+  // 若已有打开的文件，先关闭（flush 剩余数据）。
+  if (_f) {
+    flushBuffer();
+    _f.flush();
+    _f.close();
+  }
+
+  // 选定目录：有日期 → /LOG/<date>，否则 → /LOG
+  if (_date[0]) {
+    snprintf(_dir, sizeof(_dir), "/LOG/%s", _date);
+  } else {
+    snprintf(_dir, sizeof(_dir), "/LOG");
+  }
+  if (!ensureDir("/LOG")) {
+    Serial.println("[SD] Could not create /LOG directory");
+    return false;
+  }
+  if (_date[0] && !ensureDir(_dir)) {
+    Serial.printf("[SD] Could not create date directory %s\n", _dir);
+    return false;
+  }
+
+  // 生成唯一文件名：/LOG[/date]/fs_<millis>.csv
+  uint32_t stamp = millis() % 1000000UL;
+  bool uniqueName = false;
+  for (uint16_t attempt = 0; attempt < 1000; ++attempt) {
+    snprintf(_name, sizeof(_name), "%s/fs_%06lu.csv", _dir, (unsigned long)stamp);
+    if (!sdFs().exists(_name)) {
+      uniqueName = true;
+      break;
+    }
+    stamp = (stamp + 1) % 1000000UL;
+  }
+  if (!uniqueName) {
+    Serial.println("[SD] Could not find an unused log filename");
+    return false;
+  }
+
+  _f = sdFs().open(_name, FILE_WRITE);
+  if (!_f) {
+    Serial.printf("[SD] open failed: %s\n", _name);
+    return false;
+  }
+  writeHeader();
+  _bufCount = 0;
+  _lastFlush = millis();
+  return true;
+}
+
+void CsvLogger::writeHeader() {
+  if (!_f) return;
+  _f.println("t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc");
+  _f.flush();
+}
+
+bool CsvLogger::flushBuffer() {
+  if (!_f) return false;
+  if (_bufCount == 0) return true;
+
+  for (size_t i = 0; i < _bufCount; ++i) {
+    const Sample &s = _buf[i];
+    // 检查单次写入结果，确保数据真正落盘（避免"只写标题不写数据"）。
+    int n = _f.printf("%lu,%.1f,%.1f,%.3f,%.3f,%.1f,%.1f,%.4f,%u\n",
+                      (unsigned long)s.tMs, s.powerW, s.cadRpm, s.vgMps,
+                      s.vAirMps, s.yawDeg, s.postureDeg, s.rho,
+                      (unsigned)s.powerSrc);
+    if (n <= 0) {
+      Serial.printf("[SD] write failed at buffer index %u\n", (unsigned)i);
+      // 保留未写入的样本，下次重试；已写入的前 i 条丢弃。
+      memmove(_buf, _buf + i, (size_t)(_bufCount - i) * sizeof(Sample));
+      _bufCount -= i;
+      _f.flush();
+      return false;
+    }
+  }
+  _f.flush();
+  _bufCount = 0;
+  _lastFlush = millis();
+  return true;
+}
+
+void CsvLogger::setLocalDate(const char *dateYmd) {
+  const char *d = dateYmd ? dateYmd : "";
+  if (strncmp(_date, d, sizeof(_date)) == 0) return;   // 未变化
+  snprintf(_date, sizeof(_date), "%s", d);
+  // 若正在记录且日期变化，切换到新目录/新文件（未开始的记录会在 start() 时使用新日期）。
+  if (_ok) {
+    if (!lockSdCard(pdMS_TO_TICKS(500))) return;
+    openFileForDate();
+    unlockSdCard();
+    if (_f) Serial.printf("[SD] date changed -> %s\n", _name);
+  }
+}
+
 bool CsvLogger::begin() {
   if (!lockSdCard()) {
     Serial.println("[SD] Could not acquire SD mutex for initialization");
@@ -125,8 +231,9 @@ bool CsvLogger::begin() {
     return _ok;
   }
   _sdReady = true;
+  // 记录功能默认不开启；仅准备好 SD 与 /LOG 目录。
   unlockSdCard();
-  return start();
+  return true;
 }
 
 bool CsvLogger::start() {
@@ -144,35 +251,15 @@ bool CsvLogger::start() {
     }
   }
 
-  uint32_t stamp = millis() % 1000000UL;
-  bool uniqueName = false;
-  for (uint16_t attempt = 0; attempt < 1000; ++attempt) {
-    snprintf(_name, sizeof(_name), "/fs_%06lu.csv", (unsigned long)stamp);
-    if (!sdFs().exists(_name)) {
-      uniqueName = true;
-      break;
-    }
-    stamp = (stamp + 1) % 1000000UL;
-  }
-  if (!uniqueName) {
-    Serial.println("[SD] Could not find an unused log filename");
+  _bufCount = 0;
+  if (!openFileForDate()) {
+    _ok = false;
     unlockSdCard();
     return false;
   }
-  _f = sdFs().open(_name, FILE_WRITE);
-  if (!_f) {
-    Serial.println("SD open failed");
-    _ok = false;
-    unlockSdCard();
-    return _ok;
-  }
-
-  _f.println("t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc");
-  _f.flush();
-  _lastFlush = millis();
   _ok = true;
   unlockSdCard();
-  Serial.printf("Logging to %s\n", _name);
+  Serial.printf("Logging to %s (buffered, 1-min chunks)\n", _name);
   return _ok;
 }
 
@@ -182,8 +269,11 @@ bool CsvLogger::stop() {
     Serial.println("[SD] Could not acquire SD mutex to stop logging");
     return false;
   }
-  _f.flush();
-  _f.close();
+  flushBuffer();          // 写入剩余缓存，确保不丢尾部数据
+  if (_f) {
+    _f.flush();
+    _f.close();
+  }
   _ok = false;
   unlockSdCard();
   return true;
@@ -199,38 +289,58 @@ static bool isAudioName(const char *n) {
 
 size_t listSdFiles(SdFileEntry *out, size_t maxCount) {
   if (!out || maxCount == 0) return 0;
+  if (!g_sdMounted) return 0;   // 未挂载：立即返回，避免在空挂载点上卡住
+
   if (!lockSdCard(pdMS_TO_TICKS(500))) return 0;
 
+  DIR *dir = opendir(kSdMountPoint);
+  if (!dir) {
+    Serial.printf("[SD] opendir(%s) failed\n", kSdMountPoint);
+    unlockSdCard();
+    return 0;
+  }
+
+  // 先把条目读入临时数组（音频优先排序由调用方/两遍实现完成）。
+  // 注意：使用 POSIX readdir/stat 而非 Arduino File::openNextFile，
+  // 后者在 FATFS 上遇到 DT_UNKNOWN 会递归并在某些卡上重复返回同一条目，
+  // 导致"进入 SD 文件页卡死"。这里额外加硬性计数上限，确保绝不无限循环。
   size_t count = 0;
-  // 两遍扫描：先音频文件，再其它文件
-  for (int pass = 0; pass < 2 && count < maxCount; ++pass) {
-    File dir = sdFs().open("/");
-    if (!dir) break;
-    File entry = dir.openNextFile();
-    while (entry && count < maxCount) {
-      if (!entry.isDirectory()) {
-        const char *name = entry.name();
-        // Arduino SD 在不同 core 下可能带前导 '/'
-        const char *base = name;
-        const char *slash = strrchr(name, '/');
-        if (slash) base = slash + 1;
-        if (base[0] != '.') {
-          const bool audioFile = isAudioName(base);
-          if ((pass == 0 && audioFile) || (pass == 1 && !audioFile)) {
-            snprintf(out[count].name, sizeof(out[count].name), "%s", base);
-            out[count].size = entry.size();
-            out[count].isAudio = audioFile;
-            ++count;
-          }
-        }
-      }
-      entry = dir.openNextFile();
+  static const int kMaxEntries = 400;   // 防御性上限
+  int guard = 0;
+  struct dirent *de;
+  while ((de = readdir(dir)) != nullptr && guard++ < kMaxEntries &&
+         count < maxCount) {
+    const char *name = de->d_name;
+    if (!name || name[0] == '.') continue;   // 跳过 . .. 及隐藏文件
+
+    char full[300];
+    snprintf(full, sizeof(full), "%s/%s", kSdMountPoint, name);
+    struct stat st;
+    if (stat(full, &st) != 0) continue;
+    if (S_ISDIR(st.st_mode)) continue;       // 跳过目录（含 /LOG）
+
+    const bool audioFile = isAudioName(name);
+    // 两遍收集：先把音频放入前部，等等——这里单遍收集，稍后由排序保证音频在前。
+    snprintf(out[count].name, sizeof(out[count].name), "%s", name);
+    out[count].size = (uint32_t)st.st_size;
+    out[count].isAudio = audioFile;
+    ++count;
+  }
+  closedir(dir);
+
+  // 音频文件排在前面（稳定：保持各自相对顺序）。
+  for (size_t i = 1; i < count; ++i) {
+    SdFileEntry key = out[i];
+    size_t j = i;
+    while (j > 0 && out[j - 1].isAudio < key.isAudio) {
+      out[j] = out[j - 1];
+      --j;
     }
-    dir.close();
+    out[j] = key;
   }
 
   unlockSdCard();
-  Serial.printf("[SD] listed %u file(s)\n", (unsigned)count);
+  Serial.printf("[SD] listed %u file(s) under %s\n", (unsigned)count, kSdMountPoint);
   return count;
 }
 
@@ -238,19 +348,34 @@ void CsvLogger::log(uint32_t tMs, float powerW, float cadRpm, float vgMps,
                     float vAirMps, float yawDeg, float postureDeg, float rho,
                     uint8_t powerSrc) {
   if (!_ok) return;
-  if (_paused) return;   // 音频占用 SD 时暂不写盘
-  if (!lockSdCard(pdMS_TO_TICKS(100))) {
-    Serial.println("[SD] Skipped CSV sample because the card is busy");
-    return;
+
+  // 先缓存到内存（1Hz，60 条=1 分钟），不每秒写 SD。
+  if (_bufCount >= kMaxSamples) {
+    // 缓冲已满：尝试一次性写入。若暂停中/卡忙，暂不写并丢弃本样本，避免无限增长。
+    if (!_paused && lockSdCard(pdMS_TO_TICKS(200))) {
+      flushBuffer();
+      unlockSdCard();
+    }
+    if (_bufCount >= kMaxSamples) {
+      // 仍满（暂停或写失败）→ 丢弃本样本，保留已有缓存。
+      return;
+    }
   }
 
-  _f.printf("%lu,%.1f,%.1f,%.3f,%.3f,%.1f,%.1f,%.4f,%u\n",
-            (unsigned long)tMs, powerW, cadRpm, vgMps, vAirMps, yawDeg,
-            postureDeg, rho, (unsigned)powerSrc);
+  Sample &s = _buf[_bufCount++];
+  s.tMs = tMs;
+  s.powerW = powerW;
+  s.cadRpm = cadRpm;
+  s.vgMps = vgMps;
+  s.vAirMps = vAirMps;
+  s.yawDeg = yawDeg;
+  s.postureDeg = postureDeg;
+  s.rho = rho;
+  s.powerSrc = powerSrc;
 
-  if (millis() - _lastFlush >= 5000) {   // 每 5s 落盘一次，防掉电丢数据
-    _f.flush();
-    _lastFlush = millis();
+  // 缓冲刚好满 60 条 → 立即写入这一分钟的数据。
+  if (_bufCount >= kMaxSamples && !_paused && lockSdCard(pdMS_TO_TICKS(200))) {
+    flushBuffer();
+    unlockSdCard();
   }
-  unlockSdCard();
 }

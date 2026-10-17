@@ -47,6 +47,10 @@
 #define PIN_PWR_CONTROL   7
 #define PWR_LONG_PRESS_MS 5000   // 长按关机阈值(ms)
 
+// ---- BOOT 按钮（板上 BOOT 键，GPIO0）----
+// 按下为低电平。本固件用它打开设置页（短按触发一次）。
+#define PIN_BOOT_KEY      0
+
 // ============================================================================
 // 音频（PCM5101 I2S 外置 DAC + 板载喇叭）
 // 依据 Waveshare ESP32-S3-LCD-2.8 官方 Audio_Driver/PCM5101 示例：
@@ -60,6 +64,28 @@
 #define AUDIO_VOLUME      55     // 0~100 默认音量
 #define AUDIO_SYSTEM_DIR  "/system"        // 系统音效目录（SD 卡内）
 #define AUDIO_BOOT_WAV    "/system/boot.wav"
+#define AUDIO_SHUTDOWN_WAV "/system/shutdown.wav"
+
+// ============================================================================
+// GPS / 北斗双模模块（ATGM336H 等，中科微 AT6558 方案）
+// 接口：UART（标准 NMEA 0183 语句），3.3V TTL 电平，直接连 ESP32-S3。
+// 接线（板上 12PIN 排针的 UART 口：TXD=GPIO43 / RXD=GPIO44）：
+//   GPS TX  -> ESP32 RXD (GPIO44)
+//   GPS RX  -> ESP32 TXD (GPIO43)   [可选：用于发配置语句]
+//   GPS VCC -> 3V3（若模块带 LDO 可 5V，先确认模块耐压）
+//   GPS GND -> GND
+// 注意：本版本不使用 PPS 秒脉冲（仅串口，精度到秒级）。
+//      如需高精度授时，可将 PPS 单独接到一个空闲 GPIO（如 IO15）并启用下方宏。
+// ============================================================================
+#define GPS_ENABLE     1        // 1=启用 GPS；0=关闭（省串口/内存）
+#define PIN_GPS_RX     44       // ESP32 收 <- GPS TX
+#define PIN_GPS_TX     43       // ESP32 发 -> GPS RX（配置用，可选）
+#define GPS_BAUD       9600     // ATGM336H 出厂默认 9600；如模块改为 38400 请同步
+// 是否使用 GPS 地速 v_g 参与 CdA 计算（无功率计轮速时尤其有用）
+#define GPS_USE_SPEED_FOR_VG 1
+// PPS 秒脉冲（本版本不启用）：接空闲 GPIO 后置 1
+#define GPS_USE_PPS    0
+#define PIN_GPS_PPS    15       // 仅 GPS_USE_PPS=1 时生效
 #define AUDIO_SHUTDOWN_WAV "/system/shutdown.wav"
 
 // ============================================================================

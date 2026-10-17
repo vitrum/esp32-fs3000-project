@@ -24,6 +24,7 @@
 #include "display_lcd.h"
 #include "power_key.h"
 #include "audio.h"
+#include "gps_time.h"
 #ifdef ANT_POWER_ENABLE
 #include "ant_power.h"
 #endif
@@ -38,6 +39,7 @@ EnvSensor    env;
 CsvLogger    logger;
 DisplayLcd   lcd;
 PowerKey     powerKey;
+GpsTime      gps;
 #ifdef ANT_POWER_ENABLE
 AntPower     antPower;
 #endif
@@ -213,6 +215,13 @@ void setup() {
   env.begin(Wire);                   // 可选 BME280（挂在 I2C1）
   Serial.printf("BME280 %s\n", env.present() ? "OK" : "absent");
 
+  // GPS/北斗（ATGM336H，UART2）：开机不自动搜星。
+  // 仅在用户进入 GPS 页面时才启动 UART 并做非阻塞的模块检测/搜星。
+  // 这样既避免开机 5 秒后 GPS 持续吐数据导致界面卡死，也满足"未发现模块不跑 GPS 逻辑"。
+
+  // BOOT 按钮（GPIO0）：按下为低电平，用于打开设置页。
+  pinMode(PIN_BOOT_KEY, INPUT_PULLUP);
+
   if (!beginSdCardMutex())
     Serial.println("[SD] Could not create SD card mutex; SD access is unavailable");
   logger.begin();                    // TF 卡（可选，失败不阻塞）
@@ -264,6 +273,23 @@ void loop() {
   // 音频解码/播放泵 + 状态回显
   audio.tick();
   lcd.updateAudioStatus(audio.playing(), audio.currentTitle());
+
+  // GPS/北斗：仅在用户请求后启动；未检测到模块前不跑任何 GPS 逻辑。
+  // 1) 用户进入 GPS 页 → 请求启动 GPS（打开 UART）。
+  if (lcd.takeGpsStartRequest() && !gps.enabled()) {
+    gps.begin();
+  }
+  // 2) 仅在 GPS 已启动时才喂 NMEA 并做非阻塞存在性检测。
+  //    检测确认无模块后，不再执行任何 GPS 逻辑（gps.tick 内部已按 _enabled 短路，
+  //    此处再用 modulePresent 门控，确保"未发现模块不跑 GPS 逻辑"）。
+  if (gps.enabled()) {
+    gps.pollPresence();
+    if (gps.modulePresent()) {
+      gps.tick();
+    }
+    // 回填检测结果给界面（决定点击 GPS 按钮是否提示"找不到模块"）。
+    lcd.setGpsModulePresent(gps.modulePresent(), gps.presenceChecked());
+  }
 
   // 播放音频时自动暂停 CSV 日志，避免音频任务与日志任务争用 SD 总线
   // （ESP32-audioI2S 用独立任务读 SD，与主循环写盘不加锁会冲突）。
@@ -385,6 +411,14 @@ void loop() {
     float rho     = env.rhoKgM3();
     int   src     = pmSrc();
 
+#if GPS_USE_SPEED_FOR_VG
+    // 有 GPS 定位时用 GPS 地速替代功率计轮速（多数功率计不发轮速，
+    // 此时原 vg=0 会让 CdA 失效；GPS 地速更可靠）。
+    if (gps.hasFix()) {
+      vg = gps.speedMps();
+    }
+#endif
+
     logger.log(now, power, pmCadence(), vg, vAir, yaw, post, rho, src);
 
 #if WIFI_WEB_ENABLE
@@ -397,7 +431,7 @@ void loop() {
     const char *sourceName = src == 3 ? "VIRTUAL" :
                              (src == 2 ? "ANT" : (src == 1 ? "BLE" : "--"));
     const uint8_t *frame = windSensor.lastFrame();
-    Serial.printf("%lu P=%5.0fW(%s) cad=%4.0f vg=%4.2f vAir=%4.2f yaw=%+5.1f pos=%+5.1f rho=%.3f windSamples=%lu fs=%s err=%s short=%lu checksum=%lu bytes=%u raw=%02X%02X%02X%02X%02X sd=%s\n",
+    Serial.printf("%lu P=%5.0fW(%s) cad=%4.0f vg=%4.2f vAir=%4.2f yaw=%+5.1f pos=%+5.1f rho=%.3f windSamples=%lu fs=%s err=%s short=%lu checksum=%lu bytes=%u raw=%02X%02X%02X%02X%02X sd=%s gps=%s fix=%u sat=%u hdop=%u lat=%.5f lon=%.5f gspd=%.2f utc=%lu\n",
                   (unsigned long)now, power,
                   sourceName,
                   pmCadence(), vg, vAir, yaw, post, rho,
@@ -407,7 +441,11 @@ void loop() {
                   (unsigned long)windSensor.shortReads(),
                   (unsigned long)windSensor.checksumErrors(),
                   windSensor.lastBytesReceived(), frame[0], frame[1], frame[2],
-                  frame[3], frame[4], logger.ok() ? "OK" : "OFF");
+                  frame[3], frame[4], logger.ok() ? "OK" : "OFF",
+                  gps.hasFix() ? "FIX" : (gps.enabled() ? "NOFIX" : "OFF"),
+                  (unsigned)gps.satellites(), (unsigned)gps.hdop(),
+                  gps.latitude(), gps.longitude(), gps.speedMps(),
+                  (unsigned long)gps.unixSec());
 
     win = Window();
     windWindowSamples = 0;
@@ -431,6 +469,54 @@ void loop() {
   }
 
   lcd.tick();
+
+  // BOOT 按钮（GPIO0）：检测按下沿（消抖），打开设置页。
+  {
+    static bool bootWasPressed = false;
+    static uint32_t bootLastChangeMs = 0;
+    const bool bootPressed = (digitalRead(PIN_BOOT_KEY) == LOW);
+    if (bootPressed != bootWasPressed && now - bootLastChangeMs >= 30) {
+      bootLastChangeMs = now;
+      bootWasPressed = bootPressed;
+      if (bootPressed) {
+        lcd.showSettings();
+        Serial.println("[BOOT] settings opened");
+      }
+    }
+  }
+
+  // GPS 手动重启请求（来自 GPS 页面按钮）
+  if (lcd.takeGpsRestartRequest()) {
+    gps.restart();
+  }
+
+  // GPS 状态回填到 GPS 页面（1Hz）
+  {
+    static uint32_t lastGpsUiMs = 0;
+    if (now - lastGpsUiMs >= LOG_WINDOW_MS) {
+      lastGpsUiMs = now;
+      char utcStr[24] = {};
+      char localStr[24] = {};
+      gps.formatDateTime(utcStr, sizeof(utcStr));
+      // 本地时间：固定 UTC+8（中国标准时间）。如需可调，改为配置项。
+      gps.formatLocalDateTime(localStr, sizeof(localStr), 8 * 60);
+      // 把本地日期（"YYYY-MM-DD"）交给日志器：有定位时按日期建子目录。
+      // localStr 形如 "YYYY-MM-DD HH:MM:SS"（无定位时为 "--"）。
+      if (gps.timeValid() && strlen(localStr) >= 10 && localStr[4] == '-') {
+        char ymd[12];
+        snprintf(ymd, sizeof(ymd), "%.10s", localStr);
+        logger.setLocalDate(ymd);
+      }
+      lcd.updateGpsStatus(gps.enabled(), gps.hasFix(), gps.satellites(),
+                          gps.hdop(), gps.latitude(), gps.longitude(),
+                          gps.altitudeM(), gps.speedMps(), utcStr, localStr,
+                          gps.fixAgeMs());
+      // 主界面顶部 GPS 状态图标（搜星时显示旋转动画，非阻塞）。
+      // 仅在 GPS 已启动且模块存在时才可能进入搜星/定位；否则显示关闭态。
+      lcd.updateGpsIndicator(gps.enabled() && gps.modulePresent(),
+                             gps.hasFix(), gps.satellites());
+    }
+  }
 
   int requestedMode = -1;
   if (lcd.takePowerSourceRequest(requestedMode)) {

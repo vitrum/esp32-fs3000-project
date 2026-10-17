@@ -112,6 +112,7 @@ bool DisplayLcd::readTouch(uint16_t &x, uint16_t &y) {
 }
 
 void DisplayLcd::lvglTouchReadCb(lv_indev_drv_t *, lv_indev_data_t *data) {
+  // 即时响应：检测到落指立即上报 PR，单击即可触发按钮（与原始行为一致）。
   uint16_t x = 0;
   uint16_t y = 0;
   if (g_display && g_display->touchReady_ && g_display->readTouch(x, y)) {
@@ -147,6 +148,31 @@ void DisplayLcd::onSettingsButton(lv_event_t *) {
 void DisplayLcd::onSettingsBack(lv_event_t *) {
   if (!g_display) return;
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onLanguageButton(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->languagePanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onLanguageBack(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->languagePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onWifiButton(lv_event_t *) {
+  if (!g_display) return;
+  g_display->refreshWifiStatus();
+  lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->wifiPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onWifiBack(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->wifiPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::onLanguageSelected(lv_event_t *event) {
@@ -455,6 +481,280 @@ bool DisplayLcd::takeSdStopRequest() {
   if (!sdStopRequested_) return false;
   sdStopRequested_ = false;
   return true;
+}
+
+// ---- GPS 页面 ----
+void DisplayLcd::onGpsButton(lv_event_t *) {
+  if (!g_display) return;
+  // 已完成检测且确认未找到模块 → 直接提示，不进入 GPS 页。
+  if (g_display->gpsDetectDone_ && !g_display->gpsModulePresent_) {
+    g_display->showNotice(g_display->localized(
+        "GPS module not found.\nCheck the UART wiring and power.",
+        "找不到 GPS 模块。\n请检查 UART 接线和供电。"));
+    return;
+  }
+  lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->gpsPanel_, LV_OBJ_FLAG_HIDDEN);
+  // 首次进入即启动一次 GPS（打开 UART + 非阻塞检测/搜星）。
+  if (!g_display->gpsDetectDone_ || g_display->gpsModulePresent_)
+    g_display->gpsStartRequested_ = true;
+}
+
+bool DisplayLcd::takeGpsStartRequest() {
+  if (!gpsStartRequested_) return false;
+  gpsStartRequested_ = false;
+  return true;
+}
+
+void DisplayLcd::onNoticeDismiss(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->noticePanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::showNotice(const char *message) {
+  if (!noticePanel_) return;
+  if (noticeLabel_) lv_label_set_text(noticeLabel_, message ? message : "");
+  lv_obj_move_foreground(noticePanel_);
+  lv_obj_clear_flag(noticePanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onGpsBack(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->gpsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onGpsRestartClicked(lv_event_t *) {
+  if (!g_display) return;
+  g_display->gpsRestartRequested_ = true;
+  lv_label_set_text(g_display->gpsFixLabel_,
+                    g_display->localized("Restarting GPS...", "正在重启 GPS..."));
+}
+
+bool DisplayLcd::takeGpsRestartRequest() {
+  if (!gpsRestartRequested_) return false;
+  gpsRestartRequested_ = false;
+  return true;
+}
+
+void DisplayLcd::showGpsPanel() {
+  if (!gpsPanel_) return;
+  lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(soundPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(sdPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(gpsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::showSettings() {
+  if (!settingsPanel_) return;
+  lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(soundPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(sdPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(gpsPanel_, LV_OBJ_FLAG_HIDDEN);
+  if (languagePanel_) lv_obj_add_flag(languagePanel_, LV_OBJ_FLAG_HIDDEN);
+  if (wifiPanel_) lv_obj_add_flag(wifiPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::updateGpsStatus(bool enabled, bool fix, uint8_t sat, uint32_t hdop,
+                                 double lat, double lon, float altM, float speedMps,
+                                 const char *utc, const char *local, uint32_t ageMs) {
+  if (!gpsPanel_) return;
+
+  char buf[80];
+
+  // 定位状态
+  const char *fixText;
+  lv_color_t fixColor;
+  if (!enabled) {
+    fixText = localized("GPS disabled", "GPS 已关闭");
+    fixColor = lv_color_make(148, 163, 184);
+  } else if (fix) {
+    fixText = localized("FIX ACQUIRED", "已定位");
+    fixColor = lv_color_make(22, 163, 74);
+  } else {
+    fixText = localized("Searching satellites...", "正在搜星...");
+    fixColor = lv_color_make(217, 119, 6);
+  }
+  lv_label_set_text(gpsFixLabel_, fixText);
+  lv_obj_set_style_text_color(gpsFixLabel_, fixColor, 0);
+  (void)ageMs;
+
+  // UTC 时间
+  snprintf(buf, sizeof(buf), "UTC  %s", (utc && utc[0]) ? utc : "--");
+  lv_label_set_text(gpsUtcLabel_, buf);
+
+  // 本地时间
+  snprintf(buf, sizeof(buf), "%s  %s",
+           localized("LOCAL", "本地"), (local && local[0]) ? local : "--");
+  lv_label_set_text(gpsLocalLabel_, buf);
+
+  // 经纬度
+  if (fix) {
+    snprintf(buf, sizeof(buf), "%.5f, %.5f", lat, lon);
+  } else {
+    snprintf(buf, sizeof(buf), "-- , --");
+  }
+  lv_label_set_text(gpsCoordLabel_, buf);
+
+  // 卫星 / HDOP
+  snprintf(buf, sizeof(buf), "%s %u    HDOP %.1f",
+           localized("SAT", "卫星"), (unsigned)sat, (double)hdop / 100.0);
+  lv_label_set_text(gpsSatLabel_, buf);
+
+  // 海拔
+  snprintf(buf, sizeof(buf), "%s  %.1f m", localized("ALT", "海拔"), (double)altM);
+  lv_label_set_text(gpsAltLabel_, buf);
+
+  // 地速
+  snprintf(buf, sizeof(buf), "%s  %.1f km/h", localized("SPD", "地速"),
+           (double)speedMps * 3.6);
+  lv_label_set_text(gpsSpeedLabel_, buf);
+}
+
+void DisplayLcd::updateGpsIndicator(bool enabled, bool fix, uint8_t sat) {
+  if (!gpsIndicatorLabel_ || !gpsIndicatorSpinner_) return;
+
+  char text[24];
+  if (!enabled) {
+    // GPS 关闭：灰色图标，无动画
+    snprintf(text, sizeof(text), LV_SYMBOL_GPS " --");
+    lv_label_set_text(gpsIndicatorLabel_, text);
+    lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_make(148, 163, 184), 0);
+    lv_obj_add_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_x(gpsIndicatorLabel_, 34);
+    gpsIndicatorFixed_ = false;
+  } else if (fix) {
+    // 已定位：绿色图标 + 卫星数，无动画
+    snprintf(text, sizeof(text), LV_SYMBOL_GPS " %u", (unsigned)sat);
+    lv_label_set_text(gpsIndicatorLabel_, text);
+    lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_make(22, 163, 74), 0);
+    lv_obj_add_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_x(gpsIndicatorLabel_, 34);
+    gpsIndicatorFixed_ = true;
+  } else {
+    // 搜星中：橙色图标 + 旋转动画，无卫星数
+    snprintf(text, sizeof(text), LV_SYMBOL_GPS);
+    lv_label_set_text(gpsIndicatorLabel_, text);
+    lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_make(217, 119, 6), 0);
+    lv_obj_clear_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_x(gpsIndicatorLabel_, 34);
+    gpsIndicatorFixed_ = false;
+  }
+}
+
+void DisplayLcd::buildGpsPanel() {
+  gpsPanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(gpsPanel_, 240, 320);
+  lv_obj_center(gpsPanel_);
+  lv_obj_clear_flag(gpsPanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(gpsPanel_, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_style_pad_all(gpsPanel_, 0, 0);
+  lv_obj_set_style_radius(gpsPanel_, 0, 0);
+  lv_obj_set_style_border_width(gpsPanel_, 0, 0);
+  lv_obj_set_style_bg_color(gpsPanel_, lv_color_make(248, 250, 252), 0);
+  lv_obj_set_style_bg_opa(gpsPanel_, LV_OPA_COVER, 0);
+  buildPanelHeader(gpsPanel_, "GPS", onGpsBack);
+  gpsTitle_ = lv_obj_get_child(gpsPanel_, 1);
+
+  // 定位状态（大字）
+  gpsFixLabel_ = lv_label_create(gpsPanel_);
+  lv_label_set_text(gpsFixLabel_, "Searching satellites...");
+  lv_obj_set_width(gpsFixLabel_, 216);
+  lv_obj_set_style_text_font(gpsFixLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(gpsFixLabel_, lv_color_make(217, 119, 6), 0);
+  lv_obj_align(gpsFixLabel_, LV_ALIGN_TOP_LEFT, 12, 56);
+
+  // 信息卡片容器
+  lv_obj_t *card = lv_obj_create(gpsPanel_);
+  lv_obj_set_size(card, 216, 138);
+  lv_obj_align(card, LV_ALIGN_TOP_LEFT, 12, 82);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_pad_all(card, 8, 0);
+  lv_obj_set_style_radius(card, 8, 0);
+  lv_obj_set_style_bg_color(card, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(card, lv_color_make(226, 232, 240), 0);
+  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(card, 5, 0);
+
+  const char *initTexts[] = {"UTC  --", "LOCAL  --", "-- , --",
+                             "SAT 0    HDOP --", "ALT  -- m", "SPD  -- km/h"};
+  lv_obj_t **labels[] = {&gpsUtcLabel_, &gpsLocalLabel_, &gpsCoordLabel_,
+                         &gpsSatLabel_, &gpsAltLabel_, &gpsSpeedLabel_};
+  for (size_t i = 0; i < 6; ++i) {
+    lv_obj_t *lbl = lv_label_create(card);
+    lv_label_set_text(lbl, initTexts[i]);
+    lv_obj_set_width(lbl, 196);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_make(30, 41, 59), 0);
+    *labels[i] = lbl;
+  }
+
+  // 手动重启按钮
+  gpsRestartButton_ = lv_btn_create(gpsPanel_);
+  lv_obj_set_size(gpsRestartButton_, 216, 42);
+  lv_obj_set_style_radius(gpsRestartButton_, 0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(gpsRestartButton_, lv_color_make(37, 99, 235), 0);
+  lv_obj_align(gpsRestartButton_, LV_ALIGN_TOP_LEFT, 12, 236);
+  lv_obj_add_event_cb(gpsRestartButton_, onGpsRestartClicked, LV_EVENT_CLICKED, nullptr);
+  gpsRestartLabel_ = lv_label_create(gpsRestartButton_);
+  lv_label_set_text(gpsRestartLabel_, LV_SYMBOL_REFRESH " RESTART GPS");
+  lv_obj_set_style_text_color(gpsRestartLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_font(gpsRestartLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_center(gpsRestartLabel_);
+
+  lv_obj_add_flag(gpsPanel_, LV_OBJ_FLAG_HIDDEN);
+
+  buildNoticePanel();
+}
+
+void DisplayLcd::buildNoticePanel() {
+  noticePanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(noticePanel_, 200, 140);
+  lv_obj_center(noticePanel_);
+  lv_obj_clear_flag(noticePanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_pad_all(noticePanel_, 0, 0);
+  lv_obj_set_style_radius(noticePanel_, 10, 0);
+  lv_obj_set_style_bg_color(noticePanel_, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(noticePanel_, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(noticePanel_, lv_color_make(203, 213, 225), 0);
+  lv_obj_set_style_border_width(noticePanel_, 1, 0);
+
+  noticeLabel_ = lv_label_create(noticePanel_);
+  lv_label_set_text(noticeLabel_, "Notice");
+  lv_obj_set_width(noticeLabel_, 176);
+  lv_obj_set_height(noticeLabel_, 78);
+  lv_label_set_long_mode(noticeLabel_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(noticeLabel_, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(noticeLabel_, &lv_font_noto_sans_sc_14, 0);
+  lv_obj_set_style_text_color(noticeLabel_, lv_color_make(30, 41, 59), 0);
+  lv_obj_align(noticeLabel_, LV_ALIGN_TOP_MID, 0, 16);
+
+  lv_obj_t *okButton = lv_btn_create(noticePanel_);
+  lv_obj_set_size(okButton, 120, 32);
+  lv_obj_set_style_radius(okButton, 0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(okButton, lv_color_make(37, 99, 235), 0);
+  lv_obj_align(okButton, LV_ALIGN_BOTTOM_MID, 0, -14);
+  lv_obj_add_event_cb(okButton, onNoticeDismiss, LV_EVENT_CLICKED, nullptr);
+  noticeBackLabel_ = lv_label_create(okButton);
+  lv_label_set_text(noticeBackLabel_, localized("OK", "确定"));
+  lv_obj_set_style_text_color(noticeBackLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_font(noticeBackLabel_, &lv_font_noto_sans_sc_14, 0);
+  lv_obj_center(noticeBackLabel_);
+
+  lv_obj_add_flag(noticePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::setSdFiles(const SdFileEntry *files, size_t count,
@@ -837,85 +1137,142 @@ void DisplayLcd::buildSettingsPanel() {
   buildPanelHeader(settingsPanel_, "SETTINGS", onSettingsBack);
   settingsTitle_ = lv_obj_get_child(settingsPanel_, 1);
 
-  settingsLanguageLabel_ = lv_label_create(settingsPanel_);
-  lv_label_set_text(settingsLanguageLabel_, "Interface language");
-  lv_obj_set_style_text_font(settingsLanguageLabel_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(settingsLanguageLabel_, lv_color_make(30, 41, 59), 0);
-  lv_obj_align(settingsLanguageLabel_, LV_ALIGN_TOP_LEFT, 16, 60);
+  // 设置主页：功能入口按“一行两个并排”排布（3 行 × 2 列）。
+  // 每个按钮 104×52，列起点 16 / 128，行起点 60 / 122 / 184。
+  const lv_coord_t kColX[2] = {16, 128};
+  const lv_coord_t kRowY[3] = {60, 122, 184};
+  const lv_coord_t kBtnW = 96;
+  const lv_coord_t kBtnH = 52;
 
-  settingsWifiLabel_ = lv_label_create(settingsPanel_);
-  lv_label_set_text(settingsWifiLabel_, "Wi-Fi");
-  lv_obj_set_style_text_font(settingsWifiLabel_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(settingsWifiLabel_, lv_color_make(30, 41, 59), 0);
-  lv_obj_align(settingsWifiLabel_, LV_ALIGN_TOP_LEFT, 16, 128);
-
-  settingsWifiSwitch_ = lv_switch_create(settingsPanel_);
-  lv_obj_align(settingsWifiSwitch_, LV_ALIGN_TOP_RIGHT, -16, 124);
-  lv_obj_add_event_cb(settingsWifiSwitch_, onWifiSwitchChanged,
-                      LV_EVENT_VALUE_CHANGED, nullptr);
-
-  settingsWifiStatus_ = lv_label_create(settingsPanel_);
-  lv_obj_set_width(settingsWifiStatus_, 208);
-  lv_label_set_long_mode(settingsWifiStatus_, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_color(settingsWifiStatus_, lv_color_make(71, 85, 105), 0);
-  lv_obj_align(settingsWifiStatus_, LV_ALIGN_TOP_LEFT, 16, 158);
-
-  settingsPowerLabel_ = lv_label_create(settingsPanel_);
-  lv_label_set_text(settingsPowerLabel_, "Power meter");
-  lv_obj_set_style_text_font(settingsPowerLabel_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(settingsPowerLabel_, lv_color_make(30, 41, 59), 0);
-  lv_obj_align(settingsPowerLabel_, LV_ALIGN_TOP_LEFT, 16, 210);
+  // 功率计入口
   settingsPowerButton_ = lv_btn_create(settingsPanel_);
-  lv_obj_set_size(settingsPowerButton_, 208, 36);
-  lv_obj_set_style_radius(settingsPowerButton_, 0, LV_PART_MAIN);
+  lv_obj_set_size(settingsPowerButton_, kBtnW, kBtnH);
+  lv_obj_set_style_radius(settingsPowerButton_, 8, LV_PART_MAIN);
   lv_obj_set_style_bg_color(settingsPowerButton_, lv_color_make(37, 99, 235), 0);
-  lv_obj_align(settingsPowerButton_, LV_ALIGN_TOP_LEFT, 16, 234);
+  lv_obj_align(settingsPowerButton_, LV_ALIGN_TOP_LEFT, kColX[0], kRowY[0]);
   lv_obj_add_event_cb(settingsPowerButton_, onPowerSourceButton,
                       LV_EVENT_CLICKED, nullptr);
   settingsPowerButtonLabel_ = lv_label_create(settingsPowerButton_);
-  lv_label_set_text(settingsPowerButtonLabel_, "Select power meter");
+  lv_label_set_text(settingsPowerButtonLabel_, LV_SYMBOL_POWER "\nPOWER");
   lv_obj_set_style_text_color(settingsPowerButtonLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_align(settingsPowerButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(settingsPowerButtonLabel_, &lv_font_montserrat_14, 0);
   lv_obj_center(settingsPowerButtonLabel_);
 
-  // 声音设置入口（与 SD 卡入口并排）
+  // 语言入口
+  settingsLanguageEntryButton_ = lv_btn_create(settingsPanel_);
+  lv_obj_set_size(settingsLanguageEntryButton_, kBtnW, kBtnH);
+  lv_obj_set_style_radius(settingsLanguageEntryButton_, 8, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(settingsLanguageEntryButton_, lv_color_make(79, 70, 229), 0);
+  lv_obj_align(settingsLanguageEntryButton_, LV_ALIGN_TOP_LEFT, kColX[1], kRowY[0]);
+  lv_obj_add_event_cb(settingsLanguageEntryButton_, onLanguageButton,
+                      LV_EVENT_CLICKED, nullptr);
+  settingsLanguageEntryLabel_ = lv_label_create(settingsLanguageEntryButton_);
+  lv_label_set_text(settingsLanguageEntryLabel_, LV_SYMBOL_LIST "\nLANG");
+  lv_obj_set_style_text_color(settingsLanguageEntryLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_align(settingsLanguageEntryLabel_, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(settingsLanguageEntryLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_center(settingsLanguageEntryLabel_);
+
+  // Wi-Fi 入口
+  settingsWifiEntryButton_ = lv_btn_create(settingsPanel_);
+  lv_obj_set_size(settingsWifiEntryButton_, kBtnW, kBtnH);
+  lv_obj_set_style_radius(settingsWifiEntryButton_, 8, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(settingsWifiEntryButton_, lv_color_make(8, 145, 178), 0);
+  lv_obj_align(settingsWifiEntryButton_, LV_ALIGN_TOP_LEFT, kColX[0], kRowY[1]);
+  lv_obj_add_event_cb(settingsWifiEntryButton_, onWifiButton,
+                      LV_EVENT_CLICKED, nullptr);
+  settingsWifiEntryLabel_ = lv_label_create(settingsWifiEntryButton_);
+  lv_label_set_text(settingsWifiEntryLabel_, LV_SYMBOL_WIFI "\nWI-FI");
+  lv_obj_set_style_text_color(settingsWifiEntryLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_align(settingsWifiEntryLabel_, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(settingsWifiEntryLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_center(settingsWifiEntryLabel_);
+
+  // 声音入口
   settingsSoundButton_ = lv_btn_create(settingsPanel_);
-  lv_obj_set_size(settingsSoundButton_, 102, 36);
-  lv_obj_set_style_radius(settingsSoundButton_, 0, LV_PART_MAIN);
+  lv_obj_set_size(settingsSoundButton_, kBtnW, kBtnH);
+  lv_obj_set_style_radius(settingsSoundButton_, 8, LV_PART_MAIN);
   lv_obj_set_style_bg_color(settingsSoundButton_, lv_color_make(124, 58, 237), 0);
-  lv_obj_align(settingsSoundButton_, LV_ALIGN_TOP_LEFT, 16, 276);
+  lv_obj_align(settingsSoundButton_, LV_ALIGN_TOP_LEFT, kColX[1], kRowY[1]);
   lv_obj_add_event_cb(settingsSoundButton_, onSoundButton, LV_EVENT_CLICKED, nullptr);
   settingsSoundButtonLabel_ = lv_label_create(settingsSoundButton_);
-  lv_label_set_text(settingsSoundButtonLabel_, LV_SYMBOL_AUDIO " SOUND");
+  lv_label_set_text(settingsSoundButtonLabel_, LV_SYMBOL_AUDIO "\nSOUND");
   lv_obj_set_style_text_color(settingsSoundButtonLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_align(settingsSoundButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(settingsSoundButtonLabel_, &lv_font_montserrat_14, 0);
   lv_obj_center(settingsSoundButtonLabel_);
 
-  // SD 卡文件浏览入口
+  // SD 卡文件浏览入口（音乐播放）
   settingsSdButton_ = lv_btn_create(settingsPanel_);
-  lv_obj_set_size(settingsSdButton_, 102, 36);
-  lv_obj_set_style_radius(settingsSdButton_, 0, LV_PART_MAIN);
+  lv_obj_set_size(settingsSdButton_, kBtnW, kBtnH);
+  lv_obj_set_style_radius(settingsSdButton_, 8, LV_PART_MAIN);
   lv_obj_set_style_bg_color(settingsSdButton_, lv_color_make(15, 118, 110), 0);
-  lv_obj_align(settingsSdButton_, LV_ALIGN_TOP_LEFT, 122, 276);
+  lv_obj_align(settingsSdButton_, LV_ALIGN_TOP_LEFT, kColX[0], kRowY[2]);
   lv_obj_add_event_cb(settingsSdButton_, onSdCardButton, LV_EVENT_CLICKED, nullptr);
   settingsSdButtonLabel_ = lv_label_create(settingsSdButton_);
-  lv_label_set_text(settingsSdButtonLabel_, LV_SYMBOL_SD_CARD " SD CARD");
+  lv_label_set_text(settingsSdButtonLabel_, LV_SYMBOL_SD_CARD "\nSD/MUSIC");
   lv_obj_set_style_text_color(settingsSdButtonLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_align(settingsSdButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(settingsSdButtonLabel_, &lv_font_montserrat_14, 0);
   lv_obj_center(settingsSdButtonLabel_);
 
+  // GPS 入口
+  settingsGpsButton_ = lv_btn_create(settingsPanel_);
+  lv_obj_set_size(settingsGpsButton_, kBtnW, kBtnH);
+  lv_obj_set_style_radius(settingsGpsButton_, 8, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(settingsGpsButton_, lv_color_make(21, 128, 61), 0);
+  lv_obj_align(settingsGpsButton_, LV_ALIGN_TOP_LEFT, kColX[1], kRowY[2]);
+  lv_obj_add_event_cb(settingsGpsButton_, onGpsButton, LV_EVENT_CLICKED, nullptr);
+  settingsGpsButtonLabel_ = lv_label_create(settingsGpsButton_);
+  lv_label_set_text(settingsGpsButtonLabel_, LV_SYMBOL_GPS "\nGPS");
+  lv_obj_set_style_text_color(settingsGpsButtonLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_align(settingsGpsButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(settingsGpsButtonLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_center(settingsGpsButtonLabel_);
+
+  lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+
+  buildLanguagePanel();
+  buildWifiPanel();
+  buildSoundPanel();
+  buildSdPanel();
+  buildGpsPanel();
+}
+
+void DisplayLcd::buildLanguagePanel() {
+  languagePanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(languagePanel_, 240, 320);
+  lv_obj_center(languagePanel_);
+  lv_obj_clear_flag(languagePanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(languagePanel_, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_style_pad_all(languagePanel_, 0, 0);
+  lv_obj_set_style_radius(languagePanel_, 0, 0);
+  lv_obj_set_style_border_width(languagePanel_, 0, 0);
+  lv_obj_set_style_bg_color(languagePanel_, lv_color_make(248, 250, 252), 0);
+  lv_obj_set_style_bg_opa(languagePanel_, LV_OPA_COVER, 0);
+  buildPanelHeader(languagePanel_, "LANGUAGE", onLanguageBack);
+  languageTitle_ = lv_obj_get_child(languagePanel_, 1);
+
+  languageHint_ = lv_label_create(languagePanel_);
+  lv_label_set_text(languageHint_, "Choose interface language");
+  lv_obj_set_width(languageHint_, 216);
+  lv_obj_set_style_text_font(languageHint_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(languageHint_, lv_color_make(100, 116, 139), 0);
+  lv_obj_align(languageHint_, LV_ALIGN_TOP_LEFT, 12, 58);
+
   const char *labels[] = {"English", "简体中文"};
   for (size_t i = 0; i < 2; ++i) {
-    settingsLanguageButtons_[i] = lv_btn_create(settingsPanel_);
-    lv_obj_set_size(settingsLanguageButtons_[i], 102, 38);
-    lv_obj_set_style_radius(settingsLanguageButtons_[i], 0, LV_PART_MAIN);
+    settingsLanguageButtons_[i] = lv_btn_create(languagePanel_);
+    lv_obj_set_size(settingsLanguageButtons_[i], 102, 46);
+    lv_obj_set_style_radius(settingsLanguageButtons_[i], 8, LV_PART_MAIN);
     lv_obj_set_style_bg_color(settingsLanguageButtons_[i],
                               lv_color_make(239, 244, 248), 0);
     lv_obj_set_style_border_color(settingsLanguageButtons_[i],
                                   lv_color_make(203, 213, 225), 0);
     lv_obj_set_style_border_width(settingsLanguageButtons_[i], 1, 0);
     lv_obj_align(settingsLanguageButtons_[i], LV_ALIGN_TOP_LEFT,
-                 (lv_coord_t)(16 + i * 106), 84);
+                 (lv_coord_t)(16 + i * 106), 92);
     lv_obj_add_event_cb(settingsLanguageButtons_[i], onLanguageSelected,
                         LV_EVENT_CLICKED, (void *)(uintptr_t)(i == 1));
     settingsLanguageButtonLabels_[i] = lv_label_create(settingsLanguageButtons_[i]);
@@ -925,11 +1282,42 @@ void DisplayLcd::buildSettingsPanel() {
     lv_obj_center(settingsLanguageButtonLabels_[i]);
   }
 
-  refreshWifiStatus();
-  lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(languagePanel_, LV_OBJ_FLAG_HIDDEN);
+}
 
-  buildSoundPanel();
-  buildSdPanel();
+void DisplayLcd::buildWifiPanel() {
+  wifiPanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(wifiPanel_, 240, 320);
+  lv_obj_center(wifiPanel_);
+  lv_obj_clear_flag(wifiPanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(wifiPanel_, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_style_pad_all(wifiPanel_, 0, 0);
+  lv_obj_set_style_radius(wifiPanel_, 0, 0);
+  lv_obj_set_style_border_width(wifiPanel_, 0, 0);
+  lv_obj_set_style_bg_color(wifiPanel_, lv_color_make(248, 250, 252), 0);
+  lv_obj_set_style_bg_opa(wifiPanel_, LV_OPA_COVER, 0);
+  buildPanelHeader(wifiPanel_, "WI-FI", onWifiBack);
+  wifiTitle_ = lv_obj_get_child(wifiPanel_, 1);
+
+  settingsWifiLabel_ = lv_label_create(wifiPanel_);
+  lv_label_set_text(settingsWifiLabel_, "Wi-Fi");
+  lv_obj_set_style_text_font(settingsWifiLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(settingsWifiLabel_, lv_color_make(30, 41, 59), 0);
+  lv_obj_align(settingsWifiLabel_, LV_ALIGN_TOP_LEFT, 16, 62);
+
+  settingsWifiSwitch_ = lv_switch_create(wifiPanel_);
+  lv_obj_align(settingsWifiSwitch_, LV_ALIGN_TOP_RIGHT, -16, 58);
+  lv_obj_add_event_cb(settingsWifiSwitch_, onWifiSwitchChanged,
+                      LV_EVENT_VALUE_CHANGED, nullptr);
+
+  settingsWifiStatus_ = lv_label_create(wifiPanel_);
+  lv_obj_set_width(settingsWifiStatus_, 208);
+  lv_label_set_long_mode(settingsWifiStatus_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(settingsWifiStatus_, lv_color_make(71, 85, 105), 0);
+  lv_obj_align(settingsWifiStatus_, LV_ALIGN_TOP_LEFT, 16, 104);
+
+  refreshWifiStatus();
+  lv_obj_add_flag(wifiPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::buildSoundPanel() {
@@ -1105,6 +1493,7 @@ void DisplayLcd::refreshBleDeviceButtons() {
 }
 
 void DisplayLcd::refreshLanguage() {
+  Serial.printf("[LANG] begin zh=%d\n", (int)chinese_);
   const lv_font_t *font = chinese_ ? &lv_font_noto_sans_sc_14
                                    : &lv_font_montserrat_14;
   const lv_font_t *titleFont = chinese_ ? &lv_font_noto_sans_sc_14
@@ -1135,6 +1524,7 @@ void DisplayLcd::refreshLanguage() {
                     localized("LOG: OFF", "日志: 关闭"));
   lv_obj_set_style_text_font(statusLabel_, font, 0);
   lv_obj_set_style_text_font(cadenceLabel_, font, 0);
+  Serial.println("[LANG] 1 main done");
 
   lv_label_set_text(powerSourceTitle_, localized("POWER SOURCE", "功率来源"));
   lv_label_set_text(powerSourceHint_, localized("Choose a power source", "选择功率来源"));
@@ -1152,6 +1542,7 @@ void DisplayLcd::refreshLanguage() {
   }
   lv_obj_set_style_text_font(powerSourceTitle_, titleFont, 0);
   lv_obj_set_style_text_font(powerSourceHint_, font, 0);
+  Serial.println("[LANG] 2 powersrc done");
 
   lv_label_set_text(bleDeviceTitle_, localized("BLE DEVICES", "蓝牙设备"));
   lv_label_set_text(bleDeviceHint_, localized("Tap a device, then confirm",
@@ -1174,6 +1565,7 @@ void DisplayLcd::refreshLanguage() {
   }
   lv_obj_set_style_text_font(bleStatusLabel_, font, 0);
   refreshBleDeviceButtons();
+  Serial.println("[LANG] 3 ble done");
 
   lv_label_set_text(bleConfirmTitle_, localized("CONFIRM DEVICE", "确认设备"));
   lv_label_set_text(bleConfirmButtonLabel_, localized("CONNECT", "连接"));
@@ -1189,6 +1581,7 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_set_style_text_font(bleLoadingLabel_, font, 0);
   for (size_t i = 0; i < 4; ++i)
     lv_obj_set_style_text_font(lv_obj_get_child(bleDeviceButtons_[i], 0), font, 0);
+  Serial.println("[LANG] 4 ble2 done");
 
   lv_label_set_text(virtualTitle_, localized("VIRTUAL POWER", "虚拟功率计"));
   lv_label_set_text(virtualPowerTitle_, localized("POWER", "功率"));
@@ -1200,22 +1593,68 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_set_style_text_font(virtualPowerTitle_, font, 0);
   lv_obj_set_style_text_font(virtualCadenceTitle_, font, 0);
   lv_obj_set_style_text_font(virtualHint_, font, 0);
+  Serial.println("[LANG] 5 virtual done");
 
   lv_label_set_text(settingsTitle_, localized("SETTINGS", "设置"));
-  lv_label_set_text(settingsLanguageLabel_, localized("Interface language", "界面语言"));
-  lv_label_set_text(settingsPowerLabel_, localized("Power meter", "功率计"));
-  lv_label_set_text(settingsWifiLabel_, localized("Wi-Fi", "Wi-Fi"));
-  lv_label_set_text(settingsPowerButtonLabel_,
-                    localized("Select power meter", "选择功率计"));
+  if (settingsPowerButtonLabel_)
+    lv_label_set_text(settingsPowerButtonLabel_,
+                      localized(LV_SYMBOL_POWER "\n" "POWER", LV_SYMBOL_POWER "\n" "功率"));
+  if (settingsLanguageEntryLabel_)
+    lv_label_set_text(settingsLanguageEntryLabel_,
+                      localized(LV_SYMBOL_LIST "\n" "LANG", LV_SYMBOL_LIST "\n" "语言"));
+  if (settingsWifiEntryLabel_)
+    lv_label_set_text(settingsWifiEntryLabel_,
+                      localized(LV_SYMBOL_WIFI "\n" "WI-FI", LV_SYMBOL_WIFI "\n" "WI-FI"));
   lv_label_set_text(settingsSdButtonLabel_,
-                    localized(LV_SYMBOL_SD_CARD " SD CARD", LV_SYMBOL_SD_CARD " SD 卡"));
+                    localized(LV_SYMBOL_SD_CARD "\n" "SD/MUSIC", LV_SYMBOL_SD_CARD "\n" "SD/音乐"));
   lv_label_set_text(settingsSoundButtonLabel_,
-                    localized(LV_SYMBOL_AUDIO " SOUND", LV_SYMBOL_AUDIO " 声音"));
+                    localized(LV_SYMBOL_AUDIO "\n" "SOUND", LV_SYMBOL_AUDIO "\n" "声音"));
+  lv_label_set_text(settingsGpsButtonLabel_,
+                    localized(LV_SYMBOL_GPS "\n" "GPS", LV_SYMBOL_GPS "\n" "GPS"));
   lv_obj_set_style_text_font(settingsTitle_, titleFont, 0);
-  lv_obj_set_style_text_font(settingsLanguageLabel_, font, 0);
-  lv_obj_set_style_text_font(settingsPowerLabel_, font, 0);
-  lv_obj_set_style_text_font(settingsWifiLabel_, font, 0);
-  lv_obj_set_style_text_font(settingsPowerButtonLabel_, font, 0);
+  if (settingsPowerButtonLabel_) lv_obj_set_style_text_font(settingsPowerButtonLabel_, font, 0);
+  if (settingsLanguageEntryLabel_) lv_obj_set_style_text_font(settingsLanguageEntryLabel_, font, 0);
+  if (settingsWifiEntryLabel_) lv_obj_set_style_text_font(settingsWifiEntryLabel_, font, 0);
+  lv_obj_set_style_text_font(settingsSdButtonLabel_, font, 0);
+  lv_obj_set_style_text_font(settingsSoundButtonLabel_, font, 0);
+  lv_obj_set_style_text_font(settingsGpsButtonLabel_, font, 0);
+
+  // 独立「语言」页面文字
+  if (languageTitle_) {
+    lv_label_set_text(languageTitle_, localized("LANGUAGE", "语言"));
+    lv_obj_set_style_text_font(languageTitle_, titleFont, 0);
+  }
+  if (languageHint_) {
+    lv_label_set_text(languageHint_, localized("Choose interface language", "选择界面语言"));
+    lv_obj_set_style_text_font(languageHint_, font, 0);
+  }
+  // 独立「Wi-Fi」页面文字
+  if (wifiTitle_) {
+    lv_label_set_text(wifiTitle_, localized("WI-FI", "WI-FI"));
+    lv_obj_set_style_text_font(wifiTitle_, titleFont, 0);
+  }
+  if (settingsWifiLabel_)
+    lv_label_set_text(settingsWifiLabel_, localized("Wi-Fi", "Wi-Fi"));
+  Serial.println("[LANG] 6 settings+lang+wifi pages done");
+
+  // GPS 页面文字
+  lv_label_set_text(gpsTitle_, localized("GPS", "GPS"));
+  lv_label_set_text(gpsRestartLabel_,
+                    localized(LV_SYMBOL_REFRESH " RESTART GPS",
+                              LV_SYMBOL_REFRESH " 重启 GPS"));
+  lv_obj_set_style_text_font(gpsTitle_, titleFont, 0);
+  lv_obj_set_style_text_font(gpsRestartLabel_, font, 0);
+  lv_obj_set_style_text_font(gpsFixLabel_, titleFont, 0);
+  lv_obj_set_style_text_font(gpsUtcLabel_, font, 0);
+  lv_obj_set_style_text_font(gpsLocalLabel_, font, 0);
+  lv_obj_set_style_text_font(gpsCoordLabel_, font, 0);
+  lv_obj_set_style_text_font(gpsSatLabel_, font, 0);
+  lv_obj_set_style_text_font(gpsAltLabel_, font, 0);
+  lv_obj_set_style_text_font(gpsSpeedLabel_, font, 0);
+  Serial.println("[LANG] 7 gps done");
+  lv_obj_set_style_text_font(settingsTitle_, titleFont, 0);
+  if (settingsWifiLabel_) lv_obj_set_style_text_font(settingsWifiLabel_, font, 0);
+  if (settingsPowerButtonLabel_) lv_obj_set_style_text_font(settingsPowerButtonLabel_, font, 0);
   lv_obj_set_style_text_font(settingsSdButtonLabel_, font, 0);
   lv_obj_set_style_text_font(settingsSoundButtonLabel_, font, 0);
 
@@ -1239,6 +1678,7 @@ void DisplayLcd::refreshLanguage() {
     }
     refreshSoundVolume();
   }
+  Serial.println("[LANG] 8 sound done");
 
   // SD 浏览页文字
   lv_label_set_text(sdTitle_, localized("SD CARD", "SD 卡"));
@@ -1256,6 +1696,7 @@ void DisplayLcd::refreshLanguage() {
       snprintf(text, sizeof(text), "%s", localized("Stopped", "已停止"));
     lv_label_set_text(sdNowPlayingLabel_, text);
   }
+  Serial.println("[LANG] 9 sd done");
   lv_obj_set_style_text_font(settingsWifiStatus_,
                              chinese_ ? &lv_font_noto_sans_sc_14
                                       : &lv_font_montserrat_14, 0);
@@ -1273,10 +1714,18 @@ void DisplayLcd::refreshLanguage() {
                                          : lv_color_make(51, 65, 85), 0);
   }
   refreshWifiStatus();
+  Serial.println("[LANG] 10 langbtn+wifi done");
 
+  if (noticeBackLabel_) {
+    lv_label_set_text(noticeBackLabel_, localized("OK", "确定"));
+    lv_obj_set_style_text_font(noticeBackLabel_, font, 0);
+  }
+
+  Serial.println("[LANG] 11 panels begin");
   lv_obj_t *panels[] = {
     powerSourcePanel_, bleDevicePanel_, bleConfirmPanel_,
-    bleLoadingPanel_, virtualPowerPanel_, settingsPanel_, soundPanel_, sdPanel_
+    bleLoadingPanel_, virtualPowerPanel_, settingsPanel_, soundPanel_, sdPanel_,
+    gpsPanel_, languagePanel_, wifiPanel_
   };
   for (lv_obj_t *panel : panels) {
     lv_obj_t *backButton = lv_obj_get_child(panel, 0);
@@ -1285,6 +1734,7 @@ void DisplayLcd::refreshLanguage() {
                       localized(LV_SYMBOL_LEFT " BACK", LV_SYMBOL_LEFT " 返回"));
     lv_obj_set_style_text_font(backLabel, font, 0);
   }
+  Serial.println("[LANG] 12 done");
 }
 
 void DisplayLcd::begin() {
@@ -1339,11 +1789,24 @@ void DisplayLcd::begin() {
   lv_obj_set_style_bg_color(screen_, lv_color_make(248, 250, 252), 0);
   lv_obj_set_style_bg_opa(screen_, LV_OPA_COVER, 0);
 
-  titleLabel_ = lv_label_create(screen_);
-  lv_label_set_text(titleLabel_, "AERO PROBE");
-  lv_obj_align(titleLabel_, LV_ALIGN_TOP_LEFT, 12, 10);
-  lv_obj_set_style_text_font(titleLabel_, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(titleLabel_, lv_color_make(29, 41, 64), 0);
+  // 顶部左侧：GPS 状态指示（替代原来的固定文字 "AERO PROBE"）。
+  // 用一个小旋转动画表示"搜星中"，定位后用绿色图标 + 卫星数表示。
+  gpsIndicatorSpinner_ = lv_spinner_create(screen_, 1000, 60);
+  lv_obj_set_size(gpsIndicatorSpinner_, 16, 16);
+  lv_obj_align(gpsIndicatorSpinner_, LV_ALIGN_TOP_LEFT, 12, 8);
+  lv_obj_set_style_arc_color(gpsIndicatorSpinner_, lv_color_make(219, 227, 236),
+                             LV_PART_MAIN);
+  lv_obj_set_style_arc_width(gpsIndicatorSpinner_, 3, LV_PART_MAIN);
+  lv_obj_set_style_arc_color(gpsIndicatorSpinner_, lv_color_make(217, 119, 6),
+                             LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(gpsIndicatorSpinner_, 3, LV_PART_INDICATOR);
+  lv_obj_add_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);  // 默认隐藏，查到状态后再显示
+
+  gpsIndicatorLabel_ = lv_label_create(screen_);
+  lv_label_set_text(gpsIndicatorLabel_, LV_SYMBOL_GPS " --");
+  lv_obj_set_style_text_font(gpsIndicatorLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_make(148, 163, 184), 0);
+  lv_obj_align(gpsIndicatorLabel_, LV_ALIGN_TOP_LEFT, 34, 8);
 
   lv_obj_t *headerLine = lv_obj_create(screen_);
   lv_obj_set_size(headerLine, 216, 2);

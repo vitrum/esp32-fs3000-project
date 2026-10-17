@@ -15,6 +15,8 @@ void unlockSdCard();
 // 路径以 "/" 开头即可（内部会拼接到挂载点）。音频库也用它。
 fs::FS &sdFs();
 bool sdCardReady();
+// SD 卡 FATFS 挂载点（POSIX 路径，用于 opendir/stat 等）
+const char *sdMountPoint();
 
 // ---- SD 卡文件浏览辅助 ----
 struct SdFileEntry {
@@ -30,15 +32,24 @@ size_t listSdFiles(SdFileEntry *out, size_t maxCount);
 // SD card CSV log (SDSPI mode)
 // 列：t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc
 //     powerSrc: 0=none, 1=BLE, 2=ANT+, 3=virtual power meter
+// 存储策略（降低 SD 磨损、避免每秒写盘争用）：
+//   - log() 每秒调用一次，样本先缓存到内存（默认 60 条 = 1 分钟）。
+//   - 缓冲满（或 stop()）时，把整块数据一次性写入 CSV 文件。
+//   - 文件位于 /LOG/ 目录；若有本地日期（GPS 定位），则放在 /LOG/<YYYY-MM-DD>/
+//     子目录，当天的数据都写入该日期目录。
 class CsvLogger {
 public:
-  bool begin();                       // 挂载 SD 并创建新文件，写表头
-  bool start();
-  bool stop();
+  bool begin();                       // 挂载 SD，准备 /LOG 目录（不创建文件）
+  bool start();                       // 开始一次新的记录（选定目录/文件名，缓存待写）
+  bool stop();                        // 结束记录：把剩余缓存写入并关闭文件
   bool ok() const { return _ok; }
 
-  // 暂停写盘（保留已打开的文件与文件名），用于音频占用 SD 时避让冲突。
-  // 期间 log() 调用会被丢弃，不写 SD。resume() 恢复写同一文件。
+  // 由主循环在有本地日期时设置（"YYYY-MM-DD"）。空字符串表示暂无日期。
+  // 若日期发生变化（跨天），记录会自动切换到新日期目录下的新文件。
+  void setLocalDate(const char *dateYmd);
+
+  // 暂停/恢复写盘（保留缓存与文件名），用于音频占用 SD 时避让冲突。
+  // 暂停期间 log() 仍会缓存样本，但不会写 SD；缓冲满时丢弃新样本以免损坏。
   void pause()  { _paused = true; }
   void resume() { _paused = false; _lastFlush = millis(); }
   bool paused() const { return _paused; }
@@ -49,10 +60,33 @@ public:
   const char *fileName() const { return _name; }
 
 private:
+  struct Sample {
+    uint32_t tMs;
+    float    powerW;
+    float    cadRpm;
+    float    vgMps;
+    float    vAirMps;
+    float    yawDeg;
+    float    postureDeg;
+    float    rho;
+    uint8_t  powerSrc;
+  };
+
+  bool ensureDir(const char *path);
+  bool openFileForDate();             // 依据当前日期选定并打开（新建）文件
+  void writeHeader();
+  bool flushBuffer();                 // 把内存缓冲一次性写入文件并 flush
+  static constexpr size_t kMaxSamples = 60;   // 1 分钟（1Hz）
+
   bool   _ok = false;
   bool   _sdReady = false;
   bool   _paused = false;      // 音频播放期间暂停写盘，避免 SD 争用
   File   _f;
-  char   _name[40];
+  char   _name[80];
+  char   _dir[48];             // 当前日志目录（/LOG 或 /LOG/<date>）
+  char   _date[12];            // 当前本地日期 "YYYY-MM-DD"，空=未知
   uint32_t _lastFlush = 0;
+
+  Sample _buf[kMaxSamples];
+  size_t _bufCount = 0;
 };
