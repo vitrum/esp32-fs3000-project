@@ -113,3 +113,60 @@ ESP32, ESP32-S3, PlatformIO, Arduino, C++, I2C, BLE, ANT+, FS3000, BME280, telem
 - 为缺失车速表场景设计 CDA 近似估算逻辑
 - 评估二期双 FS3000 V 形风探针扩展方案
 - 搭建现场骑行气动测试数据采集与后处理链路
+
+## 10. 已踩过的坑与修复经验（务必先读）
+
+> 这些是本项目在真实硬件上调试得出的教训，遇到"界面卡死/卡屏/无法烧录"先对照本节。
+
+### 10.1 现象：切换界面后"卡屏"，但主循环仍在跑
+
+- **判别方法**：卡屏时抓串口。若状态行 `NNNNN P=...` 的 millis 仍每 1s 增长，
+  说明**主循环没死，只是显示层不刷新**（不是崩溃/死机）。不要误判为死机。
+- **首要根因：LVGL 内置堆太小**。`src/lv_conf.h` 未定义 `LV_MEM_SIZE`，
+  LVGL 8.3 默认仅 **48KB**。本项目有 ~15 个全屏面板 + 多字号 Montserrat +
+  Noto 中文大字体，**切换"新打开的界面"首次全量绘制时会申请大量临时内存**，
+  48KB 不足 → `lv_mem_alloc` 失败 → 绘制异常 → 卡屏。前几屏因内存刚好够而正常，
+  越切越紧张，进入新界面就崩。
+  - **修复**：`lv_conf.h` 增加 `#define LV_MEM_SIZE (128 * 1024)`（已从 48KB 调到 128KB）。
+  - 若仍偶发，继续增大或结合 `LV_USE_MEM_MONITOR` 观察水位。
+- **次要根因：flush 回调每帧 malloc**。`lvglFlushCb` 原实现每次
+  `malloc(w*h*2)` 再 `free`，堆碎片化后可能返回 NULL → 静默 `flush_ready`
+  跳过绘制 → 画面冻结。**修复**：改为**静态缓冲 + 分块绘制**（容量取 draw buffer
+  像素数 `240*320/10=7680`，按行分段，永不 malloc）。
+
+### 10.2 现象：插 SD 卡开机卡住，拔卡正常
+
+- **根因**：`logger.begin()` 里的 `esp_vfs_fat_sdspi_mount()` 在卡接触不良/初始化慢时
+  **长时间阻塞，拖死整个 setup()**（`BME280 absent` 之后就没有主循环日志）。
+  不是死机，是 mount 卡死。
+- **调试手段**：拔卡复位 → 若能正常跑到 `P=` 状态行，即坐实是 SD mount 阻塞。
+- **修复方向**：
+  - SD mount 必须有**总超时/失败不阻塞**（放到带超时的独立任务，或缩短
+    `command_timeout_ms`、降低重试）。
+  - 写 SD 之前用 `sdCardOnline()`（`sdmmc_get_status()`）判断卡是否在线，
+    不在线就不写，避免 `ESP_ERR_TIMEOUT(0x107)` 刷屏/阻塞。
+  - 32G 及以下用 FAT32；exFAT 不受本固件 FATFS 支持（`0x107` 常见诱因之一）。
+
+### 10.3 现象：切中文界面卡死
+
+- 中文（Noto 14 号大字体）渲染在某些面板触发卡死，根因与 10.1 的内存/绘制相关。
+- **临时规避**：`begin()` 强制 `chinese_=false` 并清 NVS 的 `zh`；
+  `onLanguageSelected()` 忽略中文选择，始终保持英文，保证设备可用。
+- 待内存问题根治后再放开中文，并单独验证中文各面板。
+
+### 10.4 安全烧录（避免 USB-CDC 掉线 / "multiple access on port"）
+
+- 本板走**原生 USB-CDC**，大镜像（>2MB）高速率写入偶发掉线。
+  - `platformio.ini`：`upload_speed = 115200`、`upload_resetmethod = default_reset`。
+  - **最稳方式：分块烧录**（512KB/块，低波特率，每块 `--before default_reset`，
+    校验 `Hash of data verified`，失败重试），地址：
+    `0x0` bootloader、`0x8000` partitions、`0x10000` 起 firmware 按 `0x80000` 步长切块。
+- **烧录前务必关闭串口监视器**。若有残留进程占用（`lsof /dev/cu.usbmodem*` 显示
+  Python/cat），会报 `device reports readiness to read but returned no data
+  (multiple access on port)`，先 `pkill` 掉再烧。
+
+### 10.5 通用调试心法
+
+- 先分清"**主循环是否在跑**"（看 millis 状态行），再决定查 UI/绘制还是查死机。
+- 现象随"新打开的界面"恶化 → 优先怀疑**内存上限（LVGL 堆）**，而非某个具体面板。
+- 串口埋点（`[LANG]` 分段 done、状态行 millis）是定位启动/主循环卡点最快的手段。
