@@ -7,6 +7,10 @@
 #define LV_COLOR_DEPTH 16
 #define LV_COLOR_16_SWAP 0
 #define LV_MEM_CUSTOM 0
+// 内置堆大小：默认仅 48KB，本 UI 有 ~15 个全屏面板 + 多字号/中文大字体，
+// 切换新界面首次全量绘制时会申请大量临时内存，48KB 不足导致 lv_mem_alloc
+// 失败 -> 绘制异常 -> 界面卡死。增大到 128KB。
+#define LV_MEM_SIZE (128 * 1024)
 #define LV_USE_PERF_MONITOR 0
 #define LV_USE_MEM_MONITOR 0
 #define LV_USE_LOG 0

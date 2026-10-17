@@ -116,6 +116,15 @@ static bool mountSdCard() {
 // 供其它模块查询 SD 是否就绪（替代 Arduino SD.cardType()）
 bool sdCardReady() { return g_sdMounted; }
 
+// 运行期轻量检测：写入 SD 之前确认卡仍在位并响应。
+// g_sdMounted 仅在挂载时置 true，运行中拔卡不会自动更新，因此这里用
+// sdmmc_get_status() 主动查询卡状态；失败即视为掉线。
+// 这样可避免对不在线的卡反复 write 造成 ESP_ERR_TIMEOUT(0x107) 刷屏与阻塞。
+bool sdCardOnline() {
+  if (!g_sdMounted || !g_sdCard) return false;
+  return sdmmc_get_status(g_sdCard) == ESP_OK;
+}
+
 // 确保目录存在（不存在则创建；已存在直接返回 true）。
 bool CsvLogger::ensureDir(const char *path) {
   if (!path || !path[0]) return false;

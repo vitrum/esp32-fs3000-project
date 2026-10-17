@@ -24,21 +24,30 @@ void DisplayLcd::lvglFlushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color
 
   int32_t w = lv_area_get_width(area);
   int32_t h = lv_area_get_height(area);
-  uint16_t *buf = (uint16_t *)malloc((size_t)w * h * sizeof(uint16_t));
-  if (!buf) {
+  if (w <= 0 || h <= 0) {
     lv_disp_flush_ready(drv);
     return;
   }
 
-  for (int32_t y = 0; y < h; y++) {
-    for (int32_t x = 0; x < w; x++) {
-      uint32_t idx = (uint32_t)y * w + x;
-      buf[idx] = rgb565FromLvColor(color_p[idx]);
-    }
+  // 关键修复：不再每帧 malloc。
+  // 旧实现每次 flush 都 malloc(w*h*2) 再 free；多面板/全屏刷新时切块大、
+  // 运行一段时间堆碎片化后 malloc 可能返回 NULL，于是直接 flush_ready 跳过
+  // 绘制 —— 表现为"界面不刷新但主循环日志照常"。这里改用静态缓冲，
+  // 按行分段绘制，容量取 draw buffer 像素数（240*320/10 = 7680），永不越界/失败。
+  static uint16_t s_flushBuf[240 * 320 / 10];
+
+  int32_t cap = (int32_t)(sizeof(s_flushBuf) / sizeof(s_flushBuf[0]));
+  int32_t rowsPerChunk = cap / w;
+  if (rowsPerChunk < 1) rowsPerChunk = 1;
+
+  for (int32_t y0 = 0; y0 < h; y0 += rowsPerChunk) {
+    int32_t rows = (h - y0 < rowsPerChunk) ? (h - y0) : rowsPerChunk;
+    int32_t n = rows * w;
+    const lv_color_t *src = color_p + (size_t)y0 * w;
+    for (int32_t i = 0; i < n; ++i) s_flushBuf[i] = rgb565FromLvColor(src[i]);
+    g_display->_gfx->draw16bitRGBBitmap(area->x1, area->y1 + y0, s_flushBuf, w, rows);
   }
 
-  g_display->_gfx->draw16bitRGBBitmap(area->x1, area->y1, buf, w, h);
-  free(buf);
   lv_disp_flush_ready(drv);
 }
 
@@ -178,7 +187,12 @@ void DisplayLcd::onWifiBack(lv_event_t *) {
 void DisplayLcd::onLanguageSelected(lv_event_t *event) {
   if (!g_display) return;
   const bool chinese = (uintptr_t)lv_event_get_user_data(event) == 1;
-  g_display->setLanguage(chinese);
+  // 中文界面暂时禁用（渲染卡死待修复）：忽略选择，始终保持英文。
+  if (chinese) {
+    Serial.println("[UI] Chinese language temporarily disabled; staying English.");
+    return;
+  }
+  g_display->setLanguage(false);
 }
 
 void DisplayLcd::onWifiSwitchChanged(lv_event_t *event) {
@@ -1740,12 +1754,18 @@ void DisplayLcd::refreshLanguage() {
 void DisplayLcd::begin() {
   g_display = this;
 
-  Preferences preferences;
-  if (preferences.begin("aero-ui", true)) {
-    chinese_ = preferences.getBool("zh", false);
-    preferences.end();
-  } else {
-    Serial.println("[UI] Could not read saved language; using English.");
+  // 暂时强制英文界面：中文渲染在某些面板会触发卡死（待修复）。
+  // 先从 NVS 读一次并清掉，避免遗留的 zh=true 影响。
+  chinese_ = false;
+  {
+    Preferences preferences;
+    if (preferences.begin("aero-ui", false)) {
+      if (preferences.getBool("zh", false)) {
+        preferences.putBool("zh", false);
+        Serial.println("[UI] Language forced to English (Chinese temporarily disabled).");
+      }
+      preferences.end();
+    }
   }
 
   pinMode(PIN_LCD_BL, OUTPUT);
