@@ -8,7 +8,7 @@
 #include <FS.h>
 
 bool beginSdCardMutex();
-bool lockSdCard(TickType_t timeout = portMAX_DELAY);
+bool lockSdCard(TickType_t timeout = pdMS_TO_TICKS(1000));
 void unlockSdCard();
 
 // SD 已挂载的 FATFS 文件系统对象（走 ESP-IDF 原生 SDSPI+FATFS）。
@@ -48,8 +48,8 @@ public:
   // 若日期发生变化（跨天），记录会自动切换到新日期目录下的新文件。
   void setLocalDate(const char *dateYmd);
 
-  // 暂停/恢复写盘（保留缓存与文件名），用于音频占用 SD 时避让冲突。
-  // 暂停期间 log() 仍会缓存样本，但不会写 SD；缓冲满时丢弃新样本以免损坏。
+  // 暂停/恢复提交新批次（保留缓存与文件名）；已交给写任务的批次仍会完成。
+  // 暂停期间 log() 仍会缓存样本；缓冲满时丢弃新样本以免无限增长。
   void pause()  { _paused = true; }
   void resume() { _paused = false; _lastFlush = millis(); }
   bool paused() const { return _paused; }
@@ -73,20 +73,36 @@ private:
   };
 
   bool ensureDir(const char *path);
-  bool openFileForDate();             // 依据当前日期选定并打开（新建）文件
-  void writeHeader();
+  bool openFileForDate(const char *date); // 打开新文件后再切换当前文件
+  bool writeHeader(int fd);
+  static void writerTaskEntry(void *argument);
+  void writerTask();
+  bool ensureWriterTask();
+  bool queueBuffer();
+  bool flushPending(TickType_t timeout);
   bool flushBuffer();                 // 把内存缓冲一次性写入文件并 flush
   static constexpr size_t kMaxSamples = 60;   // 1 分钟（1Hz）
+  static constexpr size_t kMaxCsvLineBytes = 160;
 
   bool   _ok = false;
   bool   _sdReady = false;
   bool   _paused = false;      // 音频播放期间暂停写盘，避免 SD 争用
-  File   _f;
-  char   _name[80];
-  char   _dir[48];             // 当前日志目录（/LOG 或 /LOG/<date>）
-  char   _date[12];            // 当前本地日期 "YYYY-MM-DD"，空=未知
+  TaskHandle_t _writerTaskHandle = nullptr;
+  SemaphoreHandle_t _flushDone = nullptr;
+  portMUX_TYPE _bufferMux = portMUX_INITIALIZER_UNLOCKED;
+  int    _fd = -1;
+  char   _name[80] = {};
+  char   _dir[48] = {};        // 当前日志目录（/LOG 或 /LOG/<date>）
+  char   _date[12] = {};       // 当前本地日期 "YYYY-MM-DD"，空=未知
   uint32_t _lastFlush = 0;
+  size_t _flushDataSize = 0;
+  size_t _flushOffset = 0;
+  bool _syncPending = false;
+  char _flushData[kMaxSamples * kMaxCsvLineBytes] = {};
 
   Sample _buf[kMaxSamples];
   size_t _bufCount = 0;
+  uint32_t _droppedSamples = 0;
+  Sample _writeBuf[kMaxSamples];
+  size_t _writeCount = 0;
 };

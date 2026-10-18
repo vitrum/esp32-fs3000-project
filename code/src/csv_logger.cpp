@@ -12,6 +12,9 @@
 #include <sdmmc_cmd.h>
 #include <esp_vfs_fat.h>
 #include <esp_err.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace {
 SemaphoreHandle_t g_sdMutex = nullptr;
@@ -31,6 +34,17 @@ public:
 VfsFs  g_sdFs;
 sdmmc_card_t *g_sdCard = nullptr;
 bool    g_sdMounted = false;
+
+bool writeAll(int fd, const char *data, size_t size) {
+  size_t offset = 0;
+  while (offset < size) {
+    const ssize_t written = ::write(fd, data + offset, size - offset);
+    if (written < 0 && errno == EINTR) continue;
+    if (written <= 0) return false;
+    offset += (size_t)written;
+  }
+  return true;
+}
 
 // 与 Arduino SD() 默认挂载点不同：我们显式用 kSdMountPoint。
 // 但为兼容历史代码里以 "/" 开头的路径，这里提供转换：VFSImpl 会自动
@@ -116,15 +130,6 @@ static bool mountSdCard() {
 // 供其它模块查询 SD 是否就绪（替代 Arduino SD.cardType()）
 bool sdCardReady() { return g_sdMounted; }
 
-// 运行期轻量检测：写入 SD 之前确认卡仍在位并响应。
-// g_sdMounted 仅在挂载时置 true，运行中拔卡不会自动更新，因此这里用
-// sdmmc_get_status() 主动查询卡状态；失败即视为掉线。
-// 这样可避免对不在线的卡反复 write 造成 ESP_ERR_TIMEOUT(0x107) 刷屏与阻塞。
-bool sdCardOnline() {
-  if (!g_sdMounted || !g_sdCard) return false;
-  return sdmmc_get_status(g_sdCard) == ESP_OK;
-}
-
 // 确保目录存在（不存在则创建；已存在直接返回 true）。
 bool CsvLogger::ensureDir(const char *path) {
   if (!path || !path[0]) return false;
@@ -132,99 +137,235 @@ bool CsvLogger::ensureDir(const char *path) {
   return sdFs().mkdir(path);
 }
 
-// 依据当前日期选定目录并新建文件，写入表头。调用方需已持有 SD 锁。
-bool CsvLogger::openFileForDate() {
-  // 若已有打开的文件，先关闭（flush 剩余数据）。
-  if (_f) {
-    flushBuffer();
-    _f.flush();
-    _f.close();
-  }
-
+// 新文件及表头都成功后才替换当前文件。调用方需已持有 SD 锁。
+bool CsvLogger::openFileForDate(const char *date) {
+  char nextDir[sizeof(_dir)];
+  char nextName[sizeof(_name)];
+  char fullPath[sizeof(kSdMountPoint) + sizeof(_name)];
   // 选定目录：有日期 → /LOG/<date>，否则 → /LOG
-  if (_date[0]) {
-    snprintf(_dir, sizeof(_dir), "/LOG/%s", _date);
+  if (date && date[0]) {
+    snprintf(nextDir, sizeof(nextDir), "/LOG/%s", date);
   } else {
-    snprintf(_dir, sizeof(_dir), "/LOG");
+    snprintf(nextDir, sizeof(nextDir), "/LOG");
   }
   if (!ensureDir("/LOG")) {
     Serial.println("[SD] Could not create /LOG directory");
     return false;
   }
-  if (_date[0] && !ensureDir(_dir)) {
-    Serial.printf("[SD] Could not create date directory %s\n", _dir);
+  if (date && date[0] && !ensureDir(nextDir)) {
+    Serial.printf("[SD] Could not create date directory %s\n", nextDir);
     return false;
   }
 
   // 生成唯一文件名：/LOG[/date]/fs_<millis>.csv
   uint32_t stamp = millis() % 1000000UL;
-  bool uniqueName = false;
+  int nextFd = -1;
   for (uint16_t attempt = 0; attempt < 1000; ++attempt) {
-    snprintf(_name, sizeof(_name), "%s/fs_%06lu.csv", _dir, (unsigned long)stamp);
-    if (!sdFs().exists(_name)) {
-      uniqueName = true;
-      break;
+    snprintf(nextName, sizeof(nextName), "%s/fs_%06lu.csv",
+             nextDir, (unsigned long)stamp);
+    snprintf(fullPath, sizeof(fullPath), "%s%s", kSdMountPoint, nextName);
+    nextFd = ::open(fullPath, O_WRONLY | O_CREAT | O_EXCL | O_APPEND, 0666);
+    if (nextFd >= 0) break;
+    if (errno != EEXIST) {
+      Serial.printf("[SD] open failed: %s (errno=%d)\n", fullPath, errno);
+      return false;
     }
     stamp = (stamp + 1) % 1000000UL;
   }
-  if (!uniqueName) {
+  if (nextFd < 0) {
     Serial.println("[SD] Could not find an unused log filename");
     return false;
   }
 
-  _f = sdFs().open(_name, FILE_WRITE);
-  if (!_f) {
-    Serial.printf("[SD] open failed: %s\n", _name);
+  if (!writeHeader(nextFd)) {
+    ::close(nextFd);
+    ::unlink(fullPath);
     return false;
   }
-  writeHeader();
-  _bufCount = 0;
+
+  const int oldFd = _fd;
+  _fd = nextFd;
+  snprintf(_dir, sizeof(_dir), "%s", nextDir);
+  snprintf(_name, sizeof(_name), "%s", nextName);
+  if (oldFd >= 0) ::close(oldFd);
   _lastFlush = millis();
   return true;
 }
 
-void CsvLogger::writeHeader() {
-  if (!_f) return;
-  _f.println("t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc");
-  _f.flush();
+bool CsvLogger::writeHeader(int fd) {
+  static const char header[] =
+      "t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc\n";
+  if (!writeAll(fd, header, sizeof(header) - 1) || ::fsync(fd) != 0) {
+    Serial.printf("[SD] header write/sync failed (errno=%d)\n", errno);
+    return false;
+  }
+  return true;
 }
 
 bool CsvLogger::flushBuffer() {
-  if (!_f) return false;
-  if (_bufCount == 0) return true;
+  if (_fd < 0) return false;
+  if (_writeCount == 0) return true;
 
-  for (size_t i = 0; i < _bufCount; ++i) {
-    const Sample &s = _buf[i];
-    // 检查单次写入结果，确保数据真正落盘（避免"只写标题不写数据"）。
-    int n = _f.printf("%lu,%.1f,%.1f,%.3f,%.3f,%.1f,%.1f,%.4f,%u\n",
-                      (unsigned long)s.tMs, s.powerW, s.cadRpm, s.vgMps,
-                      s.vAirMps, s.yawDeg, s.postureDeg, s.rho,
-                      (unsigned)s.powerSrc);
-    if (n <= 0) {
-      Serial.printf("[SD] write failed at buffer index %u\n", (unsigned)i);
-      // 保留未写入的样本，下次重试；已写入的前 i 条丢弃。
-      memmove(_buf, _buf + i, (size_t)(_bufCount - i) * sizeof(Sample));
-      _bufCount -= i;
-      _f.flush();
+  if (_syncPending) {
+    if (::fsync(_fd) != 0) {
+      Serial.printf("[SD] sync retry failed (errno=%d)\n", errno);
+      return false;
+    }
+  } else {
+    size_t batchSize = _flushDataSize;
+    if (batchSize == 0) {
+      for (size_t i = 0; i < _writeCount; ++i) {
+        const Sample &s = _writeBuf[i];
+        const size_t remaining = sizeof(_flushData) - batchSize;
+        const int length = snprintf(
+            _flushData + batchSize, remaining,
+            "%lu,%.1f,%.1f,%.3f,%.3f,%.1f,%.1f,%.4f,%u\n",
+            (unsigned long)s.tMs, s.powerW, s.cadRpm, s.vgMps,
+            s.vAirMps, s.yawDeg, s.postureDeg, s.rho,
+            (unsigned)s.powerSrc);
+        if (length < 0 || (size_t)length >= remaining) {
+          Serial.printf("[SD] could not format buffer index %u\n",
+                        (unsigned)i);
+          _flushDataSize = 0;
+          _flushOffset = 0;
+          return false;
+        }
+        batchSize += (size_t)length;
+      }
+      _flushDataSize = batchSize;
+    }
+
+    while (_flushOffset < _flushDataSize) {
+      const ssize_t written = ::write(
+          _fd, _flushData + _flushOffset, _flushDataSize - _flushOffset);
+      if (written < 0 && errno == EINTR) continue;
+      if (written <= 0) {
+        Serial.printf("[SD] write failed at byte %u (errno=%d)\n",
+                      (unsigned)_flushOffset, errno);
+        return false;
+      }
+      _flushOffset += (size_t)written;
+    }
+    if (::fsync(_fd) != 0) {
+      _syncPending = true;
+      Serial.printf("[SD] sync failed; retaining batch (errno=%d)\n", errno);
       return false;
     }
   }
-  _f.flush();
-  _bufCount = 0;
+
+  _flushDataSize = _flushOffset = 0;
+  _syncPending = false;
   _lastFlush = millis();
   return true;
+}
+
+bool CsvLogger::queueBuffer() {
+  bool queued = false;
+  bool hasBatch = false;
+  portENTER_CRITICAL(&_bufferMux);
+  if (_bufCount == 0) {
+    queued = true;
+  } else if (_writeCount == 0) {
+    memcpy(_writeBuf, _buf, _bufCount * sizeof(Sample));
+    _writeCount = _bufCount;
+    _bufCount = 0;
+    queued = true;
+    hasBatch = true;
+  }
+  portEXIT_CRITICAL(&_bufferMux);
+
+  if (hasBatch && _writerTaskHandle) xTaskNotifyGive(_writerTaskHandle);
+  return queued;
+}
+
+bool CsvLogger::ensureWriterTask() {
+  if (!_flushDone) _flushDone = xSemaphoreCreateBinary();
+  if (!_flushDone) return false;
+  if (_writerTaskHandle) return true;
+  if (xTaskCreate(writerTaskEntry, "sdWriter", 6144, this, 1,
+                  &_writerTaskHandle) != pdPASS) {
+    _writerTaskHandle = nullptr;
+    return false;
+  }
+  return true;
+}
+
+bool CsvLogger::flushPending(TickType_t timeout) {
+  const TickType_t started = xTaskGetTickCount();
+  for (;;) {
+    queueBuffer();
+
+    portENTER_CRITICAL(&_bufferMux);
+    const bool pending = _writeCount > 0 || _bufCount > 0;
+    portEXIT_CRITICAL(&_bufferMux);
+    if (!pending) return true;
+
+    TickType_t remaining = portMAX_DELAY;
+    if (timeout != portMAX_DELAY) {
+      const TickType_t elapsed = xTaskGetTickCount() - started;
+      if (elapsed >= timeout) return false;
+      remaining = timeout - elapsed;
+    }
+    if (!_flushDone || xSemaphoreTake(_flushDone, remaining) != pdTRUE)
+      return false;
+  }
+}
+
+void CsvLogger::writerTaskEntry(void *argument) {
+  static_cast<CsvLogger *>(argument)->writerTask();
+}
+
+void CsvLogger::writerTask() {
+  for (;;) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    for (;;) {
+      portENTER_CRITICAL(&_bufferMux);
+      const bool pending = _writeCount > 0;
+      portEXIT_CRITICAL(&_bufferMux);
+      if (!pending) break;
+
+      bool complete = false;
+      if (lockSdCard(pdMS_TO_TICKS(1000))) {
+        complete = flushBuffer();
+        unlockSdCard();
+      }
+      if (!complete) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        continue;
+      }
+
+      portENTER_CRITICAL(&_bufferMux);
+      _writeCount = 0;
+      const uint32_t dropped = _droppedSamples;
+      _droppedSamples = 0;
+      portEXIT_CRITICAL(&_bufferMux);
+      if (_flushDone) xSemaphoreGive(_flushDone);
+      if (dropped > 0)
+        Serial.printf("[SD] writer backlog dropped %lu sample(s)\n",
+                      (unsigned long)dropped);
+    }
+  }
 }
 
 void CsvLogger::setLocalDate(const char *dateYmd) {
   const char *d = dateYmd ? dateYmd : "";
-  if (strncmp(_date, d, sizeof(_date)) == 0) return;   // 未变化
-  snprintf(_date, sizeof(_date), "%s", d);
+  char nextDate[sizeof(_date)];
+  snprintf(nextDate, sizeof(nextDate), "%s", d);
+  if (strcmp(_date, nextDate) == 0) return;   // 未变化
   // 若正在记录且日期变化，切换到新目录/新文件（未开始的记录会在 start() 时使用新日期）。
   if (_ok) {
-    if (!lockSdCard(pdMS_TO_TICKS(500))) return;
-    openFileForDate();
+    if (!flushPending(pdMS_TO_TICKS(5000)) ||
+        !lockSdCard(pdMS_TO_TICKS(1000)))
+      return;
+    if (!openFileForDate(nextDate)) {
+      unlockSdCard();
+      return;
+    }
+    snprintf(_date, sizeof(_date), "%s", nextDate);
     unlockSdCard();
-    if (_f) Serial.printf("[SD] date changed -> %s\n", _name);
+    if (_fd >= 0) Serial.printf("[SD] date changed -> %s\n", _name);
+  } else {
+    snprintf(_date, sizeof(_date), "%s", nextDate);
   }
 }
 
@@ -238,6 +379,11 @@ bool CsvLogger::begin() {
     _sdReady = false;
     unlockSdCard();
     return _ok;
+  }
+  if (!ensureWriterTask()) {
+    Serial.println("[SD] Could not create SD writer task");
+    unlockSdCard();
+    return false;
   }
   _sdReady = true;
   // 记录功能默认不开启；仅准备好 SD 与 /LOG 目录。
@@ -259,9 +405,15 @@ bool CsvLogger::start() {
       return false;
     }
   }
+  if (!ensureWriterTask()) {
+    Serial.println("[SD] Cannot start logging; writer task unavailable");
+    unlockSdCard();
+    return false;
+  }
 
   _bufCount = 0;
-  if (!openFileForDate()) {
+  _writeCount = 0;
+  if (!openFileForDate(_date)) {
     _ok = false;
     unlockSdCard();
     return false;
@@ -278,10 +430,14 @@ bool CsvLogger::stop() {
     Serial.println("[SD] Could not acquire SD mutex to stop logging");
     return false;
   }
-  flushBuffer();          // 写入剩余缓存，确保不丢尾部数据
-  if (_f) {
-    _f.flush();
-    _f.close();
+  if (!flushPending(pdMS_TO_TICKS(5000))) {
+    Serial.println("[SD] Stop deferred; pending samples were retained");
+    unlockSdCard();
+    return false;
+  }
+  if (_fd >= 0) {
+    ::close(_fd);
+    _fd = -1;
   }
   _ok = false;
   unlockSdCard();
@@ -360,13 +516,10 @@ void CsvLogger::log(uint32_t tMs, float powerW, float cadRpm, float vgMps,
 
   // 先缓存到内存（1Hz，60 条=1 分钟），不每秒写 SD。
   if (_bufCount >= kMaxSamples) {
-    // 缓冲已满：尝试一次性写入。若暂停中/卡忙，暂不写并丢弃本样本，避免无限增长。
-    if (!_paused && lockSdCard(pdMS_TO_TICKS(200))) {
-      flushBuffer();
-      unlockSdCard();
-    }
-    if (_bufCount >= kMaxSamples) {
-      // 仍满（暂停或写失败）→ 丢弃本样本，保留已有缓存。
+    if (_paused || !queueBuffer()) {
+      portENTER_CRITICAL(&_bufferMux);
+      ++_droppedSamples;
+      portEXIT_CRITICAL(&_bufferMux);
       return;
     }
   }
@@ -382,9 +535,6 @@ void CsvLogger::log(uint32_t tMs, float powerW, float cadRpm, float vgMps,
   s.rho = rho;
   s.powerSrc = powerSrc;
 
-  // 缓冲刚好满 60 条 → 立即写入这一分钟的数据。
-  if (_bufCount >= kMaxSamples && !_paused && lockSdCard(pdMS_TO_TICKS(200))) {
-    flushBuffer();
-    unlockSdCard();
-  }
+  // 缓冲满 60 条后交给低优先级写任务，采样主循环不等待 SD I/O。
+  if (_bufCount >= kMaxSamples && !_paused) queueBuffer();
 }

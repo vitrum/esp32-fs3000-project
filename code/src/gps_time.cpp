@@ -24,19 +24,30 @@ bool GpsTime::begin() {
   Serial2.setRxBufferSize(kRxBuffer);
   Serial2.begin(GPS_BAUD, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
   _enabled = true;
-  // 启动后重置存在性检测，从此刻开始计时。
+  // 探测窗口从主循环开始轮询时计算，不受后续 setup 初始化耗时影响。
   _presenceStarted = false;
   _presenceStartMs = 0;
   _presenceChecked = false;
   _modulePresent = false;
+  _lastRxMs = 0;
   _rxBytesTotal = 0;
   Serial.printf("[GPS] UART ready: RX=%d TX=%d baud=%d (ATGM336H)\n",
                 PIN_GPS_RX, PIN_GPS_TX, GPS_BAUD);
   return true;
 #else
   Serial.println("[GPS] disabled by config");
+  _modulePresent = false;
+  _presenceChecked = true;
   return false;
 #endif
+}
+
+void GpsTime::stop() {
+  if (_enabled) {
+    Serial2.end();
+    Serial.println("[GPS] UART stopped (module not detected)");
+  }
+  _enabled = false;
 }
 
 bool GpsTime::restart() {

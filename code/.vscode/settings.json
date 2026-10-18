@@ -1,0 +1,12 @@
+{
+  "chat.tools.terminal.autoApprove": {
+    "/^~/\\.platformio/penv/bin/pio pkg install -e esp32s3$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^~/\\.platformio/penv/bin/pio run -e esp32s3$/": {
+      "approve": true,
+      "matchCommandLine": true
+    }
+  }
+}
