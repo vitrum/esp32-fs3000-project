@@ -74,9 +74,6 @@ public:
     gpsModulePresent_ = present;
     gpsDetectDone_ = done;
   }
-  // 用户在 GPS 页点击"启动 GPS"。返回 true 表示有启动请求待处理。
-  bool takeGpsStartRequest();
-
 private:
   Arduino_DataBus *_bus = nullptr;
   Arduino_GFX     *_gfx = nullptr;
@@ -220,7 +217,6 @@ private:
   bool sdPlayRequested_ = false;
   bool sdStopRequested_ = false;
   bool gpsRestartRequested_ = false;
-  bool gpsStartRequested_ = false;
   bool gpsModulePresent_ = false;
   bool gpsDetectDone_ = false;
   lv_obj_t *noticePanel_ = nullptr;      // 通用提示弹窗（如"找不到 GPS 模块"）

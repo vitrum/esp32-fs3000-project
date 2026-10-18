@@ -22,8 +22,11 @@
 class GpsTime {
 public:
   // 初始化串口（使用 config.h 的 PIN_GPS_RX/PIN_GPS_TX/GPS_BAUD）。
-  // 仅打开 UART，不阻塞、不主动搜星。返回是否打开成功。
+  // 打开 UART 并开始非阻塞模块探测；不等待定位。返回是否打开成功。
   bool begin();
+
+  // 探测超时未发现模块时关闭 UART，但保留探测结果供界面显示。
+  void stop();
 
   // 非阻塞：把串口可读字节喂给解析器。需在 loop() 中频繁调用。
   // 每次调用最多读取有限字节，保证不阻塞主循环（界面不卡死）。
@@ -95,7 +98,7 @@ private:
   // ---- 模块存在性检测 ----
   bool     _modulePresent = false;    // 是否确认收到过 NMEA 字节
   bool     _presenceChecked = false;  // 是否已下结论（存在或超时不存在）
-  bool     _presenceStarted = false;  // 检测计时是否已启动
+  bool     _presenceStarted = false;  // 探测轮询计时是否已启动
   uint32_t _presenceStartMs = 0;      // 检测起始时间
   uint32_t _lastRxMs = 0;             // 最近一次收到字节的时间
   uint32_t _rxBytesTotal = 0;         // 累计收到的字节数（用于判断是否有数据流入）

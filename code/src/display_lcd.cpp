@@ -509,15 +509,6 @@ void DisplayLcd::onGpsButton(lv_event_t *) {
   }
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(g_display->gpsPanel_, LV_OBJ_FLAG_HIDDEN);
-  // 首次进入即启动一次 GPS（打开 UART + 非阻塞检测/搜星）。
-  if (!g_display->gpsDetectDone_ || g_display->gpsModulePresent_)
-    g_display->gpsStartRequested_ = true;
-}
-
-bool DisplayLcd::takeGpsStartRequest() {
-  if (!gpsStartRequested_) return false;
-  gpsStartRequested_ = false;
-  return true;
 }
 
 void DisplayLcd::onNoticeDismiss(lv_event_t *) {
@@ -1771,7 +1762,8 @@ void DisplayLcd::begin() {
   pinMode(PIN_LCD_BL, OUTPUT);
   digitalWrite(PIN_LCD_BL, HIGH);
 
-  _bus = new Arduino_ESP32SPI(PIN_LCD_DC, PIN_LCD_CS, PIN_LCD_SCLK, PIN_LCD_MOSI);
+  _bus = new Arduino_ESP32SPI(PIN_LCD_DC, PIN_LCD_CS, PIN_LCD_SCLK,
+                              PIN_LCD_MOSI, -1, HSPI);
   _gfx = new Arduino_ST7789(_bus, PIN_LCD_RST, 0, true);
   _gfx->begin();
   _gfx->fillScreen(BLACK);

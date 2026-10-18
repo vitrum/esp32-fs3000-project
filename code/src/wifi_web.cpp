@@ -3,6 +3,8 @@
 #include "config.h"
 #include "web_assets.h"
 #include "csv_logger.h"
+#include <dirent.h>
+#include <sys/stat.h>
 
 #include "csv_logger.h"  // sdFs()
 
@@ -370,7 +372,7 @@ void WifiWeb::registerRoutes() {
     AsyncWebServerResponse *response = request->beginResponse(
         "application/octet-stream", fileSize,
         [path](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
-          if (!lockSdCard(portMAX_DELAY)) return 0;
+          if (!lockSdCard(pdMS_TO_TICKS(kSdLockWaitMs))) return 0;
           File chunk = sdFs().open(path, FILE_READ);
           if (!chunk || chunk.isDirectory() || !chunk.seek(index)) {
             if (chunk) chunk.close();
@@ -451,30 +453,34 @@ bool WifiWeb::recordsJson(String &out) {
   if (!lockSdCard(pdMS_TO_TICKS(kSdLockWaitMs))) return false;
   out = "[";
   out.reserve(512);
-  File root = sdFs().open("/");
-  if (root && root.isDirectory()) {
-    File f = root.openNextFile();
-    bool first = true;
-    while (f) {
-      String name = f.name();
-      if (!f.isDirectory() &&
-          (name.endsWith(".csv") || name.endsWith(".fit"))) {
-        if (!name.startsWith("/")) name = "/" + name;
-        if (!first) out += ",";
-        first = false;
-        out += "{\"name\":\"";
-        out += jsonEscape(name);
-        out += "\",\"size\":";
-        out += String((unsigned long)f.size());
-        out += "}";
-      }
-      f.close();
-      f = root.openNextFile();
-    }
-    root.close();
-  } else if (root) {
-    root.close();
+  DIR *dir = opendir(sdMountPoint());
+  if (!dir) {
+    unlockSdCard();
+    return false;
   }
+
+  bool first = true;
+  size_t guard = 0;
+  struct dirent *entry;
+  while (guard++ < 400 && (entry = readdir(dir)) != nullptr) {
+    if (!entry->d_name || entry->d_name[0] == '.') continue;
+    char fullPath[300];
+    snprintf(fullPath, sizeof(fullPath), "%s/%s", sdMountPoint(), entry->d_name);
+    struct stat st;
+    if (stat(fullPath, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+
+    String name("/");
+    name += entry->d_name;
+    if (!name.endsWith(".csv") && !name.endsWith(".fit")) continue;
+    if (!first) out += ",";
+    first = false;
+    out += "{\"name\":\"";
+    out += jsonEscape(name);
+    out += "\",\"size\":";
+    out += String((unsigned long)st.st_size);
+    out += "}";
+  }
+  closedir(dir);
   out += "]";
   unlockSdCard();
   return true;

@@ -204,6 +204,10 @@ void setup() {
   Serial.println("[PM] Use SELECT POWER METER to choose BLE, ANT+, virtual, or automatic input.");
   Serial.println("[PM] BLE/ANT+ measurements are streamed to this monitor.");
 
+  // GPS UART 先启动并进行限时、非阻塞探测；不等待定位。
+  // 放在可能耗时的 SD 初始化之前，避免错过模块输出的 NMEA 数据。
+  gps.begin();
+
   // 原型阶段单风速传感器；Wire1 由 LCD 初始化为 CST328 触摸总线
   Wire.begin(PIN_I2C1_SDA, PIN_I2C1_SCL, 400000);
 
@@ -214,10 +218,6 @@ void setup() {
 
   env.begin(Wire);                   // 可选 BME280（挂在 I2C1）
   Serial.printf("BME280 %s\n", env.present() ? "OK" : "absent");
-
-  // GPS/北斗（ATGM336H，UART2）：开机不自动搜星。
-  // 仅在用户进入 GPS 页面时才启动 UART 并做非阻塞的模块检测/搜星。
-  // 这样既避免开机 5 秒后 GPS 持续吐数据导致界面卡死，也满足"未发现模块不跑 GPS 逻辑"。
 
   // BOOT 按钮（GPIO0）：按下为低电平，用于打开设置页。
   pinMode(PIN_BOOT_KEY, INPUT_PULLUP);
@@ -258,6 +258,17 @@ void loop() {
   // 电源开关：长按 5 秒关机（非阻塞）
   powerKey.tick();
   if (powerKey.takeShutdownRequest()) {
+    static uint32_t lastLogStopAttemptMs = 0;
+    const uint32_t shutdownAttemptMs = millis();
+    if (logger.ok() && lastLogStopAttemptMs != 0 &&
+        shutdownAttemptMs - lastLogStopAttemptMs < 1000)
+      return;
+    if (!logger.stop()) {
+      lastLogStopAttemptMs = shutdownAttemptMs;
+      Serial.println("[SD] log could not be fully synced before shutdown");
+      return;
+    }
+    lastLogStopAttemptMs = 0;
     // 先播放关机提示音，稍作停留，再断电
     audio.playShutdownChime();
     uint32_t stopBy = millis() + 800;   // 给提示音一点播放时间
@@ -274,25 +285,17 @@ void loop() {
   audio.tick();
   lcd.updateAudioStatus(audio.playing(), audio.currentTitle());
 
-  // GPS/北斗：仅在用户请求后启动；未检测到模块前不跑任何 GPS 逻辑。
-  // 1) 用户进入 GPS 页 → 请求启动 GPS（打开 UART）。
-  if (lcd.takeGpsStartRequest() && !gps.enabled()) {
-    gps.begin();
-  }
-  // 2) 仅在 GPS 已启动时才喂 NMEA 并做非阻塞存在性检测。
-  //    检测确认无模块后，不再执行任何 GPS 逻辑（gps.tick 内部已按 _enabled 短路，
-  //    此处再用 modulePresent 门控，确保"未发现模块不跑 GPS 逻辑"）。
+  // GPS 探测期间也必须读取 UART，才能判断模块是否存在。
+  // 读到 NMEA 后继续后台解析；超时未收到数据则关闭 UART。
   if (gps.enabled()) {
+    gps.tick();
     gps.pollPresence();
-    if (gps.modulePresent()) {
-      gps.tick();
-    }
-    // 回填检测结果给界面（决定点击 GPS 按钮是否提示"找不到模块"）。
-    lcd.setGpsModulePresent(gps.modulePresent(), gps.presenceChecked());
+    if (gps.presenceChecked() && !gps.modulePresent()) gps.stop();
   }
+  // 回填检测结果，供 GPS 页面显示或提示未找到模块。
+  lcd.setGpsModulePresent(gps.modulePresent(), gps.presenceChecked());
 
-  // 播放音频时自动暂停 CSV 日志，避免音频任务与日志任务争用 SD 总线
-  // （ESP32-audioI2S 用独立任务读 SD，与主循环写盘不加锁会冲突）。
+  // 播放音频时暂停提交新的 CSV 批次；已排队批次仍由后台任务完成。
   static bool audioWasPlaying = false;
   const bool audioPlaying = audio.playing();
   if (audioPlaying && !audioWasPlaying) {
@@ -511,9 +514,8 @@ void loop() {
                           gps.hdop(), gps.latitude(), gps.longitude(),
                           gps.altitudeM(), gps.speedMps(), utcStr, localStr,
                           gps.fixAgeMs());
-      // 主界面顶部 GPS 状态图标（搜星时显示旋转动画，非阻塞）。
-      // 仅在 GPS 已启动且模块存在时才可能进入搜星/定位；否则显示关闭态。
-      lcd.updateGpsIndicator(gps.enabled() && gps.modulePresent(),
+      // 主界面顶部 GPS 状态图标：探测期间显示搜星中，未找到后显示关闭态。
+      lcd.updateGpsIndicator(gps.enabled(),
                              gps.hasFix(), gps.satellites());
     }
   }
