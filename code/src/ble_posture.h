@@ -19,8 +19,11 @@ class BlePosture {
 public:
   void begin(const char *deviceName);
   bool tryConnect();               // 扫描并连接；未连接时可反复调用
-  void resetAfterStackShutdown() { s_connected = false; }
+  void disconnect();               // 断开并释放客户端
+  void cancelConnect();            // 取消未完成的连接/扫描
+  void resetAfterStackShutdown() { s_connected = false; s_client = nullptr; }
   bool connected() const { return s_connected; }
+  const char *lastError() const { return s_lastError; }
   float pitchDeg() const { return s_pitch; }   // 俯仰角（度）
   uint32_t notificationCount() const { return s_notificationCount; }
 
@@ -29,4 +32,7 @@ private:
   static bool   s_connected;
   static float  s_pitch;
   static uint32_t s_notificationCount;
+  static NimBLEClient *s_client;
+  static char   s_lastError[160];
+  static volatile bool s_cancelRequested;
 };

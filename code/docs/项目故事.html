@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>一个小小气动测试器——项目故事</title>
+<style>
+  :root {
+    --bg: #0f1620;
+    --bg-soft: #16202e;
+    --card: #1b2735;
+    --card-hover: #22303f;
+    --ink: #e8eef5;
+    --ink-soft: #a9b8c8;
+    --accent: #38e1b0;
+    --accent-2: #4fa8ff;
+    --warn: #ffb454;
+    --danger: #ff6b6b;
+    --line: #2b3a4c;
+    --max: 860px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.85;
+    font-size: 16.5px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 顶部光晕背景 */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(900px 500px at 80% -10%, rgba(79,168,255,0.18), transparent 60%),
+      radial-gradient(700px 500px at 0% 10%, rgba(56,225,176,0.14), transparent 60%);
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  /* 阅读进度条 */
+  #progress {
+    position: fixed;
+    top: 0; left: 0;
+    height: 3px;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    z-index: 100;
+    transition: width 0.1s linear;
+  }
+
+  .wrap {
+    max-width: var(--max);
+    margin: 0 auto;
+    padding: 0 22px 100px;
+  }
+
+  /* Hero */
+  header.hero {
+    text-align: center;
+    padding: 90px 22px 60px;
+    max-width: var(--max);
+    margin: 0 auto;
+  }
+
+  header.hero .tag {
+    display: inline-block;
+    font-size: 13px;
+    letter-spacing: 3px;
+    color: var(--accent);
+    border: 1px solid rgba(56,225,176,0.4);
+    border-radius: 999px;
+    padding: 6px 18px;
+    margin-bottom: 26px;
+  }
+
+  header.hero h1 {
+    font-size: clamp(30px, 5.5vw, 52px);
+    line-height: 1.25;
+    margin: 0 0 20px;
+    letter-spacing: 1px;
+    background: linear-gradient(120deg, #fff 20%, var(--accent) 60%, var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-weight: 800;
+  }
+
+  header.hero .lead {
+    color: var(--ink-soft);
+    font-size: 17px;
+    max-width: 640px;
+    margin: 0 auto;
+    border-left: 3px solid var(--line);
+    border-right: 3px solid var(--line);
+    padding: 0 18px;
+  }
+
+  header.hero .lead strong {
+    color: var(--accent);
+  }
+
+  /* 章节 */
+  section {
+    margin-top: 64px;
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 0.7s ease, transform 0.7s ease;
+  }
+  section.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  h2 {
+    font-size: clamp(22px, 3.5vw, 30px);
+    font-weight: 800;
+    margin: 0 0 30px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  h2 .num {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--bg);
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    border-radius: 10px;
+    padding: 4px 12px;
+    letter-spacing: 0;
+    flex: none;
+  }
+
+  p { margin: 0 0 18px; color: var(--ink); }
+
+  strong { color: #fff; }
+
+  /* 目标清单 */
+  ul.clean {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 22px;
+  }
+  ul.clean li {
+    position: relative;
+    padding: 8px 0 8px 30px;
+    color: var(--ink);
+  }
+  ul.clean li::before {
+    content: "";
+    position: absolute;
+    left: 6px; top: 20px;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+  }
+
+  /* 表格 */
+  .table-wrap {
+    overflow-x: auto;
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    margin: 10px 0 24px;
+    background: var(--card);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 15px;
+    min-width: 620px;
+  }
+  thead th {
+    text-align: left;
+    padding: 16px 18px;
+    background: var(--bg-soft);
+    color: var(--accent);
+    font-weight: 700;
+    letter-spacing: 1px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 15px 18px;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink-soft);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr { transition: background 0.2s; }
+  tbody tr:hover { background: var(--card-hover); }
+  tbody td:first-child { color: var(--ink); font-weight: 600; }
+
+  /* 关键提示块 */
+  .callout {
+    background: linear-gradient(135deg, rgba(56,225,176,0.10), rgba(79,168,255,0.07));
+    border-left: 4px solid var(--accent);
+    border-radius: 0 14px 14px 0;
+    padding: 18px 22px;
+    margin: 24px 0;
+    color: var(--ink);
+  }
+  .callout strong { color: var(--accent); }
+
+  /* 踩坑卡片 */
+  .pitfall {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 26px 28px;
+    margin: 26px 0;
+    transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+  }
+  .pitfall:hover {
+    border-color: rgba(79,168,255,0.5);
+    transform: translateY(-3px);
+    box-shadow: 0 16px 40px -20px rgba(0,0,0,0.8);
+  }
+  .pitfall h3 {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 19px;
+    margin: 0 0 18px;
+    color: #fff;
+    font-weight: 700;
+  }
+  .pitfall h3 .badge {
+    flex: none;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 3px 11px;
+    border-radius: 8px;
+    color: var(--bg);
+    background: var(--danger);
+  }
+  .pitfall h3 .badge.solved { background: var(--accent); }
+
+  .pitfall dl { margin: 0; }
+  .pitfall dt {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--accent-2);
+    margin-top: 16px;
+    text-transform: uppercase;
+  }
+  .pitfall dt:first-child { margin-top: 0; }
+  .pitfall dd {
+    margin: 4px 0 0;
+    color: var(--ink-soft);
+  }
+  .pitfall dd .hl { color: var(--warn); font-weight: 600; }
+
+  .tip {
+    margin-top: 20px;
+    padding: 14px 18px;
+    background: rgba(255,180,84,0.08);
+    border-radius: 12px;
+    border: 1px dashed rgba(255,180,84,0.4);
+    font-size: 15px;
+    color: var(--ink);
+  }
+  .tip::before {
+    content: "💡 给朋友的启发：";
+    color: var(--warn);
+    font-weight: 700;
+  }
+
+  /* 通用套路：编号列表 */
+  ol.steps {
+    list-style: none;
+    counter-reset: step;
+    padding: 0;
+    margin: 10px 0 24px;
+  }
+  ol.steps li {
+    counter-increment: step;
+    position: relative;
+    padding: 14px 0 14px 58px;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink);
+  }
+  ol.steps li:last-child { border-bottom: none; }
+  ol.steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0; top: 12px;
+    width: 38px; height: 38px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800;
+    font-size: 17px;
+    border-radius: 12px;
+    color: var(--bg);
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  }
+
+  /* 成果网格 */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 16px;
+    margin: 16px 0 24px;
+  }
+  .grid .cell {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 20px 22px;
+    transition: border-color 0.3s, transform 0.3s;
+  }
+  .grid .cell:hover {
+    border-color: rgba(56,225,176,0.5);
+    transform: translateY(-3px);
+  }
+  .grid .cell .ico { font-size: 26px; margin-bottom: 8px; display: block; }
+  .grid .cell p { margin: 0; font-size: 15px; color: var(--ink-soft); }
+
+  .question {
+    text-align: center;
+    font-size: clamp(19px, 3vw, 24px);
+    font-weight: 700;
+    font-style: italic;
+    color: #fff;
+    margin: 30px 0;
+    padding: 26px;
+    border-radius: 18px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+  }
+  .question span {
+    background: linear-gradient(120deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* 结语 */
+  .finale {
+    margin-top: 70px;
+    text-align: center;
+    padding: 46px 30px;
+    border-radius: 22px;
+    background: linear-gradient(135deg, rgba(56,225,176,0.12), rgba(79,168,255,0.10));
+    border: 1px solid rgba(56,225,176,0.3);
+  }
+  .finale p { color: var(--ink); font-size: 17px; margin: 0; }
+  .finale .big {
+    font-size: 24px;
+    font-weight: 800;
+    color: var(--accent);
+    margin-top: 16px;
+    letter-spacing: 2px;
+  }
+
+  /* 回到顶部 */
+  #toTop {
+    position: fixed;
+    right: 24px; bottom: 24px;
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--accent);
+    font-size: 20px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s, transform 0.3s, background 0.3s;
+    z-index: 90;
+  }
+  #toTop.show { opacity: 1; pointer-events: auto; }
+  #toTop:hover { background: var(--card-hover); transform: translateY(-3px); }
+
+  @media (max-width: 560px) {
+    header.hero { padding: 60px 18px 40px; }
+    .pitfall { padding: 20px 18px; }
+    body { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="progress"></div>
+
+<header class="hero">
+  <span class="tag">项 目 故 事</span>
+  <h1>一个小小的"气动测试器"<br>我们是怎么把它做出来的</h1>
+  <p class="lead">不讲复杂的公式和代码，只讲清楚四件事：<strong>我们为什么想做它、用了哪些零件、路上踩了什么坑、怎么想办法爬出来的。</strong></p>
+</header>
+
+<div class="wrap">
+
+  <!-- 一 -->
+  <section>
+    <h2><span class="num">01</span>这个项目从哪来？</h2>
+    <p>喜欢骑车的朋友大概都有过这种体验：你趴得越低、越"像一条咸鱼贴"在车上，好像就越省力。可到底省了多少？凭感觉说不清。</p>
+    <p>在专业自行车比赛里，有个词叫 <strong>"气动"（空气动力学）</strong>。运动员和工程师会用风洞、用很贵的设备来测：我这个姿势，风阻到底多大？换一个姿势，快了多少？</p>
+    <p>风洞太贵，专业设备也贵。我们就想：<strong>能不能用一块几十块钱的单片机，做一个"迷你版"的测试装置？</strong></p>
+    <p>它的目标很朴素：</p>
+    <ul class="clean">
+      <li>骑车的时候，测一下迎面吹来的<strong>风速</strong>；</li>
+      <li>同时读到功率计上的<strong>踩踏功率</strong>；</li>
+      <li>把这些数据记下来，回头分析：同样的功率下，<strong>换姿势是不是更快</strong>。</li>
+    </ul>
+    <div class="callout">
+      我们不是在造一个能上奥运会的精密仪器，而是在做一个 <strong>能上手、能对比、能看懂</strong> 的小原型。这就是整个项目的起点。
+    </div>
+  </section>
+
+  <!-- 二 -->
+  <section>
+    <h2><span class="num">02</span>我们选了哪些"零件"？</h2>
+    <p>做这个东西，就像搭一套乐高。我们一块一块挑：</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>零件</th><th>它是什么</th><th>为什么选它</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>ESP32-S3 触摸屏开发板</td>
+            <td>一块带彩色小屏幕、能触摸、还能连蓝牙和 Wi-Fi 的"大脑"</td>
+            <td>一块板子就把"计算 + 显示 + 无线"全包了，省事又便宜</td>
+          </tr>
+          <tr>
+            <td>FS3000 风速传感器</td>
+            <td>一个指甲盖大小、能测风速的小芯片</td>
+            <td>便宜、用两根线就能读数据。原型阶段先只买一片，控制成本</td>
+          </tr>
+          <tr>
+            <td>功率计 / 骑行台</td>
+            <td>骑车时测"踩多大力"的设备</td>
+            <td>骑车的人往往已经有了。它有两种"说话方式"：蓝牙（BLE）和 ANT+，我们都支持</td>
+          </tr>
+          <tr>
+            <td>BME280（可选）</td>
+            <td>测温度、气压的小传感器</td>
+            <td>空气冷热、气压高低会影响空气密度，算阻力时要用</td>
+          </tr>
+          <tr>
+            <td>姿态传感器（可选）</td>
+            <td>绑在胸口的小盒子，能感知身体倾斜角度</td>
+            <td>用来记录"你趴得有多低"</td>
+          </tr>
+          <tr>
+            <td>TF 存储卡</td>
+            <td>一张小内存卡</td>
+            <td>把数据存成表格，骑车回来插电脑就能分析</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <strong>一个很关键的选择：先只买一个风速传感器。</strong><br>
+      专业方案要两个传感器摆成"V 字形"，才能算出风是从斜前方多少度吹来的。但那要多花一倍的钱，还要更复杂的机械结构。我们想：先用一个把整个流程跑通，证明"测风 + 记功率 + 比姿势"这件事能成，再考虑升级。这叫 <strong>先做原型，再谈升级</strong>。
+    </div>
+  </section>
+
+  <!-- 三 -->
+  <section>
+    <h2><span class="num">03</span>路上踩过的"坑"，以及我们怎么想的</h2>
+    <p>真正做硬件，<strong>代码写对只是开始，能稳定跑起来才是难关</strong>。下面几个坑，是我们真金白银踩出来的。</p>
+
+    <div class="pitfall">
+      <h3><span class="badge">坑 1</span>界面突然"卡住"了，但机器其实没死</h3>
+      <dl>
+        <dt>现象</dt>
+        <dd>在屏幕上切来切去，切着切着，画面就不动了。像死机一样。</dd>
+        <dt>一开始以为</dt>
+        <dd>完蛋，程序崩了。</dd>
+        <dt>后来怎么发现的</dt>
+        <dd>我们把开发板接到电脑上，让它"边说边做"——每秒钟打印一行"我还活着"的信息（里面有个不断变大的数字，叫时间戳）。结果发现：<span class="hl">画面虽然不动了，但那些"我还活着"的信息还在一条一条往外蹦！</span>那个数字一直在变大。</dd>
+        <dt>这说明什么</dt>
+        <dd>机器的"心脏"——主循环——<strong>根本没停</strong>，只是<strong>"脸"（屏幕刷新）不动了</strong>。就像一个人心脏还在跳、还能走路，但眼睛闭着不睁开了。问题出在"显示"这一块，不是整台机器死了。</dd>
+        <dt>真正的病根</dt>
+        <dd>屏幕上的界面是由一个叫 <strong>LVGL</strong> 的"画图程序"负责的。它干活需要一块<strong>自己的"草稿纸"（内存）</strong>。我们查了它的默认设置——它只肯给自己 <strong>48KB</strong> 的草稿纸。可我们的界面有十几个页面，每个页面都有很多按钮、文字，还有中文那种笔画特别多的大字。<span class="hl">要画的东西太多，48KB 的草稿纸不够用了</span>，一画就"墨水用光"，然后它就不画了——于是画面冻结。</dd>
+        <dt>怎么解决的</dt>
+        <dd>把它的"草稿纸"加大到 <strong>128KB</strong>。内存够用了，画得开了，卡屏问题就好多了。</dd>
+      </dl>
+      <div class="tip"><strong>"卡住"不一定是死机。先分清"谁停了"——心脏停了，还是眼睛闭上了？</strong>这是排查问题最省时间的一步。</div>
+    </div>
+
+    <div class="pitfall">
+      <h3><span class="badge">坑 2</span>插上存储卡，机器开不了机</h3>
+      <dl>
+        <dt>现象</dt>
+        <dd>不插 TF 卡，一切正常；一插卡，开机就卡住，屏幕停在半路。</dd>
+        <dt>怎么定位的</dt>
+        <dd>把卡拔掉再开机——嘿，正常了！那问题肯定跟卡有关。再看电脑上的"启动日志"，发现它卡在<strong>"挂载存储卡"</strong>这一步。</dd>
+        <dt>为什么会卡</dt>
+        <dd>读取存储卡需要"握手"——机器问卡"你在吗？"，卡要回答。如果卡没插好、接触不良，机器就会<span class="hl">一直问、一直等</span>，把整个开机流程堵死在这里。它本来应该"问几次没人理就放弃"，但默认行为是"死等"。</dd>
+        <dt>怎么解决的</dt>
+        <dd>① 给等待设一个上限——问几次没回应就算了，先把机器开起来，卡的事以后再说；② 每次往卡里写东西之前，先确认"卡还在不在"——不在就别写，免得对着一张"已经拔走的卡"猛写，报一堆错；③ 提醒用户：存储卡要用 <strong>FAT32</strong> 格式，太新的大卡（比如 64G、exFAT 格式）它不认。</dd>
+      </dl>
+      <div class="tip"><strong>外部设备可能"不听话"。程序要假设"它可能不在"，而不是"它一定在"</strong>，这样才不会因为一个小零件把整台机器拖死。</div>
+    </div>
+
+    <div class="pitfall">
+      <h3><span class="badge">坑 3</span>一开中文界面就卡</h3>
+      <dl>
+        <dt>现象</dt>
+        <dd>界面切成中文，某些页面就卡死。</dd>
+        <dt>我们怎么想的</dt>
+        <dd>中文的字笔画多，字体文件大，画起来更"费草稿纸"。所以它和坑 1 其实是<strong>同一个病根——内存不够</strong>。</dd>
+        <dt>临时对策</dt>
+        <dd>先把中文<strong>关掉</strong>，强制用英文，保证设备能正常用。等内存问题彻底解决后，再单独把中文拿出来慢慢调。</dd>
+      </dl>
+      <div class="tip"><strong>遇到"改不动"的地方，先让它"能用"，再回头"做好"。</strong>先保证车能骑，再研究怎么骑得更快。</div>
+    </div>
+
+    <div class="pitfall">
+      <h3><span class="badge">坑 4</span>烧录（把程序装进板子）老是失败</h3>
+      <dl>
+        <dt>现象</dt>
+        <dd>往板子里装程序，装到一半就报错断开。</dd>
+        <dt>两个原因</dt>
+        <dd>① 装得太快——就像往杯子里倒水倒太猛，会洒出来。<span class="hl">把速度降下来</span>就稳了；② <strong>有别的程序正"占着"这根数据线</strong>。就像两个人抢一部电话，谁都说不清。我们发现有个后台程序还开着串口监视器，<strong>把它关掉</strong>，就通了。</dd>
+        <dt>怎么解决的</dt>
+        <dd>降低装程序的速度；装之前<strong>先关掉所有占着数据线的程序</strong>；文件比较大的话，<strong>切成一小块一小块地装</strong>，每块装完检查一下"对不对"，稳得多。</dd>
+      </dl>
+      <div class="tip"><strong>"装不进去"很多时候不是代码的错，而是"路"被占了、或者"车速"太快。</strong></div>
+    </div>
+  </section>
+
+  <!-- 四 -->
+  <section>
+    <h2><span class="num">04</span>我们解决问题的"通用套路"</h2>
+    <p>回头看，我们其实反复用了几招，你可以记住它们，以后做别的小项目也用得上：</p>
+    <ol class="steps">
+      <li><strong>先分清"谁停了"</strong>：心脏（主循环）停了，还是眼睛（显示）闭上了？—— 看那个每秒变大的"时间戳"就知道。</li>
+      <li><strong>用排除法缩小范围</strong>：拔掉卡就正常 → 问题在卡；关掉后台程序就通 → 问题在占线。</li>
+      <li><strong>从最简单的地方找证据</strong>：让程序"边做边喊话"（打印日志），卡在哪一步，日志就停在哪一行前面。</li>
+      <li><strong>先能用，再做好</strong>：中文先关掉、卡先不写，保证基本功能活着，再逐个攻克。</li>
+      <li><strong>别只盯着代码</strong>：内存够不够、线插没插好、有没有别的程序抢资源——这些"代码之外"的事，往往是真凶。</li>
+    </ol>
+  </section>
+
+  <!-- 五 -->
+  <section>
+    <h2><span class="num">05</span>这个项目最后做成了什么样？</h2>
+    <div class="grid">
+      <div class="cell"><span class="ico">🖥️</span><p>一块能触摸的小彩屏，实时显示<strong>风速、功率、踏频</strong></p></div>
+      <div class="cell"><span class="ico">📶</span><p>可以用<strong>蓝牙</strong>或 <strong>ANT+</strong> 连接市面上的功率计，甚至能自己"造"一个虚拟功率计来练手</p></div>
+      <div class="cell"><span class="ico">💾</span><p>数据每秒记一行，存进 TF 卡的表格里，插电脑就能用脚本分析</p></div>
+      <div class="cell"><span class="ico">🌐</span><p>还有一个<strong>不用硬件</strong>的网页模拟器，朋友们在电脑上就能先玩一遍界面</p></div>
+    </div>
+    <div class="question">它想回答的问题只有一个：<span>"同样的力气，换个姿势，风阻变了多少？"</span></div>
+    <p>精度它不是最顶尖的，自然风一乱，数字就会飘。所以我们一直强调：<strong>看"同一条件下，两种姿势谁更好"，而不是死抠某个绝对数字。</strong></p>
+  </section>
+
+  <!-- 六 -->
+  <section>
+    <h2><span class="num">06</span>给想做类似项目的朋友几句话</h2>
+    <ul class="clean">
+      <li><strong>别怕"卡住"</strong>。卡住不是失败，是项目在告诉你"这里有东西没搞明白"。</li>
+      <li><strong>先做小的</strong>。一个传感器、一个页面、能跑通，就已经赢一大半了。</li>
+      <li><strong>多打日志</strong>。程序不会说话，但你可以让它"边做边喊话"。</li>
+      <li><strong>分清主次</strong>。先让东西能用，再让它变好。</li>
+    </ul>
+  </section>
+
+  <div class="finale">
+    <p>这个项目没有多高深的技术，它靠的就是一次次</p>
+    <p class="big">卡住 → 观察 → 猜想 → 验证</p>
+    <p style="margin-top:16px;">你手里的任何一个小装置，只要愿意这样一点点抠，都能做出点东西来。</p>
+  </div>
+
+</div>
+
+<button id="toTop" title="回到顶部">↑</button>
+
+<script>
+  // 阅读进度
+  const progress = document.getElementById('progress');
+  const toTop = document.getElementById('toTop');
+
+  function onScroll() {
+    const h = document.documentElement;
+    const scrolled = h.scrollTop / (h.scrollHeight - h.clientHeight);
+    progress.style.width = Math.min(100, scrolled * 100) + '%';
+    toTop.classList.toggle('show', h.scrollTop > 400);
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
+  // 回到顶部
+  toTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+
+  // 章节渐入
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('visible');
+        io.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.12 });
+
+  document.querySelectorAll('section').forEach(s => io.observe(s));
+</script>
+
+</body>
+</html>

@@ -247,48 +247,82 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     return false;
   }
 
+  if (!NimBLEDevice::isInitialized()) {
+    setError("BLE scan failed: BLE stack is not initialized");
+    return false;
+  }
   NimBLEScan *scan = NimBLEDevice::getScan();
   if (!scan) {
     setError("BLE scan failed: NimBLE scan is unavailable");
     return false;
   }
+  scan->clearResults();
   scan->setActiveScan(true);
   scan->setInterval(100);
   scan->setWindow(30);
   NimBLEScanResults results = scan->getResults(6000, false);
 
-  for (int pass = 0; pass < 2 && count < capacity; ++pass) {
-    for (int i = 0; i < results.getCount() && count < capacity; ++i) {
-      const NimBLEAdvertisedDevice *ad = results.getDevice(i);
-      if (!ad->isConnectable()) continue;
+  // 注意：NimBLEScanResults 持有的是扫描缓存里的指针。这里先把需要的字段
+  // 全部拷进本地结构，再与上一次的「用户选择列表」做去重，最后才
+  // clearResults()，避免任何 ad->getName() 落在缓存释放之后。
+  struct Candidate {
+    char name[32];
+    char address[18];
+    int8_t rssi;
+    bool cyclingPower;
+    bool fitnessMachine;
+    bool speedCadence;
+    bool supported;
+  };
+  static Candidate candidates[32];
+  size_t candidateCount = 0;
 
-      const bool cyclingPower = ad->isAdvertisingService(kSvcCP);
-      const bool fitnessMachine = ad->isAdvertisingService(kSvcFTMS);
-      const bool speedCadence = ad->isAdvertisingService(kSvcCSC);
-      const bool supported = cyclingPower || fitnessMachine || speedCadence;
-      if ((pass == 0 && !supported) || (pass == 1 && supported)) continue;
+  for (int i = 0; i < results.getCount() && candidateCount < 32; ++i) {
+    const NimBLEAdvertisedDevice *ad = results.getDevice(i);
+    if (!ad || !ad->isConnectable()) continue;
 
-      const std::string name = ad->getName();
-      if (name.empty() && !supported) continue;
+    const bool cyclingPower = ad->isAdvertisingService(kSvcCP);
+    const bool fitnessMachine = ad->isAdvertisingService(kSvcFTMS);
+    const bool speedCadence = ad->isAdvertisingService(kSvcCSC);
+    const bool supported = cyclingPower || fitnessMachine || speedCadence;
 
-      const std::string address = ad->getAddress().toString();
-      bool alreadyAdded = false;
-      for (size_t j = 0; j < count; ++j) {
-        if (address == devices[j].address) {
-          alreadyAdded = true;
-          break;
-        }
+    const std::string name = ad->getName();
+    if (name.empty() && !supported) continue;
+
+    const std::string address = ad->getAddress().toString();
+    bool alreadyAdded = false;
+    for (size_t j = 0; j < candidateCount; ++j) {
+      if (address == candidates[j].address) {
+        alreadyAdded = true;
+        break;
       }
-      if (alreadyAdded) continue;
+    }
+    if (alreadyAdded) continue;
+
+    Candidate &c = candidates[candidateCount++];
+    snprintf(c.name, sizeof(c.name), "%s",
+             name.empty() ? "Unnamed BLE device" : name.c_str());
+    snprintf(c.address, sizeof(c.address), "%s", address.c_str());
+    c.rssi = ad->getRSSI();
+    c.cyclingPower = cyclingPower;
+    c.fitnessMachine = fitnessMachine;
+    c.speedCadence = speedCadence;
+    c.supported = supported;
+  }
+  scan->clearResults();
+
+  for (int pass = 0; pass < 2 && count < capacity; ++pass) {
+    for (size_t i = 0; i < candidateCount && count < capacity; ++i) {
+      const Candidate &c = candidates[i];
+      if ((pass == 0 && !c.supported) || (pass == 1 && c.supported)) continue;
 
       BlePowerDevice &device = devices[count++];
-      snprintf(device.name, sizeof(device.name), "%s",
-               name.empty() ? "Unnamed BLE device" : name.c_str());
-      snprintf(device.address, sizeof(device.address), "%s", address.c_str());
-      device.rssi = ad->getRSSI();
-      device.cyclingPower = cyclingPower;
-      device.fitnessMachine = fitnessMachine;
-      device.speedCadence = speedCadence;
+      snprintf(device.name, sizeof(device.name), "%s", c.name);
+      snprintf(device.address, sizeof(device.address), "%s", c.address);
+      device.rssi = c.rssi;
+      device.cyclingPower = c.cyclingPower;
+      device.fitnessMachine = c.fitnessMachine;
+      device.speedCadence = c.speedCadence;
     }
   }
 
@@ -325,6 +359,7 @@ void BlePowerMeter::disconnect() {
 }
 
 void BlePowerMeter::cancelCurrentOperation() {
+  if (!NimBLEDevice::isInitialized()) return;
   NimBLEScan *scan = NimBLEDevice::getScan();
   if (scan && scan->isScanning()) scan->stop();
   if (s_client && !s_client->isConnected()) s_client->cancelConnect();
@@ -343,48 +378,57 @@ bool BlePowerMeter::connectDevice(const char *address) {
 
   disconnect();
 
+  if (!NimBLEDevice::isInitialized()) {
+    setError("Connection failed: BLE stack is not initialized");
+    return false;
+  }
   NimBLEScan *scan = NimBLEDevice::getScan();
   if (!scan) {
     setError("Connection failed: NimBLE scan results are unavailable");
     return false;
   }
+  // 只在「取地址 → 连接」这段窗口内引用扫描缓存；拷贝完地址字符串后立刻
+  // 清空结果，避免后续广播缓存被回收后指针悬空。
   NimBLEScanResults results = scan->getResults();
-  const NimBLEAdvertisedDevice *advertised = nullptr;
+  bool found = false;
+  char advertisedName[40] = {};
   for (int i = 0; i < results.getCount(); ++i) {
     const NimBLEAdvertisedDevice *candidate = results.getDevice(i);
+    if (!candidate) continue;
     if (candidate->getAddress().toString() == address) {
-      advertised = candidate;
+      snprintf(advertisedName, sizeof(advertisedName), "%s",
+               candidate->getName().c_str());
+      found = true;
       break;
     }
   }
-  if (!advertised) {
+  scan->clearResults();
+  if (!found) {
     char error[192];
     snprintf(error, sizeof(error),
              "Connection failed for %s: device is no longer in scan results. Scan again and select it nearby.",
              address);
     setError(error);
-    scan->clearResults();
     return false;
   }
 
   NimBLEClient *client = NimBLEDevice::createClient();
   if (!client) {
     setError("Connection failed: could not allocate a BLE GATT client");
-    scan->clearResults();
     return false;
   }
   client->setClientCallbacks(&s_clientCallbacks, false);
   client->setConnectTimeout(8000);
   s_client = client;
 
-  if (!client->connect(advertised)) {
+  // 直接用地址连接（地址类型由 NimBLE 自动解析），不再依赖已清空的扫描缓存。
+  if (!client->connect(NimBLEAddress(std::string(address), BLE_ADDR_PUBLIC))) {
     char error[192];
     snprintf(error, sizeof(error),
              "BLE connection to %s failed (code %d: %s). Wake the trainer and retry.",
              address, client->getLastError(),
              NimBLEUtils::returnCodeToString(client->getLastError()));
     setError(error);
-    scan->clearResults();
     disconnect();
     return false;
   }
@@ -493,7 +537,7 @@ bool BlePowerMeter::connectDevice(const char *address) {
   s_lastFitnessMachineFlags = 0;
   s_lastError[0] = '\0';
   Serial.printf("[BLE] connected: %s (%s), profiles:%s%s%s%s\n",
-                advertised->getName().c_str(), address,
+                advertisedName[0] ? advertisedName : "unnamed", address,
                 s_hasCyclingPower ? " CPS" : "",
                 s_hasFitnessMachine ? " FTMS" : "",
                 s_hasSpeedCadence ? " CSC cadence/speed" : "",

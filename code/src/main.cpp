@@ -534,6 +534,7 @@ void loop() {
     if (bleOperationState != BleOperationState::Idle) {
       bleOperationCancelRequested = true;
       powerMeter.cancelCurrentOperation();
+      posture.cancelConnect();
       Serial.println("[BLE] cancellation requested; waiting for the current GATT operation");
     } else {
       manualBlePairing = false;
@@ -543,12 +544,18 @@ void loop() {
   }
 
   if (lcd.takeBleScanRequest()) {
+    // 自动姿态发现任务可能正在扫描；先取消它，否则 manualBlePairing 在任务
+    // 结束时被清掉，用户选择框会被意外关掉。
+    if (bleOperationState != BleOperationState::Idle &&
+        bleOperationResult.kind == BleOperationKind::Posture) {
+      bleOperationCancelRequested = true;
+      posture.cancelConnect();
+    }
     manualBlePairing = true;
     powerMode = 1;
     Serial.println("[BLE] scanning for connectable devices (6 seconds)...");
-    if (!startBleOperation(BleOperationKind::Scan)) {
+    if (!startBleOperation(BleOperationKind::Scan))
       lcd.showBleConnectFailure("BLE is busy or the scan task could not start. Close this message and try again.");
-    }
   }
 
   char selectedAddress[18] = {};
@@ -569,7 +576,13 @@ void loop() {
         lcd.finishBleCancelled();
       }
       Serial.printf("[BLE] posture discovery %s\n",
-                    postureConnected ? "connected" : "no connection; retry in 30s");
+                    postureConnected ? "connected"
+                                     : (operationResult.cancelled
+                                            ? "cancelled"
+                                            : "no connection; retry in 30s"));
+      if (!postureConnected && !operationResult.cancelled &&
+          posture.lastError()[0])
+        Serial.printf("[BLE-POSTURE] %s\n", posture.lastError());
     } else if (operationResult.cancelled || bleOperationCancelRequested) {
       if (operationResult.kind == BleOperationKind::Connect) {
         powerMeter.disconnect();

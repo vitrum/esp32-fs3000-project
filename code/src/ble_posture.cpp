@@ -9,6 +9,9 @@ static const NimBLEUUID kChrData("0xFFE1");
 bool   BlePosture::s_connected = false;
 float  BlePosture::s_pitch = 0;
 uint32_t BlePosture::s_notificationCount = 0;
+NimBLEClient *BlePosture::s_client = nullptr;
+char   BlePosture::s_lastError[160] = {};
+volatile bool BlePosture::s_cancelRequested = false;
 
 // ---------------------------------------------------------------------------
 // 0x55 协议帧解析（角度包 0x53）：
@@ -40,68 +43,124 @@ void BlePosture::begin(const char *deviceName) {
   }
 }
 
+void BlePosture::disconnect() {
+  if (s_client) {
+    if (s_client->isConnected()) s_client->disconnect();
+    NimBLEDevice::deleteClient(s_client);
+    s_client = nullptr;
+  }
+  s_connected = false;
+}
+
+void BlePosture::cancelConnect() {
+  s_cancelRequested = true;
+  if (s_client && !s_client->isConnected()) s_client->cancelConnect();
+}
+
 bool BlePosture::tryConnect() {
   if (s_connected) return true;
 
+  s_lastError[0] = '\0';
+  s_cancelRequested = false;
+
+  if (!NimBLEDevice::isInitialized()) {
+    snprintf(s_lastError, sizeof(s_lastError), "BLE stack is not initialized");
+    return false;
+  }
+
   NimBLEScan *scan = NimBLEDevice::getScan();
-  if (!scan) return false;
+  if (!scan) {
+    snprintf(s_lastError, sizeof(s_lastError), "BLE scan is unavailable");
+    return false;
+  }
   scan->clearResults();
   scan->setActiveScan(true);
   scan->setInterval(100);
   scan->setWindow(30);
   NimBLEScanResults results = scan->getResults(1500, false);
 
+  // 先把地址/名称拷出来再 clearResults()：扫描结果对象持有的是扫描缓存里的
+  // 指针，一旦 clearResults() 调用（或缓存被回收），原来取到的
+  // NimBLEAdvertisedDevice* 就会失效，再调 ad->getName()/getAddress() 会
+  // 解引用已释放内存而崩溃。
+  char address[18] = {};
+  char name[40] = {};
   for (int i = 0; i < results.getCount(); i++) {
     const NimBLEAdvertisedDevice *ad = results.getDevice(i);
 
     // 过滤：广播服务 0xFFE0 或设备名以 BLE_POSTURE_NAME_PREFIX 开头
-    std::string name = ad->getName();
+    const std::string candidateName = ad->getName();
     const char *prefix = BLE_POSTURE_NAME_PREFIX;
-    bool nameHit = (name.length() >= strlen(prefix) &&
-                    strncmp(name.c_str(), prefix, strlen(prefix)) == 0);
+    const bool nameHit = candidateName.length() >= strlen(prefix) &&
+                         strncmp(candidateName.c_str(), prefix, strlen(prefix)) == 0;
     if (!ad->isAdvertisingService(kSvcWit) && !nameHit) continue;
 
-    NimBLEClient *cli = NimBLEDevice::createClient();
-    if (!cli) {
-      scan->clearResults();
-      return false;
-    }
-
-    if (!cli->connect(ad)) {
-      NimBLEDevice::deleteClient(cli);
-      scan->clearResults();
-      return false;
-    }
-
-    NimBLERemoteService *svc = cli->getService(kSvcWit);
-    if (!svc) {
-      cli->disconnect();
-      NimBLEDevice::deleteClient(cli);
-      scan->clearResults();
-      return false;
-    }
-
-    NimBLERemoteCharacteristic *chr = svc->getCharacteristic(kChrData);
-    if (!chr) {
-      cli->disconnect();
-      NimBLEDevice::deleteClient(cli);
-      scan->clearResults();
-      return false;
-    }
-
-    if (!chr->subscribe(true, witNotify, true)) {
-      cli->disconnect();
-      NimBLEDevice::deleteClient(cli);
-      scan->clearResults();
-      return false;
-    }
-
-    const std::string address = ad->getAddress().toString();
-    s_connected = true;
-    Serial.printf("BLE posture connected: %s\n", address.c_str());
-    scan->clearResults();
-    return true;
+    snprintf(address, sizeof(address), "%s",
+             ad->getAddress().toString().c_str());
+    snprintf(name, sizeof(name), "%s", candidateName.c_str());
+    break;
   }
   scan->clearResults();
-  return false;
+
+  if (!address[0]) {
+    snprintf(s_lastError, sizeof(s_lastError),
+             "posture sensor '%s*' not seen in last scan", BLE_POSTURE_NAME_PREFIX);
+    return false;
+  }
+  Serial.printf("[BLE-POSTURE] candidate %s (%s)\n",
+                name[0] ? name : "unnamed", address);
+
+  if (s_cancelRequested) {
+    snprintf(s_lastError, sizeof(s_lastError), "cancelled");
+    return false;
+  }
+
+  disconnect();
+
+  NimBLEClient *cli = NimBLEDevice::createClient();
+  if (!cli) {
+    snprintf(s_lastError, sizeof(s_lastError),
+             "could not allocate a BLE client for %s", address);
+    return false;
+  }
+  s_client = cli;
+
+  // 用地址连接（不依赖已清空的扫描缓存），地址类型由 NimBLE 自动解析。
+  if (!cli->connect(NimBLEAddress(std::string(address), BLE_ADDR_PUBLIC))) {
+    const int code = cli->getLastError();
+    snprintf(s_lastError, sizeof(s_lastError),
+             "connect to %s failed (BLE error %d: %s)", address, code,
+             NimBLEUtils::returnCodeToString(code));
+    Serial.printf("[BLE-POSTURE] %s\n", s_lastError);
+    disconnect();
+    return false;
+  }
+
+  NimBLERemoteService *svc = cli->getService(kSvcWit);
+  if (!svc) {
+    snprintf(s_lastError, sizeof(s_lastError),
+             "%s: service 0xFFE0 not found", address);
+    disconnect();
+    return false;
+  }
+
+  NimBLERemoteCharacteristic *chr = svc->getCharacteristic(kChrData);
+  if (!chr) {
+    snprintf(s_lastError, sizeof(s_lastError),
+             "%s: characteristic 0xFFE1 not found", address);
+    disconnect();
+    return false;
+  }
+
+  if (!chr->subscribe(true, witNotify, true)) {
+    snprintf(s_lastError, sizeof(s_lastError),
+             "%s: subscribing 0xFFE1 failed", address);
+    disconnect();
+    return false;
+  }
+
+  s_connected = true;
+  Serial.printf("[BLE-POSTURE] connected: %s\n", address);
+  return true;
 }
+
