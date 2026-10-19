@@ -10,6 +10,7 @@
 #include "ble_power.h"
 #include "wind_probe.h"
 #include "csv_logger.h"   // SdFileEntry
+#include "ui_navigation_guard.h"
 
 // ST7789 240x320 display for wind, CdA, live power, cadence, and status.
 class DisplayLcd {
@@ -117,7 +118,8 @@ private:
   lv_obj_t *wifiPanel_ = nullptr;
   lv_obj_t *wifiTitle_ = nullptr;
   lv_obj_t *settingsWifiLabel_ = nullptr;
-  lv_obj_t *settingsWifiSwitch_ = nullptr;
+  lv_obj_t *settingsWifiButtons_[2] = {};
+  lv_obj_t *settingsWifiButtonLabels_[2] = {};
   lv_obj_t *settingsWifiStatus_ = nullptr;
   lv_obj_t *settingsSdButton_ = nullptr;
   lv_obj_t *settingsSdButtonLabel_ = nullptr;
@@ -140,9 +142,7 @@ private:
   lv_obj_t *soundTitle_ = nullptr;
   lv_obj_t *soundVolumeLabel_ = nullptr;
   lv_obj_t *soundHint_ = nullptr;
-  static constexpr size_t kVolumeOptionCount = 5;
-  lv_obj_t *soundVolumeButtons_[kVolumeOptionCount] = {};
-  lv_obj_t *soundVolumeButtonLabels_[kVolumeOptionCount] = {};
+  lv_obj_t *soundVolumeSlider_ = nullptr;
   uint8_t   currentVolume_ = 70;
   int       requestedVolume_ = -1;
   lv_obj_t *sdPanel_ = nullptr;
@@ -199,7 +199,6 @@ private:
   bool wifiProvisioning_ = false;
   bool requestedWifiEnable_ = false;
   bool wifiEnableRequestPending_ = false;
-  uint32_t lastWifiRequestMs_ = 0;
   char wifiSsid_[33] = {};
   char wifiIp_[16] = {};
   bool bleScanCompleted_ = false;
@@ -215,6 +214,7 @@ private:
   size_t bleDeviceCount_ = 0;
   size_t selectedBleDevice_ = 0;
   bool touchReady_ = false;
+  UiNavigationGuard navigationGuard_;
 
   // ---- SD 浏览状态 ----
   bool sdListRequested_ = false;
@@ -235,6 +235,7 @@ private:
 
   static void lvglFlushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);
   static void lvglTouchReadCb(lv_indev_drv_t *drv, lv_indev_data_t *data);
+  static void onBackNavigation(lv_event_t *event);
   static void onPowerSourceButton(lv_event_t *event);
   static void onSettingsButton(lv_event_t *event);
   static void onSettingsBack(lv_event_t *event);
@@ -243,7 +244,7 @@ private:
   static void onLanguageBack(lv_event_t *event);
   static void onWifiButton(lv_event_t *event);
   static void onWifiBack(lv_event_t *event);
-  static void onWifiSwitchChanged(lv_event_t *event);
+  static void onWifiSelected(lv_event_t *event);
   static void onBleSelected(lv_event_t *event);
   static void onBleScanAgain(lv_event_t *event);
   static void onBleDeviceSelected(lv_event_t *event);
@@ -258,7 +259,7 @@ private:
   static void onCancelSelection(lv_event_t *event);
   static void onSoundButton(lv_event_t *event);
   static void onSoundBack(lv_event_t *event);
-  static void onVolumeSelected(lv_event_t *event);
+  static void onVolumeSliderChanged(lv_event_t *event);
   static void onSdCardButton(lv_event_t *event);
   static void onSdBack(lv_event_t *event);
   static void onSdFileClicked(lv_event_t *event);

@@ -86,7 +86,7 @@
     .virtual-field label { margin: 0 0 8px; color: #64748b; font-size: 12px; }
     .virtual-field .value { color: #172033; }
     .virtual-field input { width: 100%; margin: 0; }
-    #virtual-power-input, #virtual-cadence-input { accent-color: #2563eb; }
+    #virtual-power-input, #virtual-cadence-input, #sound-volume-input { accent-color: #2563eb; }
     .virtual-hint { position: absolute; left: 16px; top: 224px; width: 208px; color: #64748b; font-size: 12px; line-height: 1.5; }
     .loading-back { width: 64px; height: 30px; min-height: 0; border-radius: 0; padding: 0; font-size: 11px; }
     .loading-title { position: absolute; left: 86px; top: 19px; color: #2563eb; font-size: 14px; font-weight: 750; }
@@ -186,9 +186,8 @@
     #sd-files button { min-height: 40px; text-align: left; overflow-wrap: anywhere; }
     #sd-playing { position: absolute; left: 12px; top: 260px; width: 216px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #2563eb; font-size: 12px; }
     #sd-stop { position: absolute; top: 282px; left: 12px; width: 216px; min-height: 34px; padding: 3px; background: #94a3b8; color: white; }
-    #sound-volume { margin-top: 10px; font-size: 16px; color: #172033; }
-    #sound-levels { gap: 4px; margin-top: 12px; }
-    #sound-levels button { min-height: 30px; height: 30px; padding: 2px; }
+    #sound-volume { position: absolute; left: 12px; top: 112px; margin: 0; font-size: 16px; color: #172033; }
+    #sound-volume-input { position: absolute; left: 16px; top: 148px; width: 208px; height: 24px; margin: 0; }
     #notice-dialog { z-index: 20; inset: 90px 20px; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 0 0 100px #0003; text-align: center; }
     #notice-message { margin: 0 0 10px; white-space: pre-line; color: #1e293b; }
     .controls select { width: 100%; padding: 7px; background: #17283a; color: #eaf2f8; border: 1px solid #37536b; }
@@ -290,17 +289,17 @@
         </section>
         <section class="screen-page" id="wifi-page" hidden>
           <header class="page-header"><button data-back="settings-dialog" type="button">‹ BACK</button>WI-FI</header>
-          <label><input id="wifi-enabled" type="checkbox">Wi-Fi</label>
+          <p>Wi-Fi</p>
+          <div class="language-choices" aria-label="Wi-Fi power">
+            <button id="wifi-off" class="selected" type="button" aria-pressed="true">OFF</button><button id="wifi-on" type="button" aria-pressed="false">ON</button>
+          </div>
           <p id="wifi-status">Wi-Fi is off</p>
         </section>
         <section class="screen-page" id="sound-page" hidden>
           <header class="page-header"><button data-back="settings-dialog" type="button">‹ BACK</button>SOUND</header>
-          <p>Tap a level to set volume.<br>Preview tones are disabled in this firmware.</p>
-          <div id="sound-volume">Volume: 55%</div>
-          <div class="choice-list" id="sound-levels">
-            <button data-volume="0" type="button">MUTE</button><button data-volume="25" type="button">25%</button>
-            <button data-volume="50" type="button">50%</button><button data-volume="75" type="button">75%</button><button data-volume="100" type="button">100%</button>
-          </div>
+          <p>Drag the slider to set volume.<br>Preview tones are disabled.</p>
+          <label id="sound-volume" for="sound-volume-input">Volume: 55%</label>
+          <input id="sound-volume-input" type="range" min="0" max="100" step="1" value="55">
         </section>
         <section class="screen-page" id="gps-page" hidden>
           <header class="page-header"><button data-back="settings-dialog" type="button">‹ BACK</button>GPS</header>

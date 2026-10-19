@@ -1,5 +1,6 @@
 #include "gps_time.h"
 #include "sd_download.h"
+#include "ui_navigation_guard.h"
 #include <driver/uart.h>
 #include <cassert>
 #include <functional>
@@ -163,7 +164,43 @@ static void downloadTests() {
   std::cout << "PASS SD: single download, 1KB chunks, pacing, retry, timeout, I/O failure, EOF\n";
 }
 
+static void navigationTests() {
+  UiNavigationGuard guard;
+  assert(guard.filterTouch(true, 0));
+  assert(guard.beginBack(1000));
+  assert(!guard.beginBack(1000));
+  assert(!guard.filterTouch(false, 1000));
+  assert(!guard.filterTouch(false, 1120));
+  assert(!guard.beginBack(1120));
+  assert(!guard.filterTouch(true, 1240));
+  assert(!guard.filterTouch(false, 1250));
+  assert(!guard.filterTouch(false, 1369));
+  assert(!guard.beginBack(1369));
+  assert(!guard.filterTouch(false, 1370));
+  assert(guard.filterTouch(true, 1371));
+  assert(guard.beginBack(1400));
+  for (uint32_t t = 1400; t < 2400; t += 20) {
+    assert(!guard.filterTouch(true, t));
+    assert(!guard.beginBack(t));
+  }
+  assert(!guard.filterTouch(false, 2400));
+  assert(!guard.filterTouch(true, 2450));
+  assert(!guard.filterTouch(false, 2500));
+  assert(!guard.filterTouch(false, 2619));
+  assert(!guard.beginBack(2619));
+  assert(!guard.filterTouch(false, 2620));
+  assert(guard.filterTouch(true, 2621));
+  assert(guard.beginBack(UINT32_MAX - 100));
+  assert(!guard.filterTouch(false, UINT32_MAX - 100));
+  assert(!guard.filterTouch(false, 148));
+  assert(!guard.beginBack(148));
+  assert(!guard.filterTouch(false, 149));
+  assert(guard.beginBack(150));
+  std::cout << "PASS UI: one-level back, held touch, release bounce, quiet release, timer wrap\n";
+}
+
 int main() {
+  navigationTests();
   gpsTests();
   downloadTests();
 }

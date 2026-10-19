@@ -34,13 +34,27 @@
     assert(snapshot().language === "en" && snapshot().error.includes("disabled"), "Chinese selection stays disabled like firmware");
     dismiss();
     $("language-page").querySelector("[data-back]").click();
+    $("settings-back").click();
+    assert(snapshot().page === "settings-dialog", "A repeated back click cannot pass through the child page into SETTINGS");
+    sim.step(1);
+    $("settings-back").click();
+    assert(snapshot().page === "dashboard", "A new back gesture works after the navigation guard expires");
+    $("boot-key").click();
     $("settings-sound").click();
-    document.querySelector('[data-volume="75"]').click();
-    assert(snapshot().volume === 75 && localStorage.getItem("aero-volume") === "75", "Five-level volume setting persists without preview sound");
+    const volumeSlider = $("sound-volume-input");
+    for (const volume of [0, 100, 63]) {
+      volumeSlider.value = String(volume);
+      volumeSlider.dispatchEvent(new Event("input", { bubbles: true }));
+      assert(snapshot().volume === volume && $("sound-volume").textContent === `Volume: ${volume}%`, `Volume slider updates live at ${volume}%`);
+    }
+    volumeSlider.dispatchEvent(new Event("change", { bubbles: true }));
+    assert(localStorage.getItem("aero-volume") === "63", "Volume slider saves an arbitrary percentage after release");
+    sim.step(1);
     $("sound-page").querySelector("[data-back]").click();
     $("settings-meter").click();
     assert(document.querySelectorAll(".dialog-list .device-option").length === 3, "Power source menu has BLE, VIRTUAL and AUTO only");
     $("scan-again").click();
+    sim.step(1);
     $("loading-back").click();
     assert($("loading-back").disabled, "BLE cancellation waits for release");
     sim.step(1);
@@ -102,13 +116,18 @@
     assert(snapshot().error.includes("Wi-Fi"), "Web recording command rejects disconnected Wi-Fi");
     dismiss();
     $("boot-key").click(); $("settings-wifi").click();
-    change("wifi-enabled", true);
+    assert(!$("wifi-page").querySelector('input[type="checkbox"], input[type="radio"]') && $("wifi-off").getAttribute("aria-pressed") === "true", "Wi-Fi uses OFF/ON buttons, not checkbox or radio controls");
+    $("wifi-on").click();
     assert(snapshot().wifi === "provisioning", "Wi-Fi without credentials waits for SmartConfig");
     change("wifi-input", "disconnected");
     assert(snapshot().wifi === "connecting", "Unavailable access point leaves Wi-Fi connecting");
     change("wifi-input", "connected");
     sim.step(1);
-    assert(snapshot().wifi === "connected" && $("wifi-status").textContent.includes("aeroprobe.local"), "Wi-Fi switch models station connection and URLs");
+    assert(snapshot().wifi === "connected" && $("wifi-status").textContent.includes("aeroprobe.local"), "Wi-Fi ON button models station connection and URLs");
+    assert($("wifi-on").getAttribute("aria-pressed") === "true" && $("wifi-off").getAttribute("aria-pressed") === "false", "Wi-Fi buttons show only the active selection");
+    $("wifi-off").click();
+    assert(snapshot().wifi === "off" && $("wifi-off").classList.contains("selected"), "Wi-Fi OFF button disables the station and updates selection");
+    $("wifi-on").click(); sim.step(1);
     change("gps-input", "fixed");
     sim.recording(true);
     sim.step(2);
@@ -172,6 +191,24 @@
     sim.recording(true);
     assert(snapshot().recordPath.startsWith("/LOG/2026-10-19/"), "GPS restart retains the last known log date");
     sim.recording(false);
+    for (const [entry, back] of [
+      ["settings-language", "#language-page [data-back]"],
+      ["settings-wifi", "#wifi-page [data-back]"],
+      ["settings-sound", "#sound-page [data-back]"],
+      ["settings-gps", "#gps-page [data-back]"],
+      ["settings-sd", "#sd-page [data-back]"],
+      ["settings-meter", "#dialog-close"]
+    ]) {
+      sim.step(1);
+      $("boot-key").click();
+      $(entry).click();
+      document.querySelector(back).click();
+      $("settings-back").click();
+      assert(snapshot().page === "settings-dialog", `${entry}: repeated BACK stays in SETTINGS`);
+      sim.step(1);
+      $("settings-back").click();
+      assert(snapshot().page === "dashboard", `${entry}: a fresh BACK reaches the dashboard`);
+    }
     assert(document.querySelectorAll('[data-source="ANT+"], #connect-ant').length === 0, "No ANT entry remains");
     window.simulatorTestResult = { passed: results.length, failures: [], checks: results };
     output.textContent = `PASS: ${results.length} checks\n` + results.join("\n");

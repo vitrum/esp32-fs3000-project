@@ -121,16 +121,26 @@ bool DisplayLcd::readTouch(uint16_t &x, uint16_t &y) {
 }
 
 void DisplayLcd::lvglTouchReadCb(lv_indev_drv_t *, lv_indev_data_t *data) {
-  // 即时响应：检测到落指立即上报 PR，单击即可触发按钮（与原始行为一致）。
   uint16_t x = 0;
   uint16_t y = 0;
-  if (g_display && g_display->touchReady_ && g_display->readTouch(x, y)) {
+  const bool pressed = g_display && g_display->touchReady_ &&
+                       g_display->readTouch(x, y);
+  if (g_display && g_display->navigationGuard_.filterTouch(pressed, millis())) {
     data->point.x = x;
     data->point.y = y;
     data->state = LV_INDEV_STATE_PR;
   } else {
     data->state = LV_INDEV_STATE_REL;
   }
+}
+
+void DisplayLcd::onBackNavigation(lv_event_t *event) {
+  if (!g_display || !g_display->navigationGuard_.beginBack(millis())) {
+    lv_event_stop_processing(event);
+    return;
+  }
+  lv_indev_t *input = lv_indev_get_act();
+  if (input) lv_indev_wait_release(input);
 }
 
 void DisplayLcd::onPowerSourceButton(lv_event_t *) {
@@ -195,15 +205,10 @@ void DisplayLcd::onLanguageSelected(lv_event_t *event) {
   g_display->setLanguage(false);
 }
 
-void DisplayLcd::onWifiSwitchChanged(lv_event_t *event) {
+void DisplayLcd::onWifiSelected(lv_event_t *event) {
   if (!g_display) return;
-  const uint32_t now = millis();
-  if (g_display->lastWifiRequestMs_ != 0 &&
-      now - g_display->lastWifiRequestMs_ < 750)
-    return;
-  g_display->lastWifiRequestMs_ = now;
   g_display->requestedWifiEnable_ =
-      lv_obj_has_state(lv_event_get_target(event), LV_STATE_CHECKED);
+      (uintptr_t)lv_event_get_user_data(event) == 1;
   g_display->wifiEnableRequestPending_ = true;
 }
 
@@ -226,11 +231,16 @@ void DisplayLcd::updateWifiStatus(bool enabled, bool connected,
 }
 
 void DisplayLcd::refreshWifiStatus() {
-  if (!settingsWifiSwitch_ || !settingsWifiStatus_) return;
-  if (wifiEnabled_)
-    lv_obj_add_state(settingsWifiSwitch_, LV_STATE_CHECKED);
-  else
-    lv_obj_clear_state(settingsWifiSwitch_, LV_STATE_CHECKED);
+  if (!settingsWifiButtons_[0] || !settingsWifiStatus_) return;
+  for (size_t i = 0; i < 2; ++i) {
+    const bool selected = wifiEnabled_ == (i == 1);
+    lv_obj_set_style_bg_color(settingsWifiButtons_[i],
+                              selected ? lv_color_make(37, 99, 235)
+                                       : lv_color_make(239, 244, 248), 0);
+    lv_obj_set_style_text_color(settingsWifiButtonLabels_[i],
+                                selected ? lv_color_white()
+                                         : lv_color_make(30, 41, 59), 0);
+  }
 
   char status[120];
   if (!wifiEnabled_) {
@@ -400,10 +410,13 @@ void DisplayLcd::onSoundBack(lv_event_t *) {
   lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
-void DisplayLcd::onVolumeSelected(lv_event_t *event) {
+void DisplayLcd::onVolumeSliderChanged(lv_event_t *event) {
   if (!g_display) return;
-  const int vol = (int)(uintptr_t)lv_event_get_user_data(event);
-  g_display->requestedVolume_ = vol;
+  const int vol = lv_slider_get_value(lv_event_get_target(event));
+  g_display->currentVolume_ = (uint8_t)vol;
+  // Commit on release to avoid writing NVS for every drag event.
+  if (lv_event_get_code(event) == LV_EVENT_RELEASED)
+    g_display->requestedVolume_ = vol;
   g_display->refreshSoundVolume();
 }
 
@@ -426,16 +439,9 @@ void DisplayLcd::refreshSoundVolume() {
            (unsigned)currentVolume_);
   lv_label_set_text(soundVolumeLabel_, text);
 
-  static const uint8_t kVolumeOptions[kVolumeOptionCount] = {0, 25, 50, 75, 100};
-  for (size_t i = 0; i < kVolumeOptionCount; ++i) {
-    const bool selected = currentVolume_ == kVolumeOptions[i];
-    lv_obj_set_style_bg_color(soundVolumeButtons_[i],
-                              selected ? lv_color_make(37, 99, 235)
-                                       : lv_color_make(239, 244, 248), 0);
-    lv_obj_set_style_text_color(soundVolumeButtonLabels_[i],
-                                selected ? lv_color_white()
-                                         : lv_color_make(30, 41, 59), 0);
-  }
+  if (soundVolumeSlider_ &&
+      lv_slider_get_value(soundVolumeSlider_) != currentVolume_)
+    lv_slider_set_value(soundVolumeSlider_, currentVolume_, LV_ANIM_OFF);
 }
 
 void DisplayLcd::onSdCardButton(lv_event_t *) {
@@ -894,6 +900,7 @@ void DisplayLcd::buildPanelHeader(lv_obj_t *panel, const char *title,
   lv_obj_set_style_radius(backButton, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_color(backButton, lv_color_make(226, 232, 240), 0);
   lv_obj_align(backButton, LV_ALIGN_TOP_LEFT, 10, 10);
+  lv_obj_add_event_cb(backButton, onBackNavigation, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(backButton, backCallback, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *backLabel = lv_label_create(backButton);
   lv_label_set_text(backLabel, LV_SYMBOL_LEFT " BACK");
@@ -1369,16 +1376,29 @@ void DisplayLcd::buildWifiPanel() {
   lv_obj_set_style_text_color(settingsWifiLabel_, lv_color_make(30, 41, 59), 0);
   lv_obj_align(settingsWifiLabel_, LV_ALIGN_TOP_LEFT, 16, 62);
 
-  settingsWifiSwitch_ = lv_switch_create(wifiPanel_);
-  lv_obj_align(settingsWifiSwitch_, LV_ALIGN_TOP_RIGHT, -16, 58);
-  lv_obj_add_event_cb(settingsWifiSwitch_, onWifiSwitchChanged,
-                      LV_EVENT_VALUE_CHANGED, nullptr);
+  for (size_t i = 0; i < 2; ++i) {
+    settingsWifiButtons_[i] = lv_btn_create(wifiPanel_);
+    lv_obj_set_size(settingsWifiButtons_[i], 102, 46);
+    lv_obj_set_style_radius(settingsWifiButtons_[i], 8, LV_PART_MAIN);
+    lv_obj_set_style_border_color(settingsWifiButtons_[i],
+                                  lv_color_make(203, 213, 225), 0);
+    lv_obj_set_style_border_width(settingsWifiButtons_[i], 1, 0);
+    lv_obj_align(settingsWifiButtons_[i], LV_ALIGN_TOP_LEFT,
+                 (lv_coord_t)(16 + i * 106), 92);
+    lv_obj_add_event_cb(settingsWifiButtons_[i], onWifiSelected,
+                        LV_EVENT_CLICKED, (void *)(uintptr_t)i);
+    settingsWifiButtonLabels_[i] = lv_label_create(settingsWifiButtons_[i]);
+    lv_label_set_text(settingsWifiButtonLabels_[i], i == 1 ? "ON" : "OFF");
+    lv_obj_set_style_text_font(settingsWifiButtonLabels_[i],
+                               &lv_font_montserrat_14, 0);
+    lv_obj_center(settingsWifiButtonLabels_[i]);
+  }
 
   settingsWifiStatus_ = lv_label_create(wifiPanel_);
   lv_obj_set_width(settingsWifiStatus_, 208);
   lv_label_set_long_mode(settingsWifiStatus_, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_color(settingsWifiStatus_, lv_color_make(71, 85, 105), 0);
-  lv_obj_align(settingsWifiStatus_, LV_ALIGN_TOP_LEFT, 16, 104);
+  lv_obj_align(settingsWifiStatus_, LV_ALIGN_TOP_LEFT, 16, 156);
 
   refreshWifiStatus();
   lv_obj_add_flag(wifiPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -1399,7 +1419,7 @@ void DisplayLcd::buildSoundPanel() {
   soundTitle_ = lv_obj_get_child(soundPanel_, 1);
 
   soundHint_ = lv_label_create(soundPanel_);
-  lv_label_set_text(soundHint_, "Tap a level to set volume.\nA test tone plays at that volume.");
+  lv_label_set_text(soundHint_, "Drag the slider to set volume.\nPreview tones are disabled.");
   lv_obj_set_width(soundHint_, 216);
   lv_label_set_long_mode(soundHint_, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(soundHint_, &lv_font_montserrat_14, 0);
@@ -1412,29 +1432,18 @@ void DisplayLcd::buildSoundPanel() {
   lv_obj_set_style_text_color(soundVolumeLabel_, lv_color_make(23, 32, 51), 0);
   lv_obj_align(soundVolumeLabel_, LV_ALIGN_TOP_LEFT, 12, 112);
 
-  // 五档音量按钮：0 / 25 / 50 / 75 / 100
-  static const char *const kVolumeLabels[kVolumeOptionCount] = {
-      "MUTE", "25%", "50%", "75%", "100%"};
-  static const uint8_t kVolumeValues[kVolumeOptionCount] = {0, 25, 50, 75, 100};
-  lv_coord_t y = 148;
-  for (size_t i = 0; i < kVolumeOptionCount; ++i) {
-    lv_obj_t *button = lv_btn_create(soundPanel_);
-    lv_obj_set_size(button, 216, 30);
-    lv_obj_set_style_radius(button, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(button, lv_color_make(239, 244, 248), 0);
-    lv_obj_set_style_border_color(button, lv_color_make(203, 213, 225), 0);
-    lv_obj_set_style_border_width(button, 1, 0);
-    lv_obj_align(button, LV_ALIGN_TOP_LEFT, 12, y);
-    lv_obj_add_event_cb(button, onVolumeSelected, LV_EVENT_CLICKED,
-                        (void *)(uintptr_t)kVolumeValues[i]);
-    soundVolumeButtons_[i] = button;
-    lv_obj_t *label = lv_label_create(button);
-    lv_label_set_text(label, kVolumeLabels[i]);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-    lv_obj_center(label);
-    soundVolumeButtonLabels_[i] = label;
-    y += 30 + 4;
-  }
+  soundVolumeSlider_ = lv_slider_create(soundPanel_);
+  lv_obj_set_size(soundVolumeSlider_, 208, 24);
+  lv_slider_set_range(soundVolumeSlider_, 0, 100);
+  lv_slider_set_value(soundVolumeSlider_, currentVolume_, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(soundVolumeSlider_, lv_color_make(219, 227, 236), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(soundVolumeSlider_, lv_color_make(37, 99, 235), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(soundVolumeSlider_, lv_color_make(37, 99, 235), LV_PART_KNOB);
+  lv_obj_align(soundVolumeSlider_, LV_ALIGN_TOP_LEFT, 16, 148);
+  lv_obj_add_event_cb(soundVolumeSlider_, onVolumeSliderChanged,
+                      LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(soundVolumeSlider_, onVolumeSliderChanged,
+                      LV_EVENT_RELEASED, nullptr);
 
   refreshSoundVolume();
   lv_obj_add_flag(soundPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -1718,6 +1727,11 @@ void DisplayLcd::refreshLanguage() {
   }
   if (settingsWifiLabel_)
     lv_label_set_text(settingsWifiLabel_, localized("Wi-Fi", "Wi-Fi"));
+  for (size_t i = 0; i < 2; ++i) {
+    lv_label_set_text(settingsWifiButtonLabels_[i],
+                      i == 1 ? localized("ON", "开启") : localized("OFF", "关闭"));
+    lv_obj_set_style_text_font(settingsWifiButtonLabels_[i], font, 0);
+  }
   Serial.println("[LANG] 6 settings+lang+wifi pages done");
 
   // GPS 页面文字
@@ -1744,23 +1758,12 @@ void DisplayLcd::refreshLanguage() {
   // 声音设置页文字
   lv_label_set_text(soundTitle_, localized("SOUND", "声音"));
   lv_label_set_text(soundHint_,
-                    localized("Tap a level to set volume.\nA test tone plays at that volume.",
-                              "点击档位设置音量，\n并以该音量播放试听音。"));
+                    localized("Drag the slider to set volume.\nPreview tones are disabled.",
+                              "拖动滑块设置音量。\n试听提示音已禁用。"));
   lv_obj_set_style_text_font(soundTitle_, titleFont, 0);
   lv_obj_set_style_text_font(soundHint_, font, 0);
   lv_obj_set_style_text_font(soundVolumeLabel_, font, 0);
-  {
-    static const char *const en[kVolumeOptionCount] = {"MUTE", "25%", "50%", "75%", "100%"};
-    static const char *const zh[kVolumeOptionCount] = {"静音", "25%", "50%", "75%", "100%"};
-    for (size_t i = 0; i < kVolumeOptionCount; ++i) {
-      lv_label_set_text(soundVolumeButtonLabels_[i],
-                        localized(en[i], zh[i]));
-      lv_obj_set_style_text_font(soundVolumeButtonLabels_[i],
-                                 chinese_ ? &lv_font_noto_sans_sc_14
-                                          : &lv_font_montserrat_14, 0);
-    }
-    refreshSoundVolume();
-  }
+  refreshSoundVolume();
   Serial.println("[LANG] 8 sound done");
 
   // SD 浏览页文字

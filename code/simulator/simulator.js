@@ -32,6 +32,16 @@
     download: null, downloadMessage: "", error: "", extraMs: 0, fileSequence: 0
   };
   const now = () => performance.now() + state.extraMs;
+  let backBlockedUntil = 0;
+  document.querySelector(".device").addEventListener("click", (event) => {
+    if (!event.target.closest("[data-back], #settings-back, #dialog-close, #virtual-back, #loading-back")) return;
+    if (now() < backBlockedUntil) {
+      event.stopImmediatePropagation();
+      event.preventDefault();
+      return;
+    }
+    backBlockedUntil = now() + 250;
+  }, true);
   const source = () => state.mode === 3 ? 3 : state.bleConnected ? 1 : 0;
   const power = () => state.mode === 3 ? state.virtualPower : state.bleConnected ? state.power : 0;
   const cadence = () => state.mode === 3 ? state.virtualCadence : state.bleConnected ? state.cadence : 0;
@@ -95,15 +105,18 @@
     $("log-status").style.color = state.recording ? "#16a34a" : "#64748b";
     $("toggle-run").textContent = state.running ? "Pause Auto Sampling" : "Start Auto Sampling";
     $("connect-ble").classList.toggle("selected", state.bleConnected);
-    $("wifi-enabled").checked = state.wifiEnabled;
+    for (const [id, enabled] of [["wifi-off", false], ["wifi-on", true]]) {
+      $(id).classList.toggle("selected", state.wifiEnabled === enabled);
+      $(id).setAttribute("aria-pressed", String(state.wifiEnabled === enabled));
+    }
     $("wifi-status").textContent = {
       off: "Wi-Fi is off", provisioning: "Waiting for Wi-Fi setup",
       connecting: "Connecting to Wi-Fi...",
       connected: "Connected: Demo-WiFi\nhttp://aeroprobe.local/\nhttp://192.168.1.88/"
     }[state.wifi];
     $("sound-volume").textContent = `Volume: ${state.volume}%`;
-    document.querySelectorAll("[data-volume]").forEach((button) =>
-      button.classList.toggle("selected", Number(button.dataset.volume) === state.volume));
+    if ($("sound-volume-input").value !== String(state.volume))
+      $("sound-volume-input").value = String(state.volume);
     const gpsActive = state.gps !== "absent";
     $("gps-indicator").textContent = gpsFixed() ? "GPS 12" : gpsActive ? "GPS" : "GPS --";
     $("gps-indicator").classList.toggle("searching", gpsActive && !gpsFixed());
@@ -393,11 +406,11 @@
   $("language-en").onclick = () => { localStorage.setItem("aero-language", "en"); };
   $("language-zh").onclick = () => notice("Chinese language temporarily disabled; staying English.");
   $("notice-dismiss").onclick = () => { $("notice-dialog").hidden = true; state.error = ""; };
-  $("wifi-enabled").onchange = (event) => setWifi(event.target.checked);
+  $("wifi-off").onclick = () => setWifi(false);
+  $("wifi-on").onclick = () => { if (!state.wifiEnabled) setWifi(true); };
   $("wifi-input").onchange = (event) => { state.wifiEnvironment = event.target.value; if (state.wifiEnabled) setWifi(true); };
-  document.querySelectorAll("[data-volume]").forEach((button) => {
-    button.onclick = () => { state.volume = Number(button.dataset.volume); localStorage.setItem("aero-volume", String(state.volume)); render(); };
-  });
+  $("sound-volume-input").oninput = (event) => { state.volume = Number(event.target.value); render(); };
+  $("sound-volume-input").onchange = () => localStorage.setItem("aero-volume", String(state.volume));
   $("gps-input").onchange = (event) => setGps(event.target.value);
   $("gps-restart").onclick = () => { state.gps = "restarting"; state.gpsDeadline = now() + 3000; render(); };
   $("gps-speed-input").oninput = (event) => { state.gpsSpeed = Number(event.target.value) / 3.6; render(); };
