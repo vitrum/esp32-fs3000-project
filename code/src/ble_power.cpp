@@ -231,6 +231,12 @@ void BlePowerMeter::speedCadenceNotify(NimBLERemoteCharacteristic *, uint8_t *da
 void BlePowerMeter::begin(const char *deviceName, float wheelCircM) {
   s_wheelCirc = wheelCircM;
   NimBLEDevice::init(deviceName);
+  NimBLEDevice::getScan()->setMaxResults(20);
+}
+
+void BlePowerMeter::clearScanResults() {
+  NimBLEScan *scan = NimBLEDevice::getScan();
+  if (scan && !scan->isScanning()) scan->clearResults();
 }
 
 bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
@@ -355,12 +361,14 @@ bool BlePowerMeter::connectDevice(const char *address) {
              "Connection failed for %s: device is no longer in scan results. Scan again and select it nearby.",
              address);
     setError(error);
+    scan->clearResults();
     return false;
   }
 
   NimBLEClient *client = NimBLEDevice::createClient();
   if (!client) {
     setError("Connection failed: could not allocate a BLE GATT client");
+    scan->clearResults();
     return false;
   }
   client->setClientCallbacks(&s_clientCallbacks, false);
@@ -374,9 +382,11 @@ bool BlePowerMeter::connectDevice(const char *address) {
              address, client->getLastError(),
              NimBLEUtils::returnCodeToString(client->getLastError()));
     setError(error);
+    scan->clearResults();
     disconnect();
     return false;
   }
+  scan->clearResults();
 
   const std::vector<NimBLERemoteService *> &services = client->getServices(true);
   NimBLERemoteCharacteristic *cpMeasurement = nullptr;

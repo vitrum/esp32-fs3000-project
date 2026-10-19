@@ -55,7 +55,7 @@
 // 音频（PCM5101 I2S 外置 DAC + 板载喇叭）
 // 依据 Waveshare ESP32-S3-LCD-2.8 官方 Audio_Driver/PCM5101 示例：
 //   BCLK/SCLK = GPIO48, LRC/WS = GPIO38, DOUT = GPIO47, MCLK = 无
-// 用途：开机/关机提示音（Wahoo 风格）+ 播放 SD 卡内 MP3
+// 用途：播放 SD 卡内 MP3
 // ============================================================================
 #define AUDIO_ENABLE      1      // 1=启用音频；0=关闭（省内存/引脚）
 #define PIN_I2S_BCLK      48
@@ -63,8 +63,6 @@
 #define PIN_I2S_DOUT      47
 #define AUDIO_VOLUME      55     // 0~100 默认音量
 #define AUDIO_SYSTEM_DIR  "/system"        // 系统音效目录（SD 卡内）
-#define AUDIO_BOOT_WAV    "/system/boot.wav"
-#define AUDIO_SHUTDOWN_WAV "/system/shutdown.wav"
 
 // ============================================================================
 // GPS / 北斗双模模块（ATGM336H 等，中科微 AT6558 方案）
@@ -86,7 +84,6 @@
 // PPS 秒脉冲（本版本不启用）：接空闲 GPIO 后置 1
 #define GPS_USE_PPS    0
 #define PIN_GPS_PPS    15       // 仅 GPS_USE_PPS=1 时生效
-#define AUDIO_SHUTDOWN_WAV "/system/shutdown.wav"
 
 // ============================================================================
 // FS3000 空气流速传感器

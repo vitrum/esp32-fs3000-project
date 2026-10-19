@@ -35,7 +35,7 @@ public:
 
   // ---- SD 卡文件浏览 ----
   // 用户点击设置里的 "SD CARD" 时置位，主循环据此触发文件列表加载。
-  bool takeSdListRequest();
+  bool takeSdListRequest(char *directory, size_t capacity);
   // 主循环加载完文件后回填列表（音频文件带 ▶ 标记）。
   void setSdFiles(const SdFileEntry *files, size_t count, const char *status);
   // 用户点击某文件请求播放：输出完整路径（"/name"）到 path。
@@ -148,9 +148,12 @@ private:
   lv_obj_t *sdPanel_ = nullptr;
   lv_obj_t *sdTitle_ = nullptr;
   lv_obj_t *sdStatusLabel_ = nullptr;
+  lv_obj_t *sdCurrentPathLabel_ = nullptr;
   lv_obj_t *sdList_ = nullptr;              // 可滚动列表容器
   lv_obj_t *sdRowButtons_[12] = {};         // 文件行按钮
   lv_obj_t *sdRowLabels_[12] = {};          // 行文字
+  lv_obj_t *sdUpButton_ = nullptr;
+  lv_obj_t *sdUpLabel_ = nullptr;
   lv_obj_t *sdStopButton_ = nullptr;
   lv_obj_t *sdStopLabel_ = nullptr;
   lv_obj_t *sdNowPlayingLabel_ = nullptr;
@@ -196,6 +199,7 @@ private:
   bool wifiProvisioning_ = false;
   bool requestedWifiEnable_ = false;
   bool wifiEnableRequestPending_ = false;
+  uint32_t lastWifiRequestMs_ = 0;
   char wifiSsid_[33] = {};
   char wifiIp_[16] = {};
   bool bleScanCompleted_ = false;
@@ -222,7 +226,8 @@ private:
   lv_obj_t *noticePanel_ = nullptr;      // 通用提示弹窗（如"找不到 GPS 模块"）
   lv_obj_t *noticeLabel_ = nullptr;
   lv_obj_t *noticeBackLabel_ = nullptr;
-  char sdPlayPath_[80] = {};
+  char sdPlayPath_[256] = {};
+  char sdCurrentDirectory_[128] = "/";
   SdFileEntry sdFiles_[12] = {};
   size_t sdFileCount_ = 0;
   bool audioPlaying_ = false;
@@ -258,6 +263,7 @@ private:
   static void onSdCardButton(lv_event_t *event);
   static void onSdBack(lv_event_t *event);
   static void onSdFileClicked(lv_event_t *event);
+  static void onSdUpClicked(lv_event_t *event);
   static void onSdStopClicked(lv_event_t *event);
   static void onGpsButton(lv_event_t *event);
   static void onGpsBack(lv_event_t *event);

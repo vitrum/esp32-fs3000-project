@@ -5,6 +5,7 @@
 #include "csv_logger.h"
 #include <dirent.h>
 #include <sys/stat.h>
+#include <esp_heap_caps.h>
 
 #include "csv_logger.h"  // sdFs()
 
@@ -12,6 +13,7 @@ WifiWeb wifiWeb;
 
 namespace {
 constexpr uint32_t kSdLockWaitMs = 1000;
+constexpr uint32_t kWifiStartFailureCooldownMs = 30000;
 }
 
 bool WifiWeb::isAllowedRecordName(String &name) const {
@@ -97,7 +99,20 @@ void WifiWeb::beginSmartConfig() {
   _smartConfigRetryAtMs = 0;
   Serial.println("[WiFi] starting SmartConfig (ESP-Touch).");
   Serial.println("[WiFi] Open the phone app (ESP Touch / Espressif) and push your SSID & password.");
-  WiFi.mode(WIFI_STA);
+  if (!_wifiModeReady) {
+    if (!_wifiBuffersConfigured) {
+      WiFi.useStaticBuffers(true);
+      _wifiBuffersConfigured = true;
+    }
+    if (!WiFi.mode(WIFI_STA)) {
+      Serial.printf("[WiFi] STA initialization failed; internal heap free=%u largest=%u\n",
+                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+      _smartConfigRetryAtMs = millis() + 60000;
+      return;
+    }
+    _wifiModeReady = true;
+  }
   WiFi.beginSmartConfig();
   _smartConfigRunning = true;
   _smartConfigStartMs = millis();
@@ -110,7 +125,7 @@ void WifiWeb::startSmartConfig() {
     MDNS.end();
     _mdnsStarted = false;
   }
-  WiFi.disconnect();
+  if (_wifiModeReady) WiFi.disconnect();
   _reconnectAttempts = 0;
   beginSmartConfig();
 }
@@ -148,11 +163,34 @@ void WifiWeb::pollSmartConfig() {
 // ============================================================================
 // STA 连接
 // ============================================================================
-void WifiWeb::connectStation() {
-  if (_ssid.isEmpty()) return;
+bool WifiWeb::connectStation() {
+  if (_ssid.isEmpty()) return false;
+  if (!_wifiModeReady) {
+    if (!_wifiBuffersConfigured) {
+      WiFi.useStaticBuffers(true);
+      _wifiBuffersConfigured = true;
+    }
+    if (!WiFi.mode(WIFI_STA)) {
+      const uint32_t freeHeap =
+          heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      const uint32_t largestBlock =
+          heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      Serial.printf("[WiFi] STA initialization failed; internal heap free=%lu largest=%lu\n",
+                    (unsigned long)freeHeap, (unsigned long)largestBlock);
+      _lastReconnectMs = millis();
+      return false;
+    }
+    _wifiModeReady = true;
+    WiFi.setAutoReconnect(true);
+  }
   Serial.printf("[WiFi] connecting to saved SSID=%s ...\n", _ssid.c_str());
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(_ssid.c_str(), _pass.c_str());
+  const wl_status_t status = WiFi.begin(_ssid.c_str(), _pass.c_str());
+  if (status == WL_CONNECT_FAILED) {
+    Serial.println("[WiFi] station start failed; waiting before retry");
+    _lastReconnectMs = millis();
+    return false;
+  }
+  return true;
 }
 
 void WifiWeb::startMdns() {
@@ -171,25 +209,56 @@ void WifiWeb::startMdns() {
 // ============================================================================
 bool WifiWeb::begin(bool autoSmartConfig) {
   if (_started) return true;
-  _started = true;
-  _enabled = true;
+  if (_startRetryNotBeforeMs != 0 &&
+      (int32_t)(millis() - _startRetryNotBeforeMs) < 0)
+    return true;
 
   loadCredentials();
+  bool radioStarted = false;
   if (_ssid.isEmpty()) {
     Serial.println("[WiFi] no saved credentials.");
     if (autoSmartConfig) {
       beginSmartConfig();
+      radioStarted = _smartConfigRunning;
     } else {
       Serial.println("[WiFi] SmartConfig disabled; Wi-Fi idle.");
       return false;
     }
   } else {
-    connectStation();
+    radioStarted = connectStation();
     _disconnectedSinceMs = millis();
+  }
+  if (!radioStarted) {
+    if (_wifiModeReady) {
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      _wifiModeReady = false;
+    }
+    _enabled = false;
+    _startRetryNotBeforeMs = millis() + kWifiStartFailureCooldownMs;
+    Serial.println("[WiFi] radio start failed; server not started");
+    return false;
+  }
+
+  const uint32_t largestBlock =
+      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (largestBlock < 20 * 1024) {
+    Serial.printf("[WiFi] not enough contiguous internal heap for AsyncTCP: largest=%lu\n",
+                  (unsigned long)largestBlock);
+    if (_smartConfigRunning) WiFi.stopSmartConfig();
+    _smartConfigRunning = false;
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    _wifiModeReady = false;
+    _enabled = false;
+    _startRetryNotBeforeMs = millis() + kWifiStartFailureCooldownMs;
+    return false;
   }
 
   registerRoutes();
   _server.begin();
+  _enabled = true;
+  _started = true;
   Serial.println("[WiFi] HTTP server started on port 80 (no login required)");
   return true;
 }
@@ -198,27 +267,42 @@ bool WifiWeb::setEnabled(bool enabled) {
   if (enabled == _enabled) return true;
   if (enabled) {
     if (!_started) return begin(true);
-    _enabled = true;
     _reconnectAttempts = 0;
     _lastReconnectMs = millis();
     _disconnectedSinceMs = millis();
-    WiFi.mode(WIFI_STA);
-    if (_ssid.isEmpty()) beginSmartConfig();
-    else connectStation();
-    return true;
+    bool radioStarted = false;
+    if (_ssid.isEmpty()) {
+      beginSmartConfig();
+      radioStarted = _smartConfigRunning;
+    } else {
+      radioStarted = connectStation();
+    }
+    if (!radioStarted && _wifiModeReady) {
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      _wifiModeReady = false;
+    }
+    _enabled = radioStarted;
+    if (!radioStarted)
+      _startRetryNotBeforeMs = millis() + kWifiStartFailureCooldownMs;
+    return radioStarted;
   }
 
   if (_smartConfigRunning) WiFi.stopSmartConfig();
   _smartConfigRunning = false;
   _smartConfigRetryAtMs = 0;
+  _startRetryNotBeforeMs = 0;
   _connected = false;
   _enabled = false;
   if (_mdnsStarted) {
     MDNS.end();
     _mdnsStarted = false;
   }
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
+  if (_wifiModeReady) {
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+  }
+  _wifiModeReady = false;
   Serial.println("[WiFi] disabled by user");
   return true;
 }
@@ -255,13 +339,16 @@ void WifiWeb::tick() {
         millis() - _lastReconnectMs >= WIFI_RECONNECT_MS) {
       _lastReconnectMs = millis();
       if (_reconnectAttempts < UINT8_MAX) ++_reconnectAttempts;
-      if (_reconnectAttempts >= 6 &&
+      if (_wifiModeReady && _reconnectAttempts >= 6 &&
           millis() - _disconnectedSinceMs >= 60000) {
         Serial.println("[WiFi] saved network unavailable; entering SmartConfig");
         startSmartConfig();
       } else {
-        WiFi.disconnect();
-        connectStation();
+        if (_wifiModeReady) {
+          WiFi.reconnect();
+        } else {
+          connectStation();
+        }
       }
     }
   }

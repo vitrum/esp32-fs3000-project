@@ -67,9 +67,12 @@ private:
   bool _smartConfigRunning = false;
   bool _started = false;
   bool _mdnsStarted = false;
+  bool _wifiModeReady = false;
+  bool _wifiBuffersConfigured = false;
   uint32_t _lastReconnectMs = 0;
   uint32_t _smartConfigStartMs = 0;
   uint32_t _smartConfigRetryAtMs = 0;
+  uint32_t _startRetryNotBeforeMs = 0;
   uint32_t _disconnectedSinceMs = 0;
   uint8_t _reconnectAttempts = 0;
 
@@ -84,7 +87,7 @@ private:
   bool saveCredentials(const String &ssid, const String &pass);
   void beginSmartConfig();
   void pollSmartConfig();
-  void connectStation();
+  bool connectStation();
   void startMdns();
 
   void registerRoutes();

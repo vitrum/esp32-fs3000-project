@@ -66,11 +66,14 @@ static uint32_t lastBleMs    = 0;
 static uint32_t lastWebMs    = 0;
 #endif
 static uint32_t lastBlePowerNotification = 0;
+static uint32_t lastBleFtmsNotification = 0;
 static uint32_t lastBlePostureNotification = 0;
+static uint32_t lastBleDiagnosticsMs = 0;
 static uint32_t lastBleDisconnectCount = 0;
 static bool     powerConnected = false;
 static bool     postureConnected = false;
 static bool     manualBlePairing = false;
+static bool     wirelessSuspendedForAudio = false;
 static int      powerMode = 0;      // 0=AUTO 1=BLE 2=ANT+ 3=VIRTUAL
 #ifdef ANT_POWER_ENABLE
 static bool     antStarted = false;   // ANT 节点已启动（此后 BLE 扫描不可用）
@@ -161,6 +164,45 @@ static bool takeBleOperationResult(BleOperationResult &result) {
   portEXIT_CRITICAL(&bleOperationMux);
   bleOperationTaskHandle = nullptr;
   return true;
+}
+
+static bool suspendWirelessForAudio() {
+  if (wirelessSuspendedForAudio) return true;
+  if (bleOperationState != BleOperationState::Idle) {
+    Serial.println("[AUDIO] wait for BLE operation to finish before playback");
+    return false;
+  }
+#ifdef ANT_POWER_ENABLE
+  if (antStarted) {
+    antPower.stop();
+    antStarted = false;
+  }
+#endif
+  powerMeter.disconnect();
+  posture.resetAfterStackShutdown();
+  if (NimBLEDevice::isInitialized() && !NimBLEDevice::deinit(true)) {
+    Serial.println("[AUDIO] could not release BLE stack for playback");
+    powerMeter.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
+    posture.begin(BLE_DEVICE_NAME);
+    return false;
+  }
+  powerConnected = false;
+  postureConnected = false;
+  wirelessSuspendedForAudio = true;
+  Serial.printf("[AUDIO] BLE stack suspended; internal heap free=%u largest=%u\n",
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+  return true;
+}
+
+static void resumeWirelessAfterAudio() {
+  audio.releasePlayback();
+  if (!wirelessSuspendedForAudio) return;
+  powerMeter.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
+  posture.begin(BLE_DEVICE_NAME);
+  wirelessSuspendedForAudio = false;
+  lastBleMs = millis();
+  Serial.println("[AUDIO] BLE stack resumed");
 }
 
 // Power source IDs are written to CSV: 0=none, 1=BLE, 2=ANT+, 3=virtual.
@@ -269,13 +311,8 @@ void loop() {
       return;
     }
     lastLogStopAttemptMs = 0;
-    // 先播放关机提示音，稍作停留，再断电
+    // 关机提示音已关闭；完成日志收尾后直接断电。
     audio.playShutdownChime();
-    uint32_t stopBy = millis() + 800;   // 给提示音一点播放时间
-    while (millis() < stopBy) {
-      audio.tick();
-      delay(10);
-    }
     powerKey.shutdown();
     return;
   }
@@ -304,6 +341,7 @@ void loop() {
   } else if (!audioPlaying && audioWasPlaying) {
     logger.resume();
     Serial.println("[SD] audio playback ended -> CSV logging resumed");
+    resumeWirelessAfterAudio();
   }
   audioWasPlaying = audioPlaying;
 
@@ -321,17 +359,20 @@ void loop() {
   }
 
   // SD 卡浏览器：加载文件列表 / 播放 / 停止
-  if (lcd.takeSdListRequest()) {
+  char sdDirectory[128];
+  if (lcd.takeSdListRequest(sdDirectory, sizeof(sdDirectory))) {
     static SdFileEntry files[12];
-    size_t count = listSdFiles(files, 12);
+    size_t count = listSdFiles(sdDirectory, files, 12);
     lcd.setSdFiles(files, count, nullptr);
   }
-  char sdPlayPath[80] = {};
+  char sdPlayPath[256] = {};
   if (lcd.takeSdPlayRequest(sdPlayPath, sizeof(sdPlayPath))) {
-    if (audio.playFile(sdPlayPath)) {
+    const bool wirelessReady = suspendWirelessForAudio();
+    if (wirelessReady && audio.playFile(sdPlayPath)) {
       Serial.printf("[SD] play mp3: %s\n", sdPlayPath);
     } else {
       Serial.printf("[SD] could not play: %s\n", sdPlayPath);
+      resumeWirelessAfterAudio();
     }
   }
   if (lcd.takeSdStopRequest()) {
@@ -342,6 +383,13 @@ void loop() {
 #if WIFI_WEB_ENABLE
   bool wifiEnabled = false;
   if (lcd.takeWifiEnableRequest(wifiEnabled)) {
+#ifdef ANT_POWER_ENABLE
+    if (wifiEnabled && antStarted) {
+      antPower.stop();
+      antStarted = false;
+      Serial.println("[RF] ANT stopped to prioritize Wi-Fi/BLE coexistence");
+    }
+#endif
     if (!wifiWeb.setEnabled(wifiEnabled))
       Serial.println("[WiFi] Could not change Wi-Fi state");
   }
@@ -541,6 +589,7 @@ void loop() {
       Serial.println("[BLE] cancellation requested; waiting for the current GATT operation");
     } else {
       manualBlePairing = false;
+      powerMeter.clearScanResults();
       Serial.println("[BLE] device selection cancelled");
     }
   }
@@ -574,6 +623,7 @@ void loop() {
       if (operationResult.kind == BleOperationKind::Connect) {
         powerMeter.disconnect();
       }
+      powerMeter.clearScanResults();
       bleOperationCancelRequested = false;
       manualBlePairing = false;
       lcd.finishBleCancelled();
@@ -591,6 +641,7 @@ void loop() {
       }
     } else {
       powerConnected = powerMeter.connected();
+      powerMeter.clearScanResults();
       lcd.showBleConnectFailure(operationResult.error[0]
                                     ? operationResult.error
                                     : "BLE operation failed without a reported reason.");
@@ -606,16 +657,19 @@ void loop() {
   }
 
   uint32_t blePowerNotifications = powerMeter.notificationCount();
-  if (blePowerNotifications != lastBlePowerNotification) {
-    lastBlePowerNotification = blePowerNotifications;
+  const bool powerNotificationChanged =
+      blePowerNotifications != lastBlePowerNotification;
+  lastBlePowerNotification = blePowerNotifications;
+  uint32_t bleFtmsNotifications = powerMeter.fitnessMachineNotificationCount();
+  const bool ftmsNotificationChanged =
+      bleFtmsNotifications != lastBleFtmsNotification;
+  lastBleFtmsNotification = bleFtmsNotifications;
+  if ((powerNotificationChanged || ftmsNotificationChanged) &&
+      now - lastBleDiagnosticsMs >= 5000) {
+    lastBleDiagnosticsMs = now;
+    const uint16_t flags = powerMeter.lastFitnessMachineFlags();
     Serial.printf("[BLE-DATA] P=%.0f W cad=%.0f rpm speed=%.2f m/s\n",
                   powerMeter.power(), powerMeter.cadence(), powerMeter.speed());
-  }
-  static uint32_t lastBleFtmsNotification = 0;
-  uint32_t bleFtmsNotifications = powerMeter.fitnessMachineNotificationCount();
-  if (bleFtmsNotifications != lastBleFtmsNotification) {
-    lastBleFtmsNotification = bleFtmsNotifications;
-    const uint16_t flags = powerMeter.lastFitnessMachineFlags();
     Serial.printf("[BLE-FTMS] notify=%lu flags=0x%04X powerField=%s P=%.0f W cadenceField=%s cad=%.1f rpm speedField=%s speed=%.2f m/s\n",
                   (unsigned long)bleFtmsNotifications, flags,
                   (flags & 0x0040) ? "yes" : "no", powerMeter.power(),
@@ -639,20 +693,27 @@ void loop() {
 
   // AUTO mode starts ANT+ after its BLE posture discovery window.
 #ifdef ANT_POWER_ENABLE
-  bool shouldStartAnt = powerMode == 2 ||
-                        (powerMode == 0 && now >= ANT_POWER_START_DELAY_MS);
+  const bool wifiActive =
+  #if WIFI_WEB_ENABLE
+      wifiWeb.enabled();
+  #else
+      false;
+  #endif
+  bool shouldStartAnt = !wifiActive && !wirelessSuspendedForAudio &&
+                        (powerMode == 2 ||
+                         (powerMode == 0 && now >= ANT_POWER_START_DELAY_MS));
   if (!antStarted && shouldStartAnt &&
       (powerMode == 2 || now >= ANT_POWER_START_DELAY_MS)) {
     antStarted = true;
     antPower.begin();
   }
-  if (!antStarted && !manualBlePairing && !postureConnected &&
+  if (!wirelessSuspendedForAudio && !antStarted && !manualBlePairing && !postureConnected &&
       now - lastBleMs >= BLE_RECONNECT_MS) {
     lastBleMs = now;
     postureConnected = posture.tryConnect();
   }
 #else
-  if (!manualBlePairing && !postureConnected &&
+  if (!wirelessSuspendedForAudio && !manualBlePairing && !postureConnected &&
       now - lastBleMs >= BLE_RECONNECT_MS) {
     lastBleMs = now;
     postureConnected = posture.tryConnect();

@@ -20,14 +20,15 @@ const char *sdMountPoint();
 
 // ---- SD 卡文件浏览辅助 ----
 struct SdFileEntry {
-  char name[64];   // 文件名（不含路径）
+  char name[256];  // FAT long filename, 不含路径
   uint32_t size;   // 字节
   bool isAudio;    // .mp3/.wav 等可播放音频
+  bool isDirectory;
 };
 
-// 列出 SD 根目录（及 /system）文件，写入 out[]（最多 maxCount），返回数量。
-// 音频文件排在前面。失败或无卡返回 0。
-size_t listSdFiles(SdFileEntry *out, size_t maxCount);
+// 列出指定目录的直接子项（不递归），目录优先、音频文件次之。
+// directory 使用以 "/" 开始的卡内路径；失败或无卡返回 0。
+size_t listSdFiles(const char *directory, SdFileEntry *out, size_t maxCount);
 
 // SD card CSV log (SDSPI mode)
 // 列：t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc

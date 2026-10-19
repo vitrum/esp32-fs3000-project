@@ -7,6 +7,10 @@
     "/^~/\\.platformio/penv/bin/pio run -e esp32s3$/": {
       "approve": true,
       "matchCommandLine": true
+    },
+    "/^~/\\.platformio/packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-size -A \\.pio/build/esp32s3/firmware\\.elf \\| grep -E '\\^\\\\\\.dram\\|\\^\\\\\\.bss\\|\\^\\\\\\.data\\|\\^\\\\\\.noinit\\|\\^\\\\\\.iram'$/": {
+      "approve": true,
+      "matchCommandLine": true
     }
   }
 }

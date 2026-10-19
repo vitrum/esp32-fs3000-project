@@ -197,6 +197,11 @@ void DisplayLcd::onLanguageSelected(lv_event_t *event) {
 
 void DisplayLcd::onWifiSwitchChanged(lv_event_t *event) {
   if (!g_display) return;
+  const uint32_t now = millis();
+  if (g_display->lastWifiRequestMs_ != 0 &&
+      now - g_display->lastWifiRequestMs_ < 750)
+    return;
+  g_display->lastWifiRequestMs_ = now;
   g_display->requestedWifiEnable_ =
       lv_obj_has_state(lv_event_get_target(event), LV_STATE_CHECKED);
   g_display->wifiEnableRequestPending_ = true;
@@ -443,12 +448,17 @@ void DisplayLcd::refreshSoundVolume() {
 
 void DisplayLcd::onSdCardButton(lv_event_t *) {
   if (!g_display) return;
+  snprintf(g_display->sdCurrentDirectory_, sizeof(g_display->sdCurrentDirectory_), "/");
   g_display->sdListRequested_ = true;   // 由主循环加载文件列表
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_label_set_text(g_display->sdStatusLabel_,
                     g_display->localized("Loading files...", "正在读取文件..."));
   for (size_t i = 0; i < 12; ++i)
     lv_obj_add_flag(g_display->sdRowButtons_[i], LV_OBJ_FLAG_HIDDEN);
+  if (g_display->sdCurrentPathLabel_)
+    lv_label_set_text(g_display->sdCurrentPathLabel_, "/");
+  if (g_display->sdUpButton_)
+    lv_obj_add_flag(g_display->sdUpButton_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(g_display->sdPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -462,14 +472,58 @@ void DisplayLcd::onSdFileClicked(lv_event_t *event) {
   if (!g_display) return;
   const size_t index = (size_t)(uintptr_t)lv_event_get_user_data(event);
   if (index >= g_display->sdFileCount_) return;
-  if (!g_display->sdFiles_[index].isAudio) {
+  const SdFileEntry &entry = g_display->sdFiles_[index];
+  if (entry.isDirectory) {
+    char nextDirectory[sizeof(g_display->sdCurrentDirectory_)];
+    const int length = strcmp(g_display->sdCurrentDirectory_, "/") == 0
+      ? snprintf(nextDirectory, sizeof(nextDirectory), "/%s", entry.name)
+      : snprintf(nextDirectory, sizeof(nextDirectory), "%s/%s",
+             g_display->sdCurrentDirectory_, entry.name);
+    if (length < 0 || (size_t)length >= sizeof(nextDirectory)) {
+      lv_label_set_text(g_display->sdStatusLabel_,
+                        g_display->localized("Path is too deep", "目录层级过深"));
+      return;
+    }
+    snprintf(g_display->sdCurrentDirectory_,
+             sizeof(g_display->sdCurrentDirectory_), "%s", nextDirectory);
+    g_display->sdListRequested_ = true;
+    lv_label_set_text(g_display->sdStatusLabel_,
+                      g_display->localized("Loading...", "正在读取..."));
+    for (size_t i = 0; i < 12; ++i)
+      lv_obj_add_flag(g_display->sdRowButtons_[i], LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  if (!entry.isAudio) {
     lv_label_set_text(g_display->sdNowPlayingLabel_,
                       g_display->localized("Not an audio file", "不是音频文件"));
     return;
   }
-  snprintf(g_display->sdPlayPath_, sizeof(g_display->sdPlayPath_), "/%s",
-           g_display->sdFiles_[index].name);
+  const int pathLength = strcmp(g_display->sdCurrentDirectory_, "/") == 0
+      ? snprintf(g_display->sdPlayPath_, sizeof(g_display->sdPlayPath_),
+                 "/%s", entry.name)
+      : snprintf(g_display->sdPlayPath_, sizeof(g_display->sdPlayPath_),
+                 "%s/%s", g_display->sdCurrentDirectory_, entry.name);
+  if (pathLength < 0 || (size_t)pathLength >= sizeof(g_display->sdPlayPath_)) {
+    lv_label_set_text(g_display->sdNowPlayingLabel_,
+                      g_display->localized("Path is too long", "文件路径过长"));
+    return;
+  }
   g_display->sdPlayRequested_ = true;
+}
+
+void DisplayLcd::onSdUpClicked(lv_event_t *) {
+  if (!g_display || strcmp(g_display->sdCurrentDirectory_, "/") == 0) return;
+  char *separator = strrchr(g_display->sdCurrentDirectory_, '/');
+  if (!separator || separator == g_display->sdCurrentDirectory_)
+    snprintf(g_display->sdCurrentDirectory_,
+             sizeof(g_display->sdCurrentDirectory_), "/");
+  else
+    *separator = '\0';
+  g_display->sdListRequested_ = true;
+  lv_label_set_text(g_display->sdStatusLabel_,
+                    g_display->localized("Loading...", "正在读取..."));
+  for (size_t i = 0; i < 12; ++i)
+    lv_obj_add_flag(g_display->sdRowButtons_[i], LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::onSdStopClicked(lv_event_t *) {
@@ -477,9 +531,11 @@ void DisplayLcd::onSdStopClicked(lv_event_t *) {
   g_display->sdStopRequested_ = true;
 }
 
-bool DisplayLcd::takeSdListRequest() {
+bool DisplayLcd::takeSdListRequest(char *directory, size_t capacity) {
   if (!sdListRequested_) return false;
   sdListRequested_ = false;
+  if (!directory || capacity == 0) return false;
+  snprintf(directory, capacity, "%s", sdCurrentDirectory_);
   return true;
 }
 
@@ -767,6 +823,14 @@ void DisplayLcd::setSdFiles(const SdFileEntry *files, size_t count,
   sdFileCount_ = min(count, (size_t)12);
   if (files)
     for (size_t i = 0; i < sdFileCount_; ++i) sdFiles_[i] = files[i];
+  if (sdCurrentPathLabel_)
+    lv_label_set_text(sdCurrentPathLabel_, sdCurrentDirectory_);
+  if (sdUpButton_) {
+    if (strcmp(sdCurrentDirectory_, "/") == 0)
+      lv_obj_add_flag(sdUpButton_, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_clear_flag(sdUpButton_, LV_OBJ_FLAG_HIDDEN);
+  }
   (void)status;
   refreshSdList();
 }
@@ -809,10 +873,11 @@ void DisplayLcd::refreshSdList() {
       lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
       continue;
     }
-    char text[96];
+    char text[288];
     const SdFileEntry &f = sdFiles_[i];
-    // 音频文件显示 ▶，其它显示普通图标；并显示大小(KB)
-    if (f.isAudio)
+    if (f.isDirectory)
+      snprintf(text, sizeof(text), "DIR  %s", f.name);
+    else if (f.isAudio)
       snprintf(text, sizeof(text), LV_SYMBOL_PLAY " %s\n%lu KB",
                f.name, (unsigned long)(f.size / 1024));
     else
@@ -823,7 +888,9 @@ void DisplayLcd::refreshSdList() {
         chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
     // 可播放项高亮背景
     lv_obj_set_style_bg_color(button,
-        f.isAudio ? lv_color_make(219, 234, 254) : lv_color_make(241, 245, 249), 0);
+      f.isDirectory ? lv_color_make(220, 252, 231)
+              : (f.isAudio ? lv_color_make(219, 234, 254)
+                     : lv_color_make(241, 245, 249)), 0);
     lv_obj_clear_flag(button, LV_OBJ_FLAG_HIDDEN);
   }
 }
@@ -1395,17 +1462,36 @@ void DisplayLcd::buildSdPanel() {
   buildPanelHeader(sdPanel_, "SD CARD", onSdBack);
   sdTitle_ = lv_obj_get_child(sdPanel_, 1);
 
+  sdCurrentPathLabel_ = lv_label_create(sdPanel_);
+  lv_label_set_text(sdCurrentPathLabel_, "/");
+  lv_obj_set_width(sdCurrentPathLabel_, 154);
+  lv_label_set_long_mode(sdCurrentPathLabel_, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(sdCurrentPathLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_align(sdCurrentPathLabel_, LV_ALIGN_TOP_LEFT, 12, 52);
+
+  sdUpButton_ = lv_btn_create(sdPanel_);
+  lv_obj_set_size(sdUpButton_, 52, 24);
+  lv_obj_set_style_radius(sdUpButton_, 0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(sdUpButton_, lv_color_make(226, 232, 240), 0);
+  lv_obj_align(sdUpButton_, LV_ALIGN_TOP_RIGHT, -12, 49);
+  lv_obj_add_event_cb(sdUpButton_, onSdUpClicked, LV_EVENT_CLICKED, nullptr);
+  sdUpLabel_ = lv_label_create(sdUpButton_);
+  lv_label_set_text(sdUpLabel_, localized("UP", "返回"));
+  lv_obj_set_style_text_font(sdUpLabel_, &lv_font_noto_sans_sc_14, 0);
+  lv_obj_center(sdUpLabel_);
+  lv_obj_add_flag(sdUpButton_, LV_OBJ_FLAG_HIDDEN);
+
   sdStatusLabel_ = lv_label_create(sdPanel_);
   lv_label_set_text(sdStatusLabel_, "Loading files...");
   lv_obj_set_width(sdStatusLabel_, 216);
   lv_obj_set_style_text_font(sdStatusLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(sdStatusLabel_, lv_color_make(100, 116, 139), 0);
-  lv_obj_align(sdStatusLabel_, LV_ALIGN_TOP_LEFT, 12, 54);
+  lv_obj_align(sdStatusLabel_, LV_ALIGN_TOP_LEFT, 12, 74);
 
   // 可滚动文件列表
   sdList_ = lv_obj_create(sdPanel_);
-  lv_obj_set_size(sdList_, 216, 178);
-  lv_obj_align(sdList_, LV_ALIGN_TOP_LEFT, 12, 76);
+  lv_obj_set_size(sdList_, 216, 158);
+  lv_obj_align(sdList_, LV_ALIGN_TOP_LEFT, 12, 94);
   lv_obj_set_style_pad_all(sdList_, 0, 0);
   lv_obj_set_style_radius(sdList_, 0, 0);
   lv_obj_set_style_border_width(sdList_, 0, 0);
