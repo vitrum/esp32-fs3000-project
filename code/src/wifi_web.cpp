@@ -6,8 +6,8 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <esp_heap_caps.h>
-
-#include "csv_logger.h"  // sdFs()
+#include "sd_download.h"
+#include <new>
 
 WifiWeb wifiWeb;
 
@@ -381,7 +381,6 @@ void WifiWeb::broadcastTelemetry(uint32_t tMs, float powerW, float cadRpm,
   if (!_connected || _ws.count() == 0) return;
 
   const char *srcName = powerSrc == 3 ? "VIRTUAL"
-                        : powerSrc == 2 ? "ANT"
                         : powerSrc == 1 ? "BLE" : "NONE";
   if (!isfinite(powerW)) powerW = 0.0f;
   if (!isfinite(cadRpm)) cadRpm = 0.0f;
@@ -441,7 +440,12 @@ void WifiWeb::registerRoutes() {
       return;
     }
     const String path = "/" + name;
-    if (!lockSdCard(pdMS_TO_TICKS(kSdLockWaitMs))) {
+    if (!SdDownloadResponse::tryAcquire()) {
+      request->send(503, "text/plain", "Another download is active");
+      return;
+    }
+    if (!lockSdCard(0)) {
+      SdDownloadResponse::releaseSlot();
       request->send(503, "text/plain", "SD card busy");
       return;
     }
@@ -449,6 +453,7 @@ void WifiWeb::registerRoutes() {
     if (!file || file.isDirectory()) {
       if (file) file.close();
       unlockSdCard();
+      SdDownloadResponse::releaseSlot();
       request->send(404, "text/plain", "not found");
       return;
     }
@@ -456,22 +461,10 @@ void WifiWeb::registerRoutes() {
     file.close();
     unlockSdCard();
 
-    AsyncWebServerResponse *response = request->beginResponse(
-        "application/octet-stream", fileSize,
-        [path](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
-          if (!lockSdCard(pdMS_TO_TICKS(kSdLockWaitMs))) return 0;
-          File chunk = sdFs().open(path, FILE_READ);
-          if (!chunk || chunk.isDirectory() || !chunk.seek(index)) {
-            if (chunk) chunk.close();
-            unlockSdCard();
-            return 0;
-          }
-          const size_t count = chunk.read(buffer, maxLen);
-          chunk.close();
-          unlockSdCard();
-          return count;
-        });
+    AsyncWebServerResponse *response =
+        new (std::nothrow) SdDownloadResponse(path, fileSize);
     if (!response) {
+      SdDownloadResponse::releaseSlot();
       request->send(500, "text/plain", "could not create download response");
       return;
     }
@@ -493,7 +486,7 @@ void WifiWeb::registerRoutes() {
         return;
       }
       const String source = request->arg("src");
-      if (source != "0" && source != "1" && source != "2" && source != "3") {
+      if (source != "0" && source != "1" && source != "3") {
         request->send(400, "application/json", "{\"ok\":false,\"error\":\"invalid_source\"}");
         return;
       }

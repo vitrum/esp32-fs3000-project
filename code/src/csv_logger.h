@@ -32,7 +32,7 @@ size_t listSdFiles(const char *directory, SdFileEntry *out, size_t maxCount);
 
 // SD card CSV log (SDSPI mode)
 // 列：t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc
-//     powerSrc: 0=none, 1=BLE, 2=ANT+, 3=virtual power meter
+//     powerSrc: 0=none, 1=BLE, 2=reserved (historical ANT+), 3=virtual power meter
 // 存储策略（降低 SD 磨损、避免每秒写盘争用）：
 //   - log() 每秒调用一次，样本先缓存到内存（默认 60 条 = 1 分钟）。
 //   - 缓冲满（或 stop()）时，把整块数据一次性写入 CSV 文件。

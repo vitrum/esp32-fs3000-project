@@ -1,17 +1,16 @@
 #include "gps_time.h"
 
 #include <time.h>
+#include <driver/uart.h>
+#include <esp_err.h>
 
 #include "config.h"
 
 namespace {
-// 串口接收缓冲区：NMEA 单行最长约 82 字符，给足余量。
-constexpr int kRxBuffer = 512;
+constexpr uart_port_t kGpsUart = UART_NUM_2;
+constexpr int kRxBuffer = 4096;
 // 定位新鲜度阈值：超过该时长未见有效 location 视为失锁。
 constexpr uint32_t kFixFreshMs = 3000;
-// 每次 tick 最多从串口读取的字节数：限制单次耗时，保证主循环不被卡住。
-// 9600 波特约 960 字节/秒；每次读 64 字节足以跟上，且几乎瞬间返回。
-constexpr int kMaxBytesPerTick = 64;
 // 模块存在性检测窗口：该时间内若一直收不到任何 NMEA 字节，判为不存在。
 constexpr uint32_t kPresenceTimeoutMs = 3000;
 }  // namespace
@@ -19,10 +18,39 @@ constexpr uint32_t kPresenceTimeoutMs = 3000;
 bool GpsTime::begin() {
 #if GPS_ENABLE
   if (_enabled) return true;   // 已启动，幂等
-  // ESP32-S3：UART2 映射到指定引脚（RX<-GPS TX，TX->GPS RX）
-  // 注意：setRxBufferSize 需在 begin() 之前调用才生效。
-  Serial2.setRxBufferSize(kRxBuffer);
-  Serial2.begin(GPS_BAUD, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
+  if (!_receiverStopped) _receiverStopped = xSemaphoreCreateBinary();
+  if (!_receiverStopped) {
+    Serial.println("[GPS] could not allocate receiver stop semaphore");
+    return false;
+  }
+  uart_config_t config = {};
+  config.baud_rate = GPS_BAUD;
+  config.data_bits = UART_DATA_8_BITS;
+  config.parity = UART_PARITY_DISABLE;
+  config.stop_bits = UART_STOP_BITS_1;
+  config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+  config.source_clk = UART_SCLK_APB;
+  esp_err_t err = uart_param_config(kGpsUart, &config);
+  if (err == ESP_OK)
+    err = uart_set_pin(kGpsUart, PIN_GPS_TX, PIN_GPS_RX,
+                       UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+  if (err == ESP_OK)
+    err = uart_driver_install(kGpsUart, kRxBuffer, 0, 16, &_uartEvents, 0);
+  if (err != ESP_OK) {
+    Serial.printf("[GPS] UART initialization failed: %s\n", esp_err_to_name(err));
+    return false;
+  }
+  portENTER_CRITICAL(&_snapshotMux);
+  _received = ParsedState();
+  _stopRequested = false;
+  portEXIT_CRITICAL(&_snapshotMux);
+  if (xTaskCreate(receiverTaskEntry, "gpsReceiver", 4096, this, 2,
+                  &_receiverTask) != pdPASS) {
+    uart_driver_delete(kGpsUart);
+    _uartEvents = nullptr;
+    Serial.println("[GPS] could not create receiver task");
+    return false;
+  }
   _enabled = true;
   // 探测窗口从主循环开始轮询时计算，不受后续 setup 初始化耗时影响。
   _presenceStarted = false;
@@ -31,8 +59,8 @@ bool GpsTime::begin() {
   _modulePresent = false;
   _lastRxMs = 0;
   _rxBytesTotal = 0;
-  Serial.printf("[GPS] UART ready: RX=%d TX=%d baud=%d (ATGM336H)\n",
-                PIN_GPS_RX, PIN_GPS_TX, GPS_BAUD);
+  Serial.printf("[GPS] UART2 receiver ready: RX=%d TX=%d baud=%d buffer=%d\n",
+                PIN_GPS_RX, PIN_GPS_TX, GPS_BAUD, kRxBuffer);
   return true;
 #else
   Serial.println("[GPS] disabled by config");
@@ -44,21 +72,24 @@ bool GpsTime::begin() {
 
 void GpsTime::stop() {
   if (_enabled) {
-    Serial2.end();
-    Serial.println("[GPS] UART stopped (module not detected)");
+    portENTER_CRITICAL(&_snapshotMux);
+    _stopRequested = true;
+    portEXIT_CRITICAL(&_snapshotMux);
+    xSemaphoreTake(_receiverStopped, portMAX_DELAY);
+    _receiverTask = nullptr;
+    const esp_err_t err = uart_driver_delete(kGpsUart);
+    if (err != ESP_OK)
+      Serial.printf("[GPS] UART shutdown failed: %s\n", esp_err_to_name(err));
+    _uartEvents = nullptr;
+    Serial.println("[GPS] receiver stopped");
   }
   _enabled = false;
 }
 
 bool GpsTime::restart() {
   Serial.println("[GPS] manual restart requested");
-  // 重新初始化串口。ATGM336H 断电/复位后会自动重新输出 NMEA；
-  // 这里通过重启 UART 并复位解析器状态实现"软重启"GPS。
-  if (_enabled) {
-    Serial2.end();
-    delay(20);
-  }
-  _gps = TinyGPSPlus();      // 复位解析器
+  stop();
+  _gps = ParsedState();
   _lastFixMs = 0;
   _sentencesSeen = 0;
   _lastSentence[0] = '\0';
@@ -67,29 +98,99 @@ bool GpsTime::restart() {
   _presenceStartMs = 0;
   _lastRxMs = 0;
   _rxBytesTotal = 0;
+  _charsProcessed = _failedChecksum = _overflowCount = 0;
+  _reportedOverflows = _reportedChecksumFailures = 0;
   return begin();
+}
+
+void GpsTime::receiverTaskEntry(void *argument) {
+  static_cast<GpsTime *>(argument)->receiverTask();
+}
+
+void GpsTime::receiverTask() {
+  TinyGPSPlus parser;
+  ParsedState state;
+  char line[sizeof(state.sentence)] = {};
+  size_t lineSize = 0;
+  uint8_t bytes[256];
+  for (;;) {
+    portENTER_CRITICAL(&_snapshotMux);
+    const bool stopRequested = _stopRequested;
+    portEXIT_CRITICAL(&_snapshotMux);
+    if (stopRequested) break;
+
+    uart_event_t event;
+    while (xQueueReceive(_uartEvents, &event, 0) == pdTRUE) {
+      if (event.type == UART_FIFO_OVF || event.type == UART_BUFFER_FULL)
+        ++state.overflows;
+    }
+    const int count = uart_read_bytes(kGpsUart, bytes, sizeof(bytes),
+                                      pdMS_TO_TICKS(20));
+    if (count < 0) {
+      Serial.println("[GPS] UART read failed");
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+    if (count > 0) state.lastRxMs = millis();
+    for (int i = 0; i < count; ++i) {
+      const char c = (char)bytes[i];
+      ++state.rxBytes;
+      if (c == '$') lineSize = 0;
+      if (lineSize < sizeof(line) - 1) line[lineSize++] = c;
+      if (c == '\n') {
+        line[lineSize] = '\0';
+        memcpy(state.sentence, line, sizeof(line));
+        lineSize = 0;
+      }
+      if (parser.encode(c)) {
+        ++state.sentences;
+        if (parser.location.isUpdated() && parser.location.isValid()) {
+          state.lastFixMs = millis();
+          parser.location.lat(); // Clear isUpdated so time-only sentences do not refresh a fix.
+        }
+      }
+    }
+    state.location = parser.location;
+    state.date = parser.date;
+    state.time = parser.time;
+    state.speed = parser.speed;
+    state.course = parser.course;
+    state.altitude = parser.altitude;
+    state.satellites = parser.satellites;
+    state.hdop = parser.hdop;
+    state.checksumFailures = parser.failedChecksum();
+    portENTER_CRITICAL(&_snapshotMux);
+    _received = state;
+    portEXIT_CRITICAL(&_snapshotMux);
+    vTaskDelay(1);
+  }
+  xSemaphoreGive(_receiverStopped);
+  vTaskDelete(nullptr);
 }
 
 void GpsTime::tick() {
   if (!_enabled) return;
-
-  // 把串口缓冲中的可读字节喂给解析器，但每次最多读 kMaxBytesPerTick 字节，
-  // 避免 GPS 持续吐数据时 while 循环霸占 CPU 导致界面卡死。
-  // TinyGPSPlus 是逐字符状态机，调用本身非阻塞。
-  int budget = kMaxBytesPerTick;
-  while (budget-- > 0 && Serial2.available() > 0) {
-    const char c = (char)Serial2.read();
-    ++_rxBytesTotal;
-    _lastRxMs = millis();
-    if (!_modulePresent) _modulePresent = true;   // 收到任何字节即确认存在
-    if (_gps.encode(c)) {
-      ++_sentencesSeen;
-    }
-  }
-
-  // 记录最近一次有效定位的时间戳（hasFix() 据此判断是否新鲜）。
-  if (_gps.location.isUpdated() && _gps.location.isValid()) {
-    _lastFixMs = millis();
+  portENTER_CRITICAL(&_snapshotMux);
+  _gps = _received;
+  portEXIT_CRITICAL(&_snapshotMux);
+  _lastFixMs = _gps.lastFixMs;
+  _lastRxMs = _gps.lastRxMs;
+  _rxBytesTotal = _charsProcessed = _gps.rxBytes;
+  _sentencesSeen = _gps.sentences;
+  _failedChecksum = _gps.checksumFailures;
+  _overflowCount = _gps.overflows;
+  memcpy(_lastSentence, _gps.sentence, sizeof(_lastSentence));
+  if (_rxBytesTotal > 0) _modulePresent = true;
+  const uint32_t now = millis();
+  if ((_overflowCount != _reportedOverflows ||
+       _failedChecksum != _reportedChecksumFailures) &&
+      now - _lastDiagnosticsMs >= 5000) {
+    _lastDiagnosticsMs = now;
+    _reportedOverflows = _overflowCount;
+    _reportedChecksumFailures = _failedChecksum;
+    Serial.printf("[GPS] rx=%lu checksum_failures=%lu overflows=%lu\n",
+                  (unsigned long)_rxBytesTotal, (unsigned long)_failedChecksum,
+                  (unsigned long)_overflowCount);
   }
 }
 

@@ -2,6 +2,9 @@
 
 #include <Arduino.h>
 #include <TinyGPSPlus.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 
 #include "config.h"
 
@@ -16,7 +19,7 @@
 // 本版本不使用 PPS 秒脉冲；PPS 预留接口见 config.h（GPS_USE_PPS）。
 // 用法：
 //   gps.begin();      // setup()
-//   gps.tick();       // loop()，非阻塞
+//   gps.tick();       // loop()，获取后台解析快照，不做串口 I/O
 //   if (gps.hasFix()) vg = gps.speedMps();
 // ============================================================================
 class GpsTime {
@@ -28,8 +31,7 @@ public:
   // 探测超时未发现模块时关闭 UART，但保留探测结果供界面显示。
   void stop();
 
-  // 非阻塞：把串口可读字节喂给解析器。需在 loop() 中频繁调用。
-  // 每次调用最多读取有限字节，保证不阻塞主循环（界面不卡死）。
+  // 将后台任务发布的状态复制到主循环快照；所有访问器读取该快照。
   void tick();
 
   // 手动重启 GPS：重新初始化串口并复位解析器状态。
@@ -86,10 +88,43 @@ public:
   const char *lastSentence() const { return _lastSentence; }
   // 解析统计
   uint32_t sentencesSeen() const { return _sentencesSeen; }
-  uint32_t charsProcessed() const { return (uint32_t)_gps.charsProcessed(); }
+  uint32_t charsProcessed() const { return _charsProcessed; }
+  uint32_t failedChecksum() const { return _failedChecksum; }
+  uint32_t overflowCount() const { return _overflowCount; }
 
 private:
-  TinyGPSPlus _gps;
+  struct ParsedState {
+    TinyGPSLocation location;
+    TinyGPSDate date;
+    TinyGPSTime time;
+    TinyGPSSpeed speed;
+    TinyGPSCourse course;
+    TinyGPSAltitude altitude;
+    TinyGPSInteger satellites;
+    TinyGPSHDOP hdop;
+    uint32_t lastFixMs = 0;
+    uint32_t lastRxMs = 0;
+    uint32_t rxBytes = 0;
+    uint32_t sentences = 0;
+    uint32_t checksumFailures = 0;
+    uint32_t overflows = 0;
+    char sentence[96] = {};
+  };
+  ParsedState _gps;
+  ParsedState _received;
+  portMUX_TYPE _snapshotMux = portMUX_INITIALIZER_UNLOCKED;
+  TaskHandle_t _receiverTask = nullptr;
+  SemaphoreHandle_t _receiverStopped = nullptr;
+  QueueHandle_t _uartEvents = nullptr;
+  bool _stopRequested = false; // Protected by _snapshotMux.
+  static void receiverTaskEntry(void *argument);
+  void receiverTask();
+  uint32_t _charsProcessed = 0;
+  uint32_t _failedChecksum = 0;
+  uint32_t _overflowCount = 0;
+  uint32_t _lastDiagnosticsMs = 0;
+  uint32_t _reportedOverflows = 0;
+  uint32_t _reportedChecksumFailures = 0;
   bool     _enabled = false;
   uint32_t _lastFixMs = 0;        // 最近一次 location 有效的时间戳
   uint32_t _sentencesSeen = 0;

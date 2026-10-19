@@ -82,7 +82,16 @@ bool AudioPlayer::begin() {
 
 void AudioPlayer::tick() {
   if (!_enabled || !g_audio) return;
+  if (!lockSdCard(0)) {
+    static uint32_t lastBusyMs = 0;
+    if (millis() - lastBusyMs >= 5000) {
+      lastBusyMs = millis();
+      Serial.println("[AUDIO] waiting for SD card");
+    }
+    return;
+  }
   g_audio->loop();
+  unlockSdCard();
   if (_playing && !g_audio->isRunning()) _playing = false;
 }
 
@@ -121,7 +130,13 @@ void AudioPlayer::beginPlayback(const char *path) {
     }
   }
   g_audio->setVolume(_volume);
-  if (!g_audio->connecttoFS(sdFs(), path)) {
+  if (!lockSdCard()) {
+    Serial.println("[AUDIO] SD card busy; could not open audio file");
+    return;
+  }
+  const bool opened = g_audio->connecttoFS(sdFs(), path);
+  unlockSdCard();
+  if (!opened) {
     Serial.printf("[AUDIO] play failed: %s\n", path);
     _playing = false;
     return;
@@ -133,21 +148,29 @@ void AudioPlayer::beginPlayback(const char *path) {
 
 bool AudioPlayer::playFile(const char *path) {
   if (!_enabled || !path || !path[0]) return false;
-  releasePlayback();
+  if (!releasePlayback()) return false;
   beginPlayback(path);
   return _playing;
 }
 
-void AudioPlayer::releasePlayback() {
-  if (g_audio) g_audio.reset();
+bool AudioPlayer::releasePlayback() {
+  if (g_audio) {
+    if (!lockSdCard()) {
+      Serial.println("[AUDIO] SD card busy; could not release playback");
+      return false;
+    }
+    g_audio.reset();
+    unlockSdCard();
+  }
   uninstallAudioI2s();
   _playing = false;
   setTitle("");
+  return true;
 }
 
-void AudioPlayer::stop() {
-  if (!_enabled) return;
-  releasePlayback();
+bool AudioPlayer::stop() {
+  if (!_enabled) return true;
+  return releasePlayback();
 }
 
 void AudioPlayer::pauseResume() {

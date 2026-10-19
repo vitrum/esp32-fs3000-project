@@ -1,6 +1,6 @@
 # ESP32-FS3000 骑行气动测试系统
 
-基于 **Waveshare ESP32-S3-Touch-LCD-2.8** 的骑行空气动力学现场测试装置。原型验证阶段使用 **单片 FS3000-1015** 测风速，降低传感器成本；通过板载触摸屏选择 **BLE 或 ANT+ 功率计**，实时查看风速、功率与踏频。后续二期再考虑双 FS3000 V 形视风探针，以测量视风速度与偏航角并提升 CdA 分析能力。可选 **BME280** 提供空气密度计算所需的温度/气压，**WT9011DCL-BT50** 提供骑行姿态记录。
+基于 **Waveshare ESP32-S3-Touch-LCD-2.8** 的骑行空气动力学现场测试装置。原型验证阶段使用 **单片 FS3000-1015** 测风速，降低传感器成本；通过板载触摸屏选择 **BLE 功率计或虚拟功率计**，实时查看风速、功率与踏频。本版本暂不支持 ANT+。后续二期再考虑双 FS3000 V 形视风探针，以测量视风速度与偏航角并提升 CdA 分析能力。可选 **BME280** 提供空气密度计算所需的温度/气压，**WT9011DCL-BT50** 提供骑行姿态记录。
 
 ```
 CdA = (P − P_滚阻 − P_坡度 − P_加速) / (0.5 · ρ · v_a² · v_g · cos φ)
@@ -17,7 +17,7 @@ esp32-fs3000-project/
 │   └── enclosure-analysis.md     # 外壳（结构件）方案分析：探针头 + 主机盒 ABC 方案
 └── code/
     ├── platformio.ini        # PlatformIO 工程配置
-    ├── lib/ant/              # ★ ANT+ 协议栈（esp32-ant，Apache-2.0，本地库免网络拉取）
+    ├── lib/ant/              # 历史 ANT+ 库（Apache-2.0），保留源码但不参与编译/链接
     │   ├── include/          #   公开头（ant_node.h 为应用 API）
     │   ├── src/              #   协议引擎 + ANT+ profile 解码
     │   └── radio/            #   ESP32-S3 自带 BLE 射频的 ANT 物理层
@@ -27,10 +27,11 @@ esp32-fs3000-project/
     │   ├── fs3000.{h,cpp}    # FS3000 驱动：校验和 + 查表插值
     │   ├── wind_probe.{h,cpp}# 预留二期：双探针向量与偏航角解算
     │   ├── ble_power.{h,cpp} # BLE 功率计/骑行台（CPS 与 FTMS Indoor Bike Data）
-    │   ├── ant_power.{h,cpp} # ★ ANT+ 功率计接收（esp32-ant coexist 模式）
     │   ├── ble_posture.{h,cpp}# BLE 姿态传感器客户端（WT9011DCL-BT50，0x55 帧）
     │   ├── bme280_env.{h,cpp}# 可选 BME280：空气密度 ρ
     │   ├── csv_logger.{h,cpp}# TF 卡 CSV 日志（1s 一行）
+    │   ├── gps_time.{h,cpp} # UART2 后台接收/解析与主循环快照
+    │   ├── sd_download.h    # 单路限速 SD 下载响应
     │   └── display_lcd.{h,cpp}# ST7789 屏状态显示
     ├── single-fs3000/        # ★ 单 FS3000 简化版（独立小工程，见下节）
     │   ├── single_fs3000.ino # 单文件固件：风速大字显示 + 原始计数/校验
@@ -45,7 +46,7 @@ esp32-fs3000-project/
 |---|---|
 | 主板 | Waveshare ESP32-S3-Touch-LCD-2.8（240×320 ST7789 + 触摸） |
 | 风速传感器（原型 ×1，二期可 ×2） | Renesas FS3000-1015（I2C 地址固定 0x28，0~15 m/s） |
-| 功率计/骑行台 | 支持 **BLE 或 ANT+** 功率数据。BLE 支持 Cycling Power (CPS) 和 FTMS 智能骑行台 Indoor Bike Data；ANT+ 支持 Bike Power。CSC (0x1816) 仅可提供踏频/速度，不能提供功率 |
+| 功率计/骑行台 | 支持 **BLE** Cycling Power (CPS) 和 FTMS 智能骑行台 Indoor Bike Data。CSC (0x1816) 仅可提供踏频/速度，不能提供功率；本版本不支持 ANT+ |
 | 姿态传感器（可选） | WitMotion **WT9011DCL-BT50**（BLE 5.0，9 轴，内置卡尔曼 0.2°，自供电 ~30h，9g，绑胸口/上背） |
 | 环境传感器（可选） | BME280（计算空气密度 ρ） |
 | TF 卡 | 板载卡槽，FAT32 格式，存 CSV 日志 |
@@ -86,21 +87,27 @@ esp32-fs3000-project/
 2. 安装库：`NimBLE-Arduino`、`GFX Library for Arduino`、`Adafruit BME280 Library`。
 3. 把 `src/` 下所有 `.h/.cpp` 与 `main.cpp` 放进一个 sketch 文件夹（或将 `main.cpp` 改名 `main.ino` 并保留其余文件为 tab），编译上传。
 
-## ANT+ 功率计说明
+## 无线与存储并发
 
-**原理**：`code/lib/ant/` 是 esp32-ant（RaemondBW，Apache-2.0）——纯软件 ANT/ANT+ 协议栈，把 ESP32-S3 自带的 BLE 射频当通用 GFSK 调制解调器跑 ANT 协议，**不需要外置 ANT 芯片/接收器**。库随工程内置，`pio run` 无需联网拉取。
+- GPS 使用 UART2（RX=44、TX=43），独立任务接收并解析 NMEA，接收缓存为 4096 字节。主循环仅获取受锁保护的快照，SD 初始化、写盘或界面操作不再直接阻塞 GPS 解析。串口溢出、校验失败会以 `[GPS]` 计数日志报告。
+- SD 使用 SPI2（CLK=14、MISO=16、MOSI=17、CS=21），LCD 使用 SPI3，两个主控不混用。CSV 后台批量写入、目录访问、网页下载和音频文件访问使用同一 SD 互斥锁，不持有锁等待网络发送。
+- 网页下载同时仅允许一路，每次最多读 1024 字节，两次成功读之间至少间隔 20 ms（应用读取上限约 50 KiB/s，实际网络吞吐通常更低）。SD 短暂繁忙使用异步重试；连续取锁失败 5 秒，或文件打开/定位/读取失败时，打印原因并中断连接，而不是伪装成完整下载。
+- Wi-Fi 与 BLE 使用 ESP-IDF 软件射频共存机制；当前固定工具链的 SDK 启用了 `CONFIG_ESP32_WIFI_SW_COEXIST_ENABLE`。BLE 扫描窗口/间隔为 30/100 ms；手动扫描最多 6 秒，后台姿态发现每 30 秒尝试一次、扫描 1.5 秒，同一时间只执行一个 BLE 扫描/连接操作。
+- 音频播放仍沿用原有的释放 BLE 栈策略，不承诺音频与 BLE 持续并行。播放期间 CSV 暂缓提交新批次，已提交批次仍会完成；内存缓存满时会丢样并在后续成功写入后报告。
+- 本版本移除 ANT 功率计适配和界面入口；`lib/ant/` 仅保留历史源码，并通过 `lib_ignore` 排除。CSV 来源编号保持兼容：0=无，1=BLE，2=历史 ANT+ 保留值（不再产生），3=虚拟功率计；HTTP 功率源请求仅接受 0、1、3。
 
-**工作模式（coexist，与 BLE 共用射频）**：
+### 并发回归验证
 
-- 主机 NimBLE 保持运行（已建立的 BLE 连接不断），ANT+ 借用 NimBLE 被动扫描的射频窗口收包；
-- 代价：ANT+ 运行期间 **BLE 的扫描暂停**（已建立的 BLE 连接不受影响）；需要手动扫描/更换 BLE 功率计时，从屏幕选择 BLE 扫描，固件会先停止 ANT+；
-- ANT+ 通道**只收不发**（协议如此，无需任何配置）。
+先运行一次 `pio run` 准备项目现有的 TinyGPSPlus 依赖，然后使用本机 C++ 编译器执行主机回归测试，无需额外安装测试库：
 
-**配对与数据**：
+```bash
+cd code
+sh test/host/run.sh
+```
 
-- AUTO/ANT+ 模式首次搜索会配对并记忆（NVS 持久化，重启自动重连同一功率计）；距离门限 `ANT_POWER_PROXIMITY_RSSI=-70`；
-- 输出 **瞬时功率 W + 瞬时踏频 rpm**（标准 power-only page 0x10），串口显示 ANT 设备号及接收数据；
-- 数据源切换：AUTO 模式按 ANT+/BLE 状态选择；也可手动选择 BLE、ANT+，或使用可触摸调节功率与踏频的虚拟功率计。CSV `powerSrc` 列以 0=无、1=BLE、2=ANT+、3=虚拟功率计记录实际来源。
+测试使用真实 GPS 解析代码及 TinyGPSPlus，模拟 UART/FreeRTOS/文件系统，覆盖主循环停止取快照时的后台接收、定位过期、重新启动、错误统计，以及 SD 下载的限块、节流、繁忙重试、超时和读取失败。它不能代替实机射频及供电验证。
+
+实机建议连续记录至少 30 分钟，同时开启 BLE 通知、GPS 和 Wi-Fi 遥测，下载已关闭的记录文件；检查 `[GPS]` 溢出、BLE 断连、`writer backlog dropped` 及下载文件哈希。再测试断网重连、BLE 扫描、无 GPS 模块和 GPS 手动重启；不能仅凭编译成功认定零丢包。
 
 ## 单 FS3000 简化版
 
@@ -111,11 +118,26 @@ esp32-fs3000-project/
 - 功能：屏幕大字显示风速 m/s + 原始计数 + 校验错误计数，串口同步输出
 - 编译：PlatformIO 进入 `code/single-fs3000` 目录 `pio run -t upload`；或 Arduino IDE 直接打开该 .ino（需装 ESP32 板包 + `GFX Library for Arduino`）
 
-与主工程的差异：主工程增加彩色触摸 UI、BLE/ANT+ 功率计及日志；单文件版只用于快速验证单片传感器，代码更短、更易读。
+与主工程的差异：主工程增加彩色触摸 UI、BLE 功率计及日志；单文件版只用于快速验证单片传感器，代码更短、更易读。
 
 ## 浏览器 UI 模拟器
 
-无硬件时可直接打开 [code/simulator/index.html](code/simulator/index.html) 预览 240×320 仪表 UI，并调整模拟风速（界面单位 km/h，CdA 内部换算为 m/s）、功率、踏频及 BLE/ANT+/虚拟功率计数据源。主屏幕的 **SET** 按钮打开设置页，可切换英文/简体中文或进入功率计选择；虚拟功率计页面提供功率与踏频滑块。功率、CdA 与 ZONE 数字已放大以便阅读。FS3000 不测温，仪表不显示温度；只有外接 BME280 时才会使用实测温度参与空气密度计算。该模拟器验证 UI 与估算逻辑，不模拟 ESP32、FS3000 电气行为或真实 BLE/ANT+ 射频连接。
+无硬件时直接打开 [code/simulator/index.html](code/simulator/index.html)，无需安装依赖或启动服务器。模拟器按当前 BLE-only 固件同步：**SET / BOOT** 打开六宫格设置页，包含 POWER、LANG、WI-FI、SOUND、SD/MUSIC、GPS。当前固件因渲染问题暂时禁用中文选择，模拟器也保持英文并给出提示，而不展示尚未启用的切换效果。
+
+| 功能 | 模拟器行为 |
+|---|---|
+| 功率来源 | BLE 扫描 6 秒、设备列表、连接确认、失败/空列表/取消；CPS 与 FTMS 可提供功率，CSC-only 提示无功率支持；AUTO 使用已连接的 BLE，不自动配对功率计；虚拟功率/踏频与 BLE 输入独立，无 ANT 入口 |
+| 仪表 | 240×320；显示瞬时功率、踏频、风速；CdA 使用最近 3 次 1 Hz 功率样本平均及固件相同公式/阈值；风速无效时显示占位符 |
+| Wi-Fi | 关闭、SmartConfig 等待、STA 连接中/已连接状态及演示地址；右侧环境选择器注入配网结果，不会连接真实网络 |
+| GPS | 未找到模块提示、搜星/定位/定位过期状态、UTC/UTC+8/经纬度/卫星/HDOP/海拔/地速及手动重启；右侧选择器注入模块状态，演示坐标和时间不是实时定位 |
+| 声音与 SD | 0/25/50/75/100 音量档位保存到浏览器；目录浏览、上级目录、音频播放/停止状态。播放时暂停 BLE，并暂缓提交 CSV 新批次；不开启浏览器声音，提示音与固件一样关闭 |
+| 日志与下载 | 自动采样与录制独立；通过右侧“模拟网页命令”开始/停止录制，需模拟 Wi-Fi 已连接。每秒一行、60 条批量写入、缓冲满丢样计数；下载已落盘部分的九列 CSV，保留 0/1/3 来源编号；单路下载、1 KiB 分块/20 ms 节流、SD 繁忙重试与 5 秒超时 |
+
+右侧控制区是测试工具，不是主板新增的屏幕按钮。**Advance 1/60 Second** 推进模拟时间；**Start Auto Sampling** 启动每秒采样，但不自动开始录制；**Reset Averages** 仅清空仪表历史，不清除日志或重置运行时间。停止录制会将剩余缓存写入演示文件，再点击 **Download CSV** 可保存至电脑。演示文件与记录只在当前页面内存中存在，刷新后清空；音量偏好保留。
+
+浏览器回归入口：[code/simulator/index.html?test=1](code/simulator/index.html?test=1)。测试结果显示在页面底部，覆盖设置入口、BLE、CdA、GPS、录制、音频与下载；测试会临时替代文件下载动作，不实际保存测试 CSV。
+
+FS3000 不测温，仪表不显示温度；模拟器使用默认空气密度 1.225 kg/m³。它验证 UI 与应用状态流转，不模拟 ESP32 调度、中断、真实射频共存、SD 电气时序或供电，也不能用于证明实机零丢包。详情逻辑见 [code/simulator/simulator.js](code/simulator/simulator.js)，浏览器回归见 [code/simulator/regression.js](code/simulator/regression.js)。
 
 模拟 CdA 假设静风、平路、匀速，以单传感器视风速度近似地速，并扣除固定滚阻和传动损耗。单 FS3000 无法单独测得地速、风向或坡度，ZONE（1=直立，3=低趴，4–6=更激进，7=顶级 TT）为便于演示的启发式参考区间，不代表真实骑行测量结果。
 
@@ -130,12 +152,12 @@ esp32-fs3000-project/
 
 ## 使用流程
 
-1. 上电后 LCD 显示仪表页面。触摸底部 **SET** 按钮打开设置页；选择 **Select power meter** 后，可选择 **SCAN BLE DEVICES**、**ANT+ POWER METER**、**VIRTUAL POWER METER** 或 **AUTO SELECT**。虚拟功率计页面的功率与踏频滑块会立即更新仪表和日志；页面左上角 **BACK** 返回上一级。BLE 扫描会立即显示 LOADING；扫描与连接期间界面仍可响应触摸，左上角 **BACK** 可取消当前操作。点选设备后，在确认页点击 **CONNECT** 才会连接。连接后会主动发现并输出全部 GATT 服务/特征 UUID（`[BLE-GATT]`），不只依赖广播包中的服务 UUID。CPS 解析 0x1818/0x2A63；FTMS 骑行台解析 Indoor Bike Data **0x1826/0x2AD2**（0x2ACC 才是 Fitness Machine Feature，0x2AD1 是 Rower Data）的即时功率、踏频和速度。CSC 0x1816/0x2A5B 可提供踏频/速度，但**不提供功率**。若服务发现为空、需要配对或设备采用厂商私有协议，失败信息和 `[BLE-GATT]` 日志用于确认根因；可返回设备列表重选。**ANT+ POWER METER** 会搜索并自动记忆 Bike Power 设备；**AUTO SELECT** 在启动延迟后启动 ANT+ 自动搜索。BLE 手动扫描可随时重新打开，但会先停止 ANT+ 射频接收。自动模式的前 20 秒会尝试连接姿态传感器，不会自动连接 BLE 功率计。
-2. PlatformIO 串口监视器使用 115200 波特率（`pio device monitor`）。设备扫描会输出名称、地址、RSSI 和广播 CPS/FTMS/CSC 类型；连接后 `[BLE-GATT]` 列出 GATT 服务和特征 UUID/通知属性；`[BLE-DATA]` 显示功率/踏频/车速，`[BLE-FTMS]` 额外输出 FTMS Flags 及数据包是否包含即时功率/踏频/速度字段，便于判断设备能力与通知数据；`[BLE-POSTURE]` 显示姿态角，`[ANT-DATA]` 显示 ANT+ 设备号、功率和踏频；每秒还会输出汇总行。
+1. 上电后 LCD 显示仪表页面。触摸底部 **SET** 按钮打开设置页；选择 **Select power meter** 后，可选择 **SCAN BLE DEVICES**、**VIRTUAL POWER METER** 或 **AUTO SELECT**。虚拟功率计页面的功率与踏频滑块会立即更新仪表和日志；页面左上角 **BACK** 返回上一级。BLE 扫描会立即显示 LOADING；扫描与连接期间界面仍可响应触摸，左上角 **BACK** 可取消当前操作。点选设备后，在确认页点击 **CONNECT** 才会连接。连接后会主动发现并输出全部 GATT 服务/特征 UUID（`[BLE-GATT]`），不只依赖广播包中的服务 UUID。CPS 解析 0x1818/0x2A63；FTMS 骑行台解析 Indoor Bike Data **0x1826/0x2AD2**（0x2ACC 才是 Fitness Machine Feature，0x2AD1 是 Rower Data）的即时功率、踏频和速度。CSC 0x1816/0x2A5B 可提供踏频/速度，但**不提供功率**。若服务发现为空、需要配对或设备采用厂商私有协议，失败信息和 `[BLE-GATT]` 日志用于确认根因；可返回设备列表重选。**AUTO SELECT** 使用已连接的 BLE 功率计，不自动配对功率计；后台每 30 秒尝试发现姿态传感器。后台发现占用 BLE 时，手动扫描请求会明确提示稍后重试，不并行操作同一扫描器。
+2. PlatformIO 串口监视器使用 115200 波特率（`pio device monitor`）。设备扫描会输出名称、地址、RSSI 和广播 CPS/FTMS/CSC 类型；连接后 `[BLE-GATT]` 列出 GATT 服务和特征 UUID/通知属性；`[BLE-DATA]` 显示功率/踏频/车速，`[BLE-FTMS]` 额外输出 FTMS Flags 及数据包是否包含即时功率/踏频/速度字段，便于判断设备能力与通知数据；`[BLE-POSTURE]` 显示姿态角；每秒还会输出汇总行。
 3. 仪表实时显示风速（km/h）、实时功率、踏频及功率源状态。FS3000 不含温度测量功能；可选 BME280 的环境温度仅用于空气密度计算。当前单风速计原型不测偏航角。
 4. TF 卡生成 `fs_<时间>.csv`，每秒一行：
    `t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc`
-   （`powerSrc`：0=无 1=BLE 2=ANT+ 3=虚拟功率计；未接入姿态传感器时 postureDeg 缺省，后处理自动兼容）
+   （`powerSrc`：0=无 1=BLE 2=历史 ANT+ 保留值 3=虚拟功率计；本版本不会产生来源 2）
 5. **姿态标定（每次佩戴后做一次）**：上身直立坐在车上，记录此时 Pitch 为基准（平放时读数约 0°）；前倾为负、挺直为正（以安装方向为准，可在后处理里取反）。
 6. 测试协议（重要）：
    - 选**低风时段**（环境风速 < 3 m/s）测同一路段；
@@ -155,9 +177,7 @@ esp32-fs3000-project/
 | `PROBE_HALF_ANGLE_DEG` | 45.0 | 二期双探针 V 形半夹角参数，单传感器原型不使用 |
 | `BLE_WHEEL_CIRC_M` | 2.105 | 轮周长(m)，700×25C 约 2.105，按你的外胎改 |
 | `BLE_POSTURE_NAME_PREFIX` | "WT" | 姿态传感器设备名前缀（扫描过滤用） |
-| `ANT_POWER_ENABLE` | 1 | 1=启用 ANT+ 功率计接收；0=仅 BLE 功率计 |
-| `ANT_POWER_START_DELAY_MS` | 20000 | 启动后延迟开 ANT 的毫秒数：先给 BLE 姿态/功率计连接窗口 |
-| `ANT_POWER_PROXIMITY_RSSI` | -70 | ANT+ 首次配对距离门限 dBm（0=不限制，-70≈车上的设备） |
+| `BLE_POSTURE_RECONNECT_MS` | 30000 | 后台姿态传感器发现的尝试间隔，避免持续扫描争用射频 |
 | `LOG_WINDOW_MS` | 1000 | 日志窗口，建议保持 1000 |
 | `PROBE_SAMPLE_MS` | 125 | 探针采样周期，**不要小于 125**（FS3000 响应时间） |
 | `CDA_TOTAL_MASS_KG` | 85.0 | CdA 粗略估算用的骑手+车辆总质量(kg) |
@@ -175,10 +195,9 @@ esp32-fs3000-project/
 ## 常见问题
 
 - **连接成功但报没有功率服务**：查看串口 `[BLE-GATT]` 的服务/特征列表。CPS 功率需 `0x1818/0x2A63`；智能骑行台 FTMS 功率需 Indoor Bike Data `0x1826/0x2AD2`（`0x2ACC` 是 Feature，`0x2AD1` 是 Rower Data）；CSC `0x1816/0x2A5B` 只有踏频/速度。若 GATT 服务列表为空，先断开手机/码表等占用设备、唤醒骑行台并重新扫描；部分设备需先通过厂商 App 配对/解锁，若列表只有厂商私有 UUID，则需按该设备协议增加解析，标准 CPS/FTMS 无法读取。
-- **扫描不到 BLE 功率计/骑行台**：确认设备已唤醒并广播 CPS、FTMS 或 CSC；从功率源菜单点 **SCAN BLE DEVICES** 后等待扫描完成。若 ANT+ 已启动，固件会先停止 ANT+ 再扫描；检查串口 `[BLE] scan complete` 和设备 RSSI。选中设备后需在确认页再次点 **CONNECT**。
-- **ANT+ 功率计连不上**：确认功率计有 ANT+ 广播（多数功率计默认开着）；首次配对在车旁进行（`ANT_POWER_PROXIMITY_RSSI=-70` 只认近距离设备）；配对记忆存在 NVS，重启自动重连；若换了功率计，用 `ant_node_pair()` 或 `ant_node_forget_device()` 重新配对（代码在 `ant_power.cpp`，可加按钮触发）。
-- **ANT+ 与 BLE 同时用注意**：esp32-ant 为 coexist 模式——BLE 已建立的连接（姿态传感器）保持不断，但 BLE"扫描"被 ANT 占用（暂停），所以启动窗口内先连好 BLE 设备；ANT+ 通道**只收不发**，属协议正常。
-- **扫描不到姿态传感器**：确认 WT9011DCL 已开机（指示灯亮）；先用维特智能手机 app 连一次唤醒并确认设备名以 WT 开头。ANT+ 射频运行时 BLE 扫描暂停；切回 BLE 或在 ANT+ 启动前让姿态设备完成连接。
+- **扫描不到 BLE 功率计/骑行台**：确认设备已唤醒并广播 CPS、FTMS 或 CSC；从功率源菜单点 **SCAN BLE DEVICES** 后等待扫描完成，检查串口 `[BLE] scan complete` 和设备 RSSI。选中设备后需在确认页再次点 **CONNECT**。
+- **只有 ANT+ 的功率计**：本版本暂不支持；双模功率计请选择其 BLE 通道。
+- **扫描不到姿态传感器**：确认 WT9011DCL 已开机（指示灯亮）；先用维特智能手机 app 连一次唤醒并确认设备名以 WT 开头。后台每 30 秒进行一次有限扫描，手动配对或播放音频期间暂停。
 - **姿态角度不变化/为 0**：检查是否连上（屏幕 Pos 行）；确认传感器绑紧无松动；Yaw 漂移属正常（磁力计受金属干扰），只看 Pitch。
 - **LCD 不亮**：核对 `config.h` 里 LCD 引脚与你板子版本（V1/V2 相同）；确认背光 GPIO5 上电。
 - **二期双传感器读数异常**：确认两片在不同总线；检查 V 形安装角度与箭头方向。当前原型只接一片 FS3000，不显示偏航角。

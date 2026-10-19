@@ -338,14 +338,6 @@ void DisplayLcd::onBleLoadingBack(lv_event_t *) {
   lv_obj_clear_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
-void DisplayLcd::onAntSelected(lv_event_t *) {
-  if (!g_display) return;
-  g_display->requestedPowerMode_ = 2;
-  g_display->selectedPowerMode_ = 2;
-  g_display->refreshLanguage();
-  lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
-}
-
 void DisplayLcd::onVirtualSelected(lv_event_t *) {
   if (!g_display) return;
   g_display->requestedPowerMode_ = 3;
@@ -945,17 +937,17 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_text_color(powerSourceHint_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(powerSourceHint_, LV_ALIGN_TOP_LEFT, 12, 60);
 
-  const char *labels[] = {"SCAN BLE DEVICES", "ANT+ POWER METER",
+  const char *labels[] = {"SCAN BLE DEVICES",
                           "VIRTUAL POWER METER", "AUTO SELECT"};
-  lv_event_cb_t callbacks[] = {onBleSelected, onAntSelected,
+  lv_event_cb_t callbacks[] = {onBleSelected,
                                onVirtualSelected, onAutoSelected};
   const lv_color_t colors[] = {
     lv_color_make(219, 234, 254), lv_color_make(239, 244, 248),
-    lv_color_make(239, 244, 248), lv_color_make(239, 244, 248)
+    lv_color_make(239, 244, 248)
   };
-  const lv_coord_t heights[] = {38, 38, 38, 38};
+  const lv_coord_t heights[] = {38, 38, 38};
   lv_coord_t y = 98;
-  for (size_t i = 0; i < 4; ++i) {
+  for (size_t i = 0; i < 3; ++i) {
     lv_obj_t *button = lv_btn_create(powerSourcePanel_);
     lv_obj_set_size(button, 208, heights[i]);
     lv_obj_set_style_radius(button, 0, LV_PART_MAIN);
@@ -1620,13 +1612,13 @@ void DisplayLcd::refreshLanguage() {
   lv_label_set_text(powerSourceTitle_, localized("POWER SOURCE", "功率来源"));
   lv_label_set_text(powerSourceHint_, localized("Choose a power source", "选择功率来源"));
   const char *sourceLabels[] = {
-    "SCAN BLE DEVICES", "ANT+ POWER METER",
+    "SCAN BLE DEVICES",
     "VIRTUAL POWER METER", "AUTO SELECT"
   };
   const char *sourceLabelsZh[] = {
-    "扫描蓝牙设备", "ANT+ 功率计", "虚拟功率计", "自动选择"
+    "扫描蓝牙设备", "虚拟功率计", "自动选择"
   };
-  for (size_t i = 0; i < 4; ++i) {
+  for (size_t i = 0; i < 3; ++i) {
     lv_label_set_text(powerSourceOptions_[i],
                       localized(sourceLabels[i], sourceLabelsZh[i]));
     lv_obj_set_style_text_font(powerSourceOptions_[i], font, 0);
@@ -2255,9 +2247,7 @@ void DisplayLcd::update(const WindVector &w, bool windValid, float powerW,
   lv_label_set_text(powerSourceLabel_, localized("SET", "设置"));
   lv_obj_set_style_text_color(powerSourceLabel_, lv_color_white(), 0);
   const lv_color_t meterButtonColor =
-      pmSrc == 2 ? lv_color_make(21, 128, 61)
-                 : (pmSrc == 3 ? lv_color_make(217, 119, 6)
-                               : lv_color_make(37, 99, 235));
+      pmSrc == 3 ? lv_color_make(217, 119, 6) : lv_color_make(37, 99, 235);
   lv_obj_set_style_bg_color(powerSourceButton_, meterButtonColor, LV_PART_MAIN);
   lv_obj_set_style_text_font(powerSourceLabel_,
                              chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_16, 0);

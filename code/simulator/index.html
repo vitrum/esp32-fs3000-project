@@ -42,7 +42,6 @@
       font-family: Arial, sans-serif;
     }
     .top { position: absolute; inset: 0; pointer-events: none; }
-    .brand { position: absolute; left: 12px; top: 10px; color: #1d2940; font-weight: 700; letter-spacing: .04em; font-size: 16px; line-height: 20px; }
     .badge { position: absolute; right: 52px; top: 8px; color: #16a34a; font-size: 12px; line-height: 18px; }
     .rule, .divider { position: absolute; left: 12px; width: 216px; height: 1px; background: #cbd5e1; }
     .rule { top: 36px; height: 2px; }
@@ -78,7 +77,7 @@
     .loading-dialog.open { display: block; }
     .virtual-dialog { position: absolute; z-index: 7; inset: 0; display: none; padding: 12px; background: #f8fafc; }
     .virtual-dialog.open { display: block; }
-    .virtual-back, .settings-back, .loading-back { border: 1px solid #cbd5e1; background: #e2e8f0; color: #334155; }
+    .virtual-back, .loading-back { border: 1px solid #cbd5e1; background: #e2e8f0; color: #334155; }
     .virtual-back { width: 64px; height: 30px; min-height: 0; border-radius: 0; padding: 0; font-size: 11px; }
     .virtual-title { position: absolute; left: 86px; top: 19px; color: #2563eb; font-size: 14px; font-weight: 750; }
     .virtual-field { position: absolute; left: 16px; width: 208px; }
@@ -89,18 +88,6 @@
     .virtual-field input { width: 100%; margin: 0; }
     #virtual-power-input, #virtual-cadence-input { accent-color: #2563eb; }
     .virtual-hint { position: absolute; left: 16px; top: 224px; width: 208px; color: #64748b; font-size: 12px; line-height: 1.5; }
-    .settings-dialog { position: absolute; z-index: 8; inset: 0; display: none; padding: 12px; background: #f8fafc; }
-    .settings-dialog.open { display: block; }
-    .settings-back { width: 64px; height: 30px; min-height: 0; border-radius: 0; padding: 0; font-size: 11px; }
-    .settings-title { position: absolute; left: 86px; top: 19px; color: #2563eb; font-size: 14px; font-weight: 750; }
-    .settings-language { position: absolute; left: 16px; top: 72px; color: #334155; font-size: 14px; }
-    .settings-meter-label { position: absolute; left: 16px; top: 220px; color: #334155; font-size: 14px; }
-    .settings-choice { position: absolute; left: 16px; width: 208px; border-color: #cbd5e1; background: #fff; color: #334155; }
-    .settings-choice.selected { border-color: #2563eb; background: #dbeafe; color: #1d4ed8; }
-    #language-en { top: 112px; }
-    #language-zh { top: 164px; }
-    #settings-meter { top: 252px; }
-    #settings-meter { border-color: #2563eb; background: #2563eb; color: #fff; }
     .loading-back { width: 64px; height: 30px; min-height: 0; border-radius: 0; padding: 0; font-size: 11px; }
     .loading-title { position: absolute; left: 86px; top: 19px; color: #2563eb; font-size: 14px; font-weight: 750; }
     .loading-spinner { position: absolute; top: 84px; left: 96px; width: 42px; height: 42px; border: 4px solid #dbe3ec; border-top-color: #2563eb; border-radius: 50%; animation: spin .8s linear infinite; }
@@ -166,6 +153,48 @@
     .zone-table th { color: #96adbf; font-weight: 600; }
     .zone-table tr:last-child td { border-bottom: 0; }
     .zone-name { color: #aaf5a0; font-weight: 700; }
+    .device [hidden] { display: none !important; }
+    .device button { font-size: 12px; }
+    .screen-page { position: absolute; inset: 0; z-index: 9; background: #f8fafc; padding: 12px; }
+    .page-header { display: flex; align-items: center; gap: 10px; height: 32px; color: #2563eb; font-size: 14px; font-weight: bold; }
+    .page-header button { width: 64px; min-height: 30px; padding: 0; color: #334155; background: #e2e8f0; border-color: #cbd5e1; }
+    .screen-page p { color: #64748b; font-size: 12px; line-height: 1.5; }
+    .screen-page button { color: #1e293b; background: #eff4f8; border-color: #cbd5e1; }
+    .screen-page button.selected { background: #2563eb; color: #fff; }
+    .settings-grid { position: absolute; left: 16px; top: 60px; display: grid; grid-template-columns: 96px 96px; gap: 10px 16px; }
+    .settings-grid button { height: 52px; border: 0; border-radius: 8px; color: #fff; white-space: pre-line; }
+    .settings-grid button:nth-child(1) { background: #2563eb; }
+    .settings-grid button:nth-child(2) { background: #4f46e5; }
+    .settings-grid button:nth-child(3) { background: #0891b2; }
+    .settings-grid button:nth-child(4) { background: #7c3aed; }
+    .settings-grid button:nth-child(5) { background: #0f766e; }
+    .settings-grid button:nth-child(6) { background: #15803d; }
+    .screen-page .choice-list { display: grid; gap: 6px; margin-top: 16px; }
+    .screen-page .choice-list button { min-height: 38px; }
+    .screen-page .language-choices { display: flex; gap: 4px; margin-top: 20px; }
+    .language-choices button { width: 102px; height: 46px; }
+    .screen-page label { color: #334155; font-size: 14px; }
+    #wifi-status, #gps-data { white-space: pre-line; overflow-wrap: anywhere; }
+    #gps-data { margin-top: 8px; padding: 8px; background: white; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 12px; line-height: 1.65; }
+    #gps-restart { position: absolute; top: 236px; left: 12px; width: 216px; height: 42px; background: #2563eb; color: white; }
+    #gps-indicator { position: absolute; top: 10px; left: 34px; font-size: 12px; }
+    #gps-indicator.searching::before { content: ""; position: absolute; left: -22px; width: 16px; height: 16px; border: 2px solid #e2e8f0; border-top-color: #d97706; border-radius: 50%; animation: spin 1s linear infinite; }
+    #sd-path { width: 154px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; margin-top: 8px; }
+    #sd-up { position: absolute; right: 12px; top: 49px; min-height: 24px; padding: 2px 8px; }
+    #sd-status { margin: 4px 0; }
+    #sd-files { position: absolute; top: 94px; left: 12px; width: 216px; height: 158px; overflow-y: auto; display: grid; align-content: start; gap: 4px; }
+    #sd-files button { min-height: 40px; text-align: left; overflow-wrap: anywhere; }
+    #sd-playing { position: absolute; left: 12px; top: 260px; width: 216px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #2563eb; font-size: 12px; }
+    #sd-stop { position: absolute; top: 282px; left: 12px; width: 216px; min-height: 34px; padding: 3px; background: #94a3b8; color: white; }
+    #sound-volume { margin-top: 10px; font-size: 16px; color: #172033; }
+    #sound-levels { gap: 4px; margin-top: 12px; }
+    #sound-levels button { min-height: 30px; height: 30px; padding: 2px; }
+    #notice-dialog { z-index: 20; inset: 90px 20px; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 0 0 100px #0003; text-align: center; }
+    #notice-message { margin: 0 0 10px; white-space: pre-line; color: #1e293b; }
+    .controls select { width: 100%; padding: 7px; background: #17283a; color: #eaf2f8; border: 1px solid #37536b; }
+    .controls input[type="checkbox"] { margin-right: 6px; }
+    #runtime-status, #record-status, #download-status { white-space: pre-line; overflow-wrap: anywhere; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
     @media (max-width: 700px) {
       .layout { grid-template-columns: 1fr; }
       .controls { grid-template-columns: 1fr; }
@@ -176,12 +205,13 @@
 <body>
 <main>
   <h1>Aero Probe UI Simulator</h1>
-  <p class="intro">The display preview matches the physical screen pixel-for-pixel (240×320; one CSS pixel per display pixel).</p>
+  <p class="intro">Current BLE-only firmware UI, 240×320. The controls on the right inject simulated hardware events and web commands; no real GPS, radio, SD card or audio is used.</p>
   <div class="layout">
     <section aria-label="240 by 320 LCD preview">
       <div class="device-shell">
       <div class="device">
-        <div class="top"><span class="brand">AERO PROBE</span><span class="badge" id="log-status">LOG OFF</span></div>
+        <div class="top"><span class="badge" id="log-status">LOG OFF</span></div>
+        <span id="gps-indicator">GPS --</span>
         <div class="rule"></div>
         <div class="card cda-card">
           <div class="cda-details">
@@ -212,10 +242,8 @@
           <div class="dialog-heading"><button type="button" class="dialog-close" id="dialog-close" aria-label="Back">‹ BACK</button><span>POWER SOURCE</span></div>
           <div class="dialog-list" id="dialog-list">
             <button type="button" class="device-option" id="scan-again"><strong>SCAN BLE DEVICES</strong><span>Find power meters and smart trainers</span></button>
-            <button type="button" class="device-option" data-source="BLE"><strong>BLE · Assioma Duo</strong><span>Cycling Power · Available</span></button>
-            <button type="button" class="device-option" data-source="BLE"><strong>BLE · Smart Trainer</strong><span>FTMS Indoor Bike Data · Available</span></button>
-            <button type="button" class="device-option" data-source="ANT+"><strong>ANT+ · Bike Power</strong><span>Search for ANT+ power meters</span></button>
             <button type="button" class="device-option" id="virtual-source"><strong>VIRTUAL POWER METER</strong><span>Set live power and cadence</span></button>
+            <button type="button" class="device-option" id="auto-source"><strong>AUTO SELECT</strong><span>Use the connected BLE power meter</span></button>
             <p class="dialog-note">Select a device to confirm. Use the top-left back button to return.</p>
           </div>
           <div class="dialog-confirm" id="dialog-confirm">
@@ -243,15 +271,56 @@
           </div>
           <div class="virtual-hint">Drag either slider to update live power and cadence.</div>
         </div>
-        <div class="settings-dialog" id="settings-dialog" aria-hidden="true">
-          <button type="button" class="settings-back" id="settings-back">‹ BACK</button>
-          <div class="settings-title" id="settings-title">SETTINGS</div>
-          <div class="settings-language" id="settings-language">Interface language</div>
-          <button type="button" class="settings-choice" id="language-en">English</button>
-          <button type="button" class="settings-choice" id="language-zh">简体中文</button>
-          <div class="settings-meter-label" id="settings-meter-label">Power meter</div>
-          <button type="button" class="settings-choice" id="settings-meter">Select power meter</button>
-        </div>
+        <section class="screen-page" id="settings-dialog" hidden>
+          <header class="page-header"><button id="settings-back" type="button">‹ BACK</button>SETTINGS</header>
+          <div class="settings-grid">
+            <button id="settings-meter" type="button">⏻<br>POWER</button>
+            <button id="settings-language" type="button">☷<br>LANG</button>
+            <button id="settings-wifi" type="button">⌁<br>WI-FI</button>
+            <button id="settings-sound" type="button">♫<br>SOUND</button>
+            <button id="settings-sd" type="button">▣<br>SD/MUSIC</button>
+            <button id="settings-gps" type="button">⌖<br>GPS</button>
+          </div>
+        </section>
+        <section class="screen-page" id="language-page" hidden>
+          <header class="page-header"><button data-back="settings-dialog" type="button">‹ BACK</button>LANGUAGE</header>
+          <p>Choose interface language</p>
+          <div class="language-choices"><button id="language-en" class="selected" type="button">English</button><button id="language-zh" type="button">简体中文</button></div>
+          <p>Chinese selection is temporarily disabled in the firmware. The display stays English.</p>
+        </section>
+        <section class="screen-page" id="wifi-page" hidden>
+          <header class="page-header"><button data-back="settings-dialog" type="button">‹ BACK</button>WI-FI</header>
+          <label><input id="wifi-enabled" type="checkbox">Wi-Fi</label>
+          <p id="wifi-status">Wi-Fi is off</p>
+        </section>
+        <section class="screen-page" id="sound-page" hidden>
+          <header class="page-header"><button data-back="settings-dialog" type="button">‹ BACK</button>SOUND</header>
+          <p>Tap a level to set volume.<br>Preview tones are disabled in this firmware.</p>
+          <div id="sound-volume">Volume: 55%</div>
+          <div class="choice-list" id="sound-levels">
+            <button data-volume="0" type="button">MUTE</button><button data-volume="25" type="button">25%</button>
+            <button data-volume="50" type="button">50%</button><button data-volume="75" type="button">75%</button><button data-volume="100" type="button">100%</button>
+          </div>
+        </section>
+        <section class="screen-page" id="gps-page" hidden>
+          <header class="page-header"><button data-back="settings-dialog" type="button">‹ BACK</button>GPS</header>
+          <p id="gps-fix">Searching satellites...</p><div id="gps-data"></div>
+          <button id="gps-restart" type="button">↻ RESTART GPS</button>
+        </section>
+        <section class="screen-page" id="sd-page" hidden>
+          <header class="page-header"><button data-back="settings-dialog" type="button">‹ BACK</button>SD CARD</header>
+          <div id="sd-path">/</div><button id="sd-up" type="button" hidden>UP</button>
+          <p id="sd-status"></p><div id="sd-files"></div>
+          <div id="sd-playing">Stopped</div><button id="sd-stop" type="button">■ STOP</button>
+        </section>
+        <section class="screen-page" id="ble-devices-page" hidden>
+          <header class="page-header"><button data-back="touch-dialog" type="button">‹ BACK</button>BLE DEVICES</header>
+          <p id="ble-device-status">No scan yet</p><button id="ble-scan-again" type="button">SCAN AGAIN</button>
+          <div class="choice-list" id="ble-device-list"></div>
+        </section>
+        <section class="screen-page" id="notice-dialog" hidden>
+          <p id="notice-message"></p><button id="notice-dismiss" type="button">OK</button>
+        </section>
       </div>
       </div>
       <div class="notice">The FS3000 measures wind speed only; it does not provide temperature. A BME280 can provide temperature for air-density calculation. CdA is an estimate assuming calm air, level ground, and steady speed. Apparent wind is approximated as ground speed; one wind sensor cannot measure true ground speed or wind direction.</div>
@@ -267,14 +336,16 @@
         <div class="buttons">
           <button id="choose-meter" type="button">Choose Power Meter</button>
           <button id="connect-ble" type="button">Connect BLE</button>
-          <button id="connect-ant" type="button">Connect ANT+</button>
           <button id="disconnect" type="button">Disconnect</button>
         </div>
         <label for="power-input">Power Input <span class="value" id="power-value">230 W</span></label>
         <input id="power-input" type="range" min="0" max="1500" step="1" value="230">
         <label for="cadence-input">Cadence <span class="value" id="cadence-value">88 rpm</span></label>
         <input id="cadence-input" type="range" min="0" max="180" step="1" value="88">
-        <p class="help">Choose a connection type to simulate its source, power, and cadence.</p>
+        <label for="ble-speed-input">BLE ground speed (km/h, if provided)</label><input id="ble-speed-input" type="range" min="0" max="72" step=".1" value="0">
+        <label for="ble-result">BLE operation result</label>
+        <select id="ble-result"><option value="success">Success (CPS / FTMS)</option><option value="empty">No devices found</option><option value="failure">Connection / GATT failure</option></select>
+        <p class="help">BLE inputs are separate from virtual sliders. Connect BLE injects a connection; the screen picker performs a timed scan and confirmation. No ANT support.</p>
       </div>
       <div class="panel wide">
         <h2>Sampling Controls</h2>
@@ -284,7 +355,30 @@
           <button id="reset" type="button">Reset Averages</button>
           <button id="toggle-run" type="button">Pause Auto Sampling</button>
         </div>
-        <p class="help">Auto sampling records one sample per second. The display shows live power. Use the device picker to try the loading, back-navigation, and FTMS trainer flows.</p>
+        <p class="help">Sampling advances uptime and the 3-second CdA power average. It does not start CSV recording; use the simulated web controls below.</p>
+      </div>
+      <div class="panel">
+        <h2>GPS / Sensors (simulated)</h2>
+        <label for="gps-input">GPS module state</label>
+        <select id="gps-input"><option value="searching">Present, searching satellites</option><option value="fixed">Fix acquired</option><option value="stale">Fix stale (&gt;3 seconds)</option><option value="absent">No module / no UART bytes</option></select>
+        <label for="gps-speed-input">GPS ground speed (km/h)</label><input id="gps-speed-input" type="range" min="0" max="72" step=".1" value="30">
+        <label><input id="wind-valid" type="checkbox" checked>Wind data valid</label>
+        <label for="posture-input">BLE posture sensor</label><select id="posture-input"><option value="absent">Not found</option><option value="connected">Connected, pitch -15°</option></select>
+        <p class="help">GPS page shows UTC / UTC+8, coordinates, SAT / HDOP, altitude and speed. Logs use fresh GPS speed; dashboard CdA still approximates ground speed from wind.</p>
+      </div>
+      <div class="panel">
+        <h2>Wi-Fi / SD (simulated)</h2>
+        <label for="wifi-input">Wi-Fi environment</label><select id="wifi-input"><option value="unconfigured">No saved credentials (SmartConfig)</option><option value="connected">Credentials and access point available</option><option value="disconnected">Access point unavailable</option></select>
+        <label><input id="sd-ready" type="checkbox" checked>FAT32 SD card mounted</label>
+        <label><input id="sd-busy" type="checkbox">SD writer busy</label>
+        <button id="boot-key" type="button">BOOT → Settings</button>
+        <p class="help" id="runtime-status" role="status"></p>
+      </div>
+      <div class="panel wide">
+        <h2>Simulated Web Controls / CSV</h2>
+        <div class="buttons"><button id="record-start" type="button">Start Recording</button><button id="record-stop" type="button">Stop Recording</button><button id="download-record" type="button">Download CSV</button></div>
+        <p class="help" id="record-status" role="status"></p><p class="help" id="download-status" role="status"></p>
+        <p class="help">Requires simulated Wi-Fi connection. One download, at most 1 KiB per 20 ms; SD busy retries for up to 5 seconds. CSV has the firmware columns and source IDs 0 / 1 / 3. Demo audio only changes playback state, not browser sound.</p>
       </div>
       <div class="panel wide">
         <h2>ZONE Reference (Estimated CdA)</h2>
@@ -305,347 +399,7 @@
     </section>
   </div>
 </main>
-<script>
-(() => {
-  const $ = (id) => document.getElementById(id);
-  const query = (selector) => document.querySelector(selector);
-  const state = { source: null, power: 230, cadence: 88, wind: 9.5, samples: [], seconds: 0, running: false, language: localStorage.getItem("aero-language") === "zh" ? "zh" : "en" };
-  const stateMeter = { name: null };
-  const maxSamples = 60;
-  const model = { totalMassKg: 85, crr: 0.004, airDensityKgM3: 1.225, drivetrainEfficiency: 0.975 };
-  const zones = [
-    { zone: 7, upper: 0.23, posture: "ELITE TT" },
-    { zone: 6, upper: 0.27, posture: "RACE TT" },
-    { zone: 5, upper: 0.31, posture: "VERY AERO" },
-    { zone: 4, upper: 0.36, posture: "AGGRESSIVE" },
-    { zone: 3, upper: 0.42, posture: "AERO" },
-    { zone: 2, upper: 0.50, posture: "LOW / DROPS" },
-    { zone: 1, upper: Infinity, posture: "UPRIGHT" }
-  ];
-
-  function estimateCda(powerW, windMps) {
-    if (!state.source || powerW <= 0 || windMps < 3) return null;
-    const groundSpeedMps = windMps;
-    const wheelPowerW = powerW * model.drivetrainEfficiency;
-    const rollingPowerW = model.totalMassKg * 9.80665 * model.crr * groundSpeedMps;
-    const aeroPowerW = wheelPowerW - rollingPowerW;
-    if (aeroPowerW <= 0) return null;
-    return aeroPowerW / (0.5 * model.airDensityKgM3 * groundSpeedMps ** 3);
-  }
-
-  function zoneFor(cda) {
-    return cda == null ? null : zones.find((zone) => cda < zone.upper) || zones[zones.length - 1];
-  }
-
-  function formatTime(seconds) {
-    const hours = Math.floor(seconds / 3600) % 24;
-    const minutes = Math.floor(seconds / 60) % 60;
-    const secs = seconds % 60;
-    return [hours, minutes, secs].map((v) => String(v).padStart(2, "0")).join(":");
-  }
-
-  function updateLanguage() {
-    const zh = state.language === "zh";
-    document.documentElement.lang = zh ? "zh-CN" : "en";
-    $("settings-title").textContent = zh ? "设置" : "SETTINGS";
-    $("settings-language").textContent = zh ? "界面语言" : "Interface language";
-    $("settings-back").textContent = zh ? "‹ 返回" : "‹ BACK";
-    $("language-en").classList.toggle("selected", !zh);
-    $("language-zh").classList.toggle("selected", zh);
-    $("dialog-close").textContent = zh ? "‹ 返回" : "‹ BACK";
-    $("touch-dialog").querySelector(".dialog-heading span").textContent = zh ? "功率来源" : "POWER SOURCE";
-    const options = document.querySelectorAll(".dialog-list .device-option");
-    const labels = zh
-      ? [["扫描蓝牙设备", "查找功率计和智能骑行台"], ["BLE · Assioma Duo", "骑行功率 · 可用"], ["BLE · Smart Trainer", "FTMS 室内骑行数据 · 可用"], ["ANT+ · Bike Power", "搜索 ANT+ 功率计"], ["虚拟功率计", "手动设置功率和踏频"]]
-      : [["SCAN BLE DEVICES", "Find power meters and smart trainers"], ["BLE · Assioma Duo", "Cycling Power · Available"], ["BLE · Smart Trainer", "FTMS Indoor Bike Data · Available"], ["ANT+ · Bike Power", "Search for ANT+ power meters"], ["VIRTUAL POWER METER", "Set live power and cadence"]];
-    options.forEach((option, i) => {
-      option.querySelector("strong").textContent = labels[i][0];
-      option.querySelector("span").textContent = labels[i][1];
-    });
-    document.querySelector(".dialog-note").textContent = zh
-      ? "选择设备后确认连接。使用左上角返回。"
-      : "Select a device to confirm. Use the top-left back button to return.";
-    $("confirm-connect").textContent = zh ? "连接" : "CONNECT";
-    $("loading-back").textContent = zh ? "‹ 返回" : "‹ BACK";
-    $("loading-title").textContent = zh ? "正在加载" : "LOADING";
-    $("virtual-back").textContent = zh ? "‹ 返回" : "‹ BACK";
-    $("virtual-title").textContent = zh ? "虚拟功率计" : "VIRTUAL POWER";
-    $("virtual-power-input").previousElementSibling.firstChild.textContent = zh ? "功率 " : "POWER ";
-    $("virtual-cadence-input").previousElementSibling.firstChild.textContent = zh ? "踏频 " : "CADENCE ";
-    query(".virtual-hint").textContent = zh ? "拖动滑块设置实时功率和踏频。" : "Drag either slider to update live power and cadence.";
-    query(".cda-title").textContent = zh ? "估算 CdA" : "ESTIMATED CdA";
-    $("wind-title").textContent = zh ? "风速" : "WIND SPEED";
-    query(".wind-card .wind-row").setAttribute("aria-label", zh ? "风速" : "Wind speed");
-    query(".avg3").textContent = zh ? "实时功率" : "LIVE POWER";
-    $("settings-meter-label").textContent = zh ? "功率计" : "Power meter";
-    $("settings-meter").textContent = zh ? "选择功率计" : "Select power meter";
-    render();
-  }
-
-  function render() {
-    const displayedPower = state.source ? state.power : 0;
-    const displayedCadence = state.source ? state.cadence : 0;
-    const cda = estimateCda(displayedPower, state.wind);
-    const zone = zoneFor(cda);
-    $("wind-reading").textContent = `${(state.wind * 3.6).toFixed(1)} km/h`;
-    const recent3 = state.samples.slice(-3);
-    const average = (values) => values.length ? values.reduce((sum, item) => sum + item, 0) / values.length : 0;
-    $("power-reading").textContent = `${Math.round(displayedPower)} W`;
-    $("cadence-reading").textContent = state.language === "zh"
-      ? `踏频 ${Math.round(displayedCadence)} rpm`
-      : `CADENCE ${Math.round(displayedCadence)} rpm`;
-    $("screen-meter-button").style.backgroundColor = state.source === "ANT+"
-      ? "#15803d"
-      : state.source === "VIRTUAL" ? "#d97706" : "#2563eb";
-    $("screen-meter-button").style.color = "#fff";
-    $("zone-reading").textContent = zone ? String(zone.zone) : "--";
-    $("zone-reading").style.color = zone ? "#2563eb" : "#94a3b8";
-    $("cda-reading").textContent = cda == null ? "-- m2" : `${cda.toFixed(2)} m2`;
-    const postureZh = { "ELITE TT": "精英 TT", "RACE TT": "竞赛 TT", "VERY AERO": "极致气动", AGGRESSIVE: "激进", AERO: "气动", "LOW / DROPS": "低位 / 下把", UPRIGHT: "直立" };
-    $("posture-reading").textContent = zone
-      ? (state.language === "zh" ? postureZh[zone.posture] : zone.posture)
-      : (state.language === "zh" ? "等待数据" : "WAITING FOR DATA");
-    $("screen-meter-button").textContent = state.language === "zh" ? "⚙ 设置" : "⚙ SET";
-    $("clock-reading").textContent = formatTime(state.seconds);
-    $("log-status").textContent = state.language === "zh"
-      ? (state.running ? "日志: 正常" : "日志: 关闭")
-      : (state.running ? "LOG: OK" : "LOG: OFF");
-    $("log-status").style.color = state.running ? "#16a34a" : "#64748b";
-  }
-
-  function sample(seconds = 1) {
-    for (let i = 0; i < seconds; i++) {
-      state.samples.push(state.source ? state.power : 0);
-      if (state.samples.length > maxSamples) state.samples.shift();
-      state.seconds++;
-    }
-    render();
-  }
-
-  $("wind-input").addEventListener("input", (event) => {
-    state.wind = Number(event.target.value) / 3.6;
-    $("wind-value").textContent = `${Number(event.target.value).toFixed(1)} km/h`;
-    render();
-  });
-  $("power-input").addEventListener("input", (event) => {
-    state.power = Number(event.target.value);
-    $("power-value").textContent = `${Math.round(state.power)} W`;
-    $("virtual-power-input").value = String(state.power);
-    $("virtual-power-value").textContent = `${Math.round(state.power)} W`;
-    render();
-  });
-  $("cadence-input").addEventListener("input", (event) => {
-    state.cadence = Number(event.target.value);
-    $("cadence-value").textContent = `${Math.round(state.cadence)} rpm`;
-    $("virtual-cadence-input").value = String(state.cadence);
-    $("virtual-cadence-value").textContent = `${Math.round(state.cadence)} rpm`;
-    render();
-  });
-  $("virtual-power-input").addEventListener("input", (event) => {
-    state.power = Number(event.target.value);
-    $("power-input").value = String(state.power);
-    $("power-value").textContent = `${Math.round(state.power)} W`;
-    $("virtual-power-value").textContent = `${Math.round(state.power)} W`;
-    render();
-  });
-  $("virtual-cadence-input").addEventListener("input", (event) => {
-    state.cadence = Number(event.target.value);
-    $("cadence-input").value = String(state.cadence);
-    $("cadence-value").textContent = `${Math.round(state.cadence)} rpm`;
-    $("virtual-cadence-value").textContent = `${Math.round(state.cadence)} rpm`;
-    render();
-  });
-  let pickerFromSettings = false;
-  function openMeterDialog(fromSettings = false) {
-    pickerFromSettings = fromSettings;
-    $("touch-dialog").classList.add("open");
-    $("touch-dialog").setAttribute("aria-hidden", "false");
-  }
-  function closeMeterDialog() {
-    $("touch-dialog").classList.remove("open");
-    $("touch-dialog").setAttribute("aria-hidden", "true");
-    $("dialog-confirm").classList.remove("open");
-    $("dialog-list").style.display = "flex";
-  }
-  let loadingTimer = null;
-  function beginLoading(message, done) {
-    if (state.language === "zh") {
-      if (message.startsWith("Scanning for")) message = "正在搜索附近的蓝牙功率计和智能骑行台...";
-      else if (message.startsWith("Connecting to")) message = `正在连接 ${message.slice("Connecting to ".length, -3)}...`;
-    }
-    $("loading-message").textContent = message;
-    $("loading-spinner").style.display = "block";
-    $("ble-loading").classList.add("open");
-    $("ble-loading").setAttribute("aria-hidden", "false");
-    loadingTimer = setTimeout(() => {
-      loadingTimer = null;
-      $("ble-loading").classList.remove("open");
-      $("ble-loading").setAttribute("aria-hidden", "true");
-      done();
-    }, 900);
-  }
-  function connect(source, name = null) {
-    state.source = source;
-    stateMeter.name = name;
-    $("connect-ble").classList.toggle("selected", source === "BLE");
-    $("connect-ant").classList.toggle("selected", source === "ANT+");
-    $("virtual-source").classList.toggle("selected", source === "VIRTUAL");
-    $("virtual-dialog").classList.remove("open");
-    $("virtual-dialog").setAttribute("aria-hidden", "true");
-    $("ble-loading").classList.remove("open");
-    $("ble-loading").setAttribute("aria-hidden", "true");
-    closeMeterDialog();
-    render();
-  }
-  function scanAgain() {
-    closeMeterDialog();
-    beginLoading("Scanning for nearby BLE power meters and smart trainers...", openMeterDialog);
-  }
-  let selectedDevice = null;
-  function connectSelected(option) {
-    selectedDevice = {
-      source: option.dataset.source,
-      name: option.querySelector("strong").textContent.split("·")[1].trim(),
-      details: option.querySelector("span").textContent
-    };
-    $("confirm-device-name").textContent = selectedDevice.name;
-    $("confirm-device-details").textContent = `${selectedDevice.source} · ${selectedDevice.details}`;
-    $("dialog-list").style.display = "none";
-    $("dialog-confirm").classList.add("open");
-  }
-  function confirmSelected() {
-    if (!selectedDevice) return;
-    const { source, name } = selectedDevice;
-    closeMeterDialog();
-    beginLoading(`Connecting to ${name}...`, () => connect(source, name));
-  }
-  function disconnect() {
-    state.source = null;
-    stateMeter.name = null;
-    state.power = 0;
-    state.cadence = 0;
-    $("power-input").value = "0";
-    $("cadence-input").value = "0";
-    $("virtual-power-input").value = "0";
-    $("virtual-cadence-input").value = "0";
-    $("virtual-power-value").textContent = "0 W";
-    $("virtual-cadence-value").textContent = "0 rpm";
-    $("power-value").textContent = "0 W";
-    $("cadence-value").textContent = "0 rpm";
-    $("connect-ble").classList.remove("selected");
-    $("connect-ant").classList.remove("selected");
-    $("virtual-source").classList.remove("selected");
-    render();
-  }
-  $("connect-ble").addEventListener("click", () => connect("BLE"));
-  $("connect-ant").addEventListener("click", () => connect("ANT+"));
-  $("screen-meter-button").addEventListener("click", () => {
-    $("settings-dialog").classList.add("open");
-    $("settings-dialog").setAttribute("aria-hidden", "false");
-  });
-  $("choose-meter").addEventListener("click", () => openMeterDialog());
-  $("settings-meter").addEventListener("click", () => {
-    $("settings-dialog").classList.remove("open");
-    $("settings-dialog").setAttribute("aria-hidden", "true");
-    openMeterDialog(true);
-  });
-  $("settings-back").addEventListener("click", () => {
-    $("settings-dialog").classList.remove("open");
-    $("settings-dialog").setAttribute("aria-hidden", "true");
-  });
-  $("language-en").addEventListener("click", () => {
-    state.language = "en";
-    localStorage.setItem("aero-language", "en");
-    updateLanguage();
-  });
-  $("language-zh").addEventListener("click", () => {
-    state.language = "zh";
-    localStorage.setItem("aero-language", "zh");
-    updateLanguage();
-  });
-  $("dialog-close").addEventListener("click", () => {
-    if ($("dialog-confirm").classList.contains("open")) {
-      $("dialog-confirm").classList.remove("open");
-      $("dialog-list").style.display = "flex";
-      selectedDevice = null;
-    } else {
-      closeMeterDialog();
-      if (pickerFromSettings) {
-        $("settings-dialog").classList.add("open");
-        $("settings-dialog").setAttribute("aria-hidden", "false");
-      }
-    }
-  });
-  $("confirm-connect").addEventListener("click", confirmSelected);
-  $("scan-again").addEventListener("click", scanAgain);
-  $("virtual-source").addEventListener("click", () => {
-    state.source = "VIRTUAL";
-    stateMeter.name = "Virtual Power Meter";
-    $("connect-ble").classList.remove("selected");
-    $("connect-ant").classList.remove("selected");
-    $("virtual-source").classList.add("selected");
-    closeMeterDialog();
-    $("virtual-dialog").classList.add("open");
-    $("virtual-dialog").setAttribute("aria-hidden", "false");
-    render();
-  });
-  $("virtual-back").addEventListener("click", () => {
-    $("virtual-dialog").classList.remove("open");
-    $("virtual-dialog").setAttribute("aria-hidden", "true");
-    openMeterDialog(pickerFromSettings);
-  });
-  document.querySelectorAll(".device-option[data-source]").forEach((option) => {
-    option.addEventListener("click", () => connectSelected(option));
-  });
-  $("loading-back").addEventListener("click", () => {
-    if (loadingTimer !== null) clearTimeout(loadingTimer);
-    loadingTimer = null;
-    $("ble-loading").classList.remove("open");
-    $("ble-loading").setAttribute("aria-hidden", "true");
-    openMeterDialog();
-  });
-  $("disconnect").addEventListener("click", disconnect);
-  $("step-one").addEventListener("click", () => sample(1));
-  $("step-sixty").addEventListener("click", () => sample(60));
-  $("reset").addEventListener("click", () => { state.samples = []; state.seconds = 0; render(); });
-  $("toggle-run").textContent = "Start Auto Sampling";
-  $("toggle-run").addEventListener("click", (event) => {
-    state.running = !state.running;
-    event.target.textContent = state.running ? "Pause Auto Sampling" : "Start Auto Sampling";
-    render();
-  });
-
-  setInterval(() => { if (state.running) sample(1); }, 1000);
-  window.aeroProbeSim = {
-    connect,
-    disconnect,
-    openMeterDialog,
-    setInput(values) {
-      if ("wind" in values) { state.wind = Number(values.wind) / 3.6; $("wind-input").value = String(values.wind); $("wind-value").textContent = `${Number(values.wind).toFixed(1)} km/h`; }
-      if ("power" in values) { state.power = Number(values.power); $("power-input").value = String(state.power); $("power-value").textContent = `${Math.round(state.power)} W`; }
-      if ("cadence" in values) { state.cadence = Number(values.cadence); $("cadence-input").value = String(state.cadence); $("cadence-value").textContent = `${Math.round(state.cadence)} rpm`; }
-      render();
-    },
-    step: sample,
-    reset() { state.samples = []; state.seconds = 0; render(); },
-    snapshot() {
-      return {
-        source: state.source,
-        wind: state.wind * 3.6,
-        windMps: state.wind,
-        power: state.source ? state.power : 0,
-        cadence: state.source ? state.cadence : 0,
-        cda: estimateCda(state.source ? state.power : 0, state.wind),
-        zone: zoneFor(estimateCda(state.source ? state.power : 0, state.wind))?.zone ?? null,
-        average3: state.samples.slice(-3).reduce((sum, value, _, values) => sum + value / values.length, 0),
-        average60: state.samples.slice(-maxSamples).reduce((sum, value, _, values) => sum + value / values.length, 0),
-        sampleCount: state.samples.length,
-        seconds: state.seconds
-      };
-    }
-  };
-  updateLanguage();
-})();
-</script>
+<script src="simulator.js"></script>
+<script src="regression.js"></script>
 </body>
 </html>

@@ -46,7 +46,10 @@ bool BlePosture::tryConnect() {
   NimBLEScan *scan = NimBLEDevice::getScan();
   if (!scan) return false;
   scan->clearResults();
-  NimBLEScanResults results = scan->getResults(4, false);
+  scan->setActiveScan(true);
+  scan->setInterval(100);
+  scan->setWindow(30);
+  NimBLEScanResults results = scan->getResults(1500, false);
 
   for (int i = 0; i < results.getCount(); i++) {
     const NimBLEAdvertisedDevice *ad = results.getDevice(i);

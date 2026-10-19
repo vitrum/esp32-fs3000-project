@@ -104,6 +104,7 @@
 #define BLE_DEVICE_NAME      "AeroProbe"
 #define BLE_WHEEL_CIRC_M     2.105f   // 轮周长(m)，700x25C 约 2.105，按实际外胎设置
 #define BLE_RECONNECT_MS     5000     // 未连接时的重试间隔
+#define BLE_POSTURE_RECONNECT_MS 30000 // 姿态发现限频，减少与 Wi-Fi 的射频争用
 
 // ---- 单传感器 CdA 粗略估算（平路、匀速、静风假设；仅用于趋势参考）----
 #define CDA_TOTAL_MASS_KG          85.0f
@@ -118,19 +119,6 @@
 #define BLE_POSTURE_NAME_PREFIX  "WT"   // WitMotion 设备名前缀（扫描过滤用）
 
 // ============================================================================
-// ANT+ 功率计（esp32-ant 纯软件栈，见 code/lib/ant/，Apache-2.0）
-// 原理：用 ESP32-S3 自己的 BLE 射频跑 ANT 协议（LE test mode / coexist），
-//       无需外置 ANT 芯片。Bike Power profile 输出功率(W)+踏频(rpm)。
-// 模式：coexist（与 NimBLE 共用射频）——BLE 已建立的连接（如姿态传感器）
-//       保持不断，ANT 借用 NimBLE 被动扫描的射频窗口收包；代价是 ANT 运行
-//       期间 BLE 的"扫描"暂停（所以 BLE 设备要先连接好，见 ANT_POWER_START_DELAY_MS）。
-// 注意：ANT+ 只收不发；同型号功率计若同时支持 ANT+ 与 BLE，可任选一路。
-// ============================================================================
-#define ANT_POWER_ENABLE         1      // 1=启用 ANT+ 功率计接收；0=仅 BLE 功率计
-#define ANT_POWER_START_DELAY_MS 20000  // 启动后延迟再开 ANT(ms)：先给 BLE 姿态/功率计连接窗口
-#define ANT_POWER_PROXIMITY_RSSI -70    // 首次配对的距离门限 dBm（0=不限制，-70≈车上的设备）
-
-// ============================================================================
 // 可选环境传感器 BME280（计算空气密度 ρ = P/(287.05·T)）
 // ============================================================================
 #define BME280_ADDR          0x76     // BME280 默认地址，与板载地址不冲突
@@ -139,9 +127,8 @@
 // Wi-Fi 网页实时数据服务（SmartConfig 配网 + Web 服务器）
 // 见 plan/wifi-web.md
 //
-// 注意射频共存：ESP32-S3 单射频，Wi-Fi / BLE / ANT+ 三者共享。
-// 开启 Wi-Fi 后 BLE/ANT+ 可能出现丢包；如绕圈测试只看实时数据，
-// 可考虑暂停 ANT+（见 config.h 的 ANT_POWER_ENABLE）。
+// Wi-Fi / BLE 共用单射频，由 ESP-IDF 软件共存机制仲裁。
+// 采集时避免持续扫描；网页下载分块读取 SD，不持锁等待网络发送。
 // ============================================================================
 #define WIFI_WEB_ENABLE      1          // 1=启用 Wi-Fi 网页服务；0=关闭（省射频/内存）
 #define WIFI_MDNS_HOST       "aeroprobe" // mDNS 主机名 → http://aeroprobe.local/

@@ -27,9 +27,9 @@ public:
 
   // 播放 SD 卡内指定文件（MP3/WAV）。返回是否成功启动。
   bool playFile(const char *path);
-  void releasePlayback();
+  bool releasePlayback();
 
-  void stop();
+  bool stop();
   void pauseResume();
   void setVolume(uint8_t vol);           // 0~100
   uint8_t volume() const { return _volume; }
@@ -49,5 +49,3 @@ private:
 };
 
 extern AudioPlayer audio;
-
-

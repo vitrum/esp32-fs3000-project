@@ -95,7 +95,7 @@ private:
   lv_obj_t *powerSourcePanel_ = nullptr;
   lv_obj_t *powerSourceTitle_ = nullptr;
   lv_obj_t *powerSourceHint_ = nullptr;
-  lv_obj_t *powerSourceOptions_[4] = {};
+  lv_obj_t *powerSourceOptions_[3] = {};
   lv_obj_t *settingsPanel_ = nullptr;
   lv_obj_t *settingsTitle_ = nullptr;
   lv_obj_t *settingsLanguageLabel_ = nullptr;
@@ -251,7 +251,6 @@ private:
   static void onBleBack(lv_event_t *event);
   static void onBleConfirmBack(lv_event_t *event);
   static void onBleLoadingBack(lv_event_t *event);
-  static void onAntSelected(lv_event_t *event);
   static void onAutoSelected(lv_event_t *event);
   static void onVirtualSelected(lv_event_t *event);
   static void onVirtualBack(lv_event_t *event);

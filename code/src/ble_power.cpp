@@ -253,6 +253,8 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     return false;
   }
   scan->setActiveScan(true);
+  scan->setInterval(100);
+  scan->setWindow(30);
   NimBLEScanResults results = scan->getResults(6000, false);
 
   for (int pass = 0; pass < 2 && count < capacity; ++pass) {
