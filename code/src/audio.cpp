@@ -1,235 +1,68 @@
-// ============================================================================
-// 音频模块
-//   1) 开机 / 关机提示音：优先播放编译进固件的 WAV 音效
-//      （assets/boot.wav / assets/shutdown.wav，PCM 16bit 44.1kHz 立体声）；
-//      若内嵌资源缺失或解析失败，回退到 I2S 合成的「嘟嘟」声。
-//   2) 播放 SD 卡内 MP3：用 ESP32-audioI2S 库。
-//
-// 设计：统一使用 I2S_NUM_0（即 PCM5101 所在的 I2S 端口）。
-//   - 为避免两个 I2S 使用者争用，MP3 播放的 Audio 对象按需创建、
-//     播完/停止后销毁（其析构会 uninstall I2S）。
-//   - 提示音直接安装 I2S_NUM_0 并写合成 PCM；发完即卸载。
-//   - 二者不会同时占用 I2S。
-// ============================================================================
+// SD-card audio playback through ESP32-audioI2S.
 #include "audio.h"
 #include "config.h"
 #include "csv_logger.h"   // sdFs() / sdCardReady()
 
 #include <Audio.h>
 #include <driver/i2s.h>
+#include <esp_heap_caps.h>
 #include <memory>
-
-// 编译进固件的 WAV 音效（见 platformio.ini 的 board_build.embed_files）。
-// 符号名由 PlatformIO 依据文件路径生成：
-//   assets/boot.wav     -> _binary_assets_boot_wav_start     / _binary_assets_boot_wav_end
-//   assets/shutdown.wav -> _binary_assets_shutdown_wav_start / _binary_assets_shutdown_wav_end
-extern const uint8_t boot_wav_start[]     asm("_binary_assets_boot_wav_start");
-extern const uint8_t boot_wav_end[]       asm("_binary_assets_boot_wav_end");
-extern const uint8_t shutdown_wav_start[] asm("_binary_assets_shutdown_wav_start");
-extern const uint8_t shutdown_wav_end[]   asm("_binary_assets_shutdown_wav_end");
+#include <new>
 
 AudioPlayer audio;
 
 namespace {
-constexpr uint32_t kSampleRate = 44100;
 constexpr i2s_port_t kI2sPort = I2S_NUM_0;   // 与 PCM5101 一致
+constexpr size_t kAudioDmaCount = 4;
+constexpr size_t kAudioDmaLength = 128;
+constexpr size_t kAudioMinDmaBlock = 12 * 1024;
 
 std::unique_ptr<Audio> g_audio;   // 仅在 MP3 播放期间存在
-bool g_beeperReady = false;
+bool g_audioI2sInstalled = false;
 
-// ---- 提示音 I2S（独占 I2S_NUM_0）----
-bool beeperInit() {
-  if (g_beeperReady) return true;
-  if (g_audio) { g_audio->stopSong(); g_audio.reset(); }  // 释放库占用的 I2S
-
-  i2s_config_t cfg = {};
-  cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
-  cfg.sample_rate = kSampleRate;
-  cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
-  cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
-  cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
-  cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-  cfg.dma_buf_count = 8;
-  cfg.dma_buf_len = 256;
-  cfg.use_apll = false;
-  cfg.tx_desc_auto_clear = true;
-
-  esp_err_t err = i2s_driver_install(kI2sPort, &cfg, 0, NULL);
-  if (err != ESP_OK) {
-    Serial.printf("[AUDIO] beeper i2s_driver_install failed: %d\n", err);
+bool installAudioI2s() {
+  if (g_audioI2sInstalled) return true;
+  const size_t largestBlock =
+      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  if (largestBlock < kAudioMinDmaBlock) {
+    Serial.printf("[AUDIO] insufficient DMA heap: largest=%u required=%u\n",
+                  (unsigned)largestBlock, (unsigned)kAudioMinDmaBlock);
     return false;
   }
-  i2s_pin_config_t pins = {};
-  pins.bck_io_num = PIN_I2S_BCLK;
-  pins.ws_io_num = PIN_I2S_LRC;
-  pins.data_out_num = PIN_I2S_DOUT;
-  pins.data_in_num = I2S_PIN_NO_CHANGE;
-  pins.mck_io_num = I2S_PIN_NO_CHANGE;
-  err = i2s_set_pin(kI2sPort, &pins);
-  if (err != ESP_OK) {
-    Serial.printf("[AUDIO] beeper i2s_set_pin failed: %d\n", err);
-    i2s_driver_uninstall(kI2sPort);
+
+  i2s_config_t config = {};
+  config.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
+  config.sample_rate = 44100;
+  config.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  config.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
+  config.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
+  config.dma_buf_count = kAudioDmaCount;
+  config.dma_buf_len = kAudioDmaLength;
+  config.use_apll = false;
+  config.tx_desc_auto_clear = true;
+
+  const esp_err_t result = i2s_driver_install(kI2sPort, &config, 0, nullptr);
+  if (result != ESP_OK) {
+    Serial.printf("[AUDIO] I2S DMA install failed: %s free=%u largest=%u\n",
+                  esp_err_to_name(result),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
     return false;
   }
-  i2s_zero_dma_buffer(kI2sPort);
-  g_beeperReady = true;
-  Serial.println("[AUDIO] beeper I2S ready (I2S0 48/38/47)");
+  g_audioI2sInstalled = true;
   return true;
 }
 
-void beeperDeinit() {
-  if (!g_beeperReady) return;
+void uninstallAudioI2s() {
+  if (!g_audioI2sInstalled) return;
   i2s_driver_uninstall(kI2sPort);
-  g_beeperReady = false;
-}
-
-// 发一个音：freq(Hz)，durMs 时长。50% 方波，两端 4ms 淡入淡出。
-void beepTone(float freq, uint32_t durMs, float amplitude = 0.5f) {
-  if (!g_beeperReady) return;
-  const uint32_t total = (uint32_t)((uint64_t)kSampleRate * durMs / 1000);
-  const uint32_t fade = kSampleRate * 4 / 1000;
-  uint32_t halfPeriod = (uint32_t)(kSampleRate / (2.0f * freq));
-  if (halfPeriod == 0) halfPeriod = 1;
-
-  int16_t frame[256 * 2];
-  uint32_t phase = 0;
-  uint32_t produced = 0;
-  while (produced < total) {
-    uint32_t chunk = total - produced;
-    if (chunk > 256) chunk = 256;
-    for (uint32_t n = 0; n < chunk; ++n) {
-      const uint32_t i = produced + n;
-      float env = 1.0f;
-      if (i < fade) env = (float)i / fade;
-      else if (i > total - fade) env = (float)(total - i) / fade;
-      if (env < 0) env = 0;
-      if (env > 1) env = 1;
-      const int16_t s = (phase < halfPeriod)
-                            ? (int16_t)(30000 * amplitude * env)
-                            : (int16_t)(-30000 * amplitude * env);
-      frame[n * 2] = s;
-      frame[n * 2 + 1] = s;
-      if (++phase >= 2 * halfPeriod) phase = 0;
-    }
-    size_t written = 0;
-    i2s_write(kI2sPort, frame, chunk * 2 * sizeof(int16_t), &written,
-              portMAX_DELAY);
-    produced += chunk;
-  }
-}
-
-void beepSilence(uint32_t durMs) {
-  if (!g_beeperReady) return;
-  const uint32_t total = (uint32_t)((uint64_t)kSampleRate * durMs / 1000);
-  int16_t frame[256 * 2] = {};
-  uint32_t produced = 0;
-  while (produced < total) {
-    uint32_t chunk = total - produced;
-    if (chunk > 256) chunk = 256;
-    size_t written = 0;
-    i2s_write(kI2sPort, frame, chunk * 2 * sizeof(int16_t), &written,
-              portMAX_DELAY);
-    produced += chunk;
-  }
-}
-
-// 小端读取工具
-inline uint16_t rdU16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
-inline uint32_t rdU32(const uint8_t *p) {
-  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
-         ((uint32_t)p[3] << 24);
-}
-
-// 把一段 PCM 16bit 立体声数据流式写入 I2S（按 256 帧分块，避免大缓冲）。
-void i2sWritePcm16Stereo(const uint8_t *data, size_t bytes,
-                         bool stereo, uint8_t vol) {
-  if (!g_beeperReady || !data || bytes < 2) return;
-  // 按帧对齐：stereo -> 4 字节/帧，mono -> 2 字节/帧
-  const size_t frameBytes = stereo ? 4 : 2;
-  const size_t frames = bytes / frameBytes;
-
-  // 音量：ESP32-audioI2S 的 0~100 曲线近似，这里用线性 + 轻微平方根
-  float gain = (float)vol / 100.0f;
-  if (gain < 0) gain = 0;
-  if (gain > 1) gain = 1;
-
-  constexpr size_t kFrames = 256;
-  int16_t out[kFrames * 2];
-  size_t produced = 0;
-  while (produced < frames) {
-    size_t n = frames - produced;
-    if (n > kFrames) n = kFrames;
-    for (size_t i = 0; i < n; ++i) {
-      const uint8_t *src = data + (produced + i) * frameBytes;
-      int16_t l = (int16_t)rdU16(src);
-      int16_t r = stereo ? (int16_t)rdU16(src + 2) : l;
-      l = (int16_t)((float)l * gain);
-      r = (int16_t)((float)r * gain);
-      out[i * 2] = l;
-      out[i * 2 + 1] = r;
-    }
-    size_t written = 0;
-    i2s_write(kI2sPort, out, n * 2 * sizeof(int16_t), &written, portMAX_DELAY);
-    produced += n;
-  }
+  g_audioI2sInstalled = false;
 }
 }  // namespace
 
 void AudioPlayer::setTitle(const char *t) {
   snprintf(_title, sizeof(_title), "%s", t ? t : "");
-}
-
-// ============================================================================
-// 从内存 WAV（PCM 16bit）直写 I2S 播放。
-// 解析 RIFF/WAVE，遍历 chunk 找到 fmt 与 data；仅支持 PCM(1)、16bit。
-// 采样率固定按 kSampleRate(44100) 播（本工程音效即 44.1kHz）。
-// 返回 true 表示至少播放了一段 data。
-// ============================================================================
-bool AudioPlayer::playEmbeddedWav(const uint8_t *data, size_t len) {
-  if (!g_beeperReady || !data || len < 44) return false;
-  if (memcmp(data, "RIFF", 4) != 0 || memcmp(data + 8, "WAVE", 4) != 0) {
-    Serial.println("[AUDIO] embedded wav: not RIFF/WAVE");
-    return false;
-  }
-
-  const uint8_t *fmt = nullptr;
-  const uint8_t *pcm = nullptr;
-  size_t pcmLen = 0;
-
-  size_t off = 12;  // 跳过 "RIFF"+size+"WAVE"
-  while (off + 8 <= len) {
-    const uint8_t *ch = data + off;
-    uint32_t csize = rdU32(ch + 4);
-    if (memcmp(ch, "fmt ", 4) == 0) {
-      fmt = ch + 8;
-    } else if (memcmp(ch, "data", 4) == 0) {
-      pcm = ch + 8;
-      pcmLen = csize;
-      // 截断到文件实际长度内
-      if (off + 8 + pcmLen > len) pcmLen = len - (off + 8);
-      break;  // data 之后不再需要解析
-    }
-    off += 8 + csize + (csize & 1);  // chunk 按偶数字节对齐
-  }
-
-  if (!fmt || !pcm || pcmLen == 0) {
-    Serial.println("[AUDIO] embedded wav: no fmt/data chunk");
-    return false;
-  }
-
-  const uint16_t audioFormat = rdU16(fmt + 0);
-  const uint16_t channels = rdU16(fmt + 2);
-  const uint16_t bits = rdU16(fmt + 14);
-  if (audioFormat != 1 || bits != 16 || (channels != 1 && channels != 2)) {
-    Serial.printf("[AUDIO] embedded wav unsupported: fmt=%u ch=%u bits=%u\n",
-                  audioFormat, channels, bits);
-    return false;
-  }
-
-  Serial.printf("[AUDIO] play embedded wav: ch=%u bits=%u pcm=%u bytes\n",
-                channels, bits, (unsigned)pcmLen);
-  i2sWritePcm16Stereo(pcm, pcmLen, channels == 2, _volume);
-  return true;
 }
 
 // ============================================================================
@@ -248,93 +81,44 @@ bool AudioPlayer::begin() {
 }
 
 void AudioPlayer::tick() {
-  if (!_enabled) return;
-  if (g_audio) {
-    g_audio->loop();
-    if (_playing && !g_audio->isRunning()) {
-      _playing = false;
-    }
-  }
+  if (!_enabled || !g_audio) return;
+  g_audio->loop();
+  if (_playing && !g_audio->isRunning()) _playing = false;
 }
 
-// ============================================================================
-// 提示音（两短一长）
-// ============================================================================
 void AudioPlayer::playStartupChime() {
-  if (!_enabled) return;
-  if (!beeperInit()) return;
-  _playing = false;
-  setTitle("boot");
-
-  // 优先播放编译进固件的开机音效
-  if (playEmbeddedWav(boot_wav_start, (size_t)(boot_wav_end - boot_wav_start))) {
-    Serial.println("[AUDIO] startup chime (embedded wav)");
-    beepSilence(30);
-    beeperDeinit();
-    setTitle("");
-    return;
-  }
-
-  // 回退：合成「嘟嘟」声（两短一长）
-  Serial.println("[AUDIO] startup chime (fallback beep)");
-  beepTone(880.0f, 120);
-  beepSilence(70);
-  beepTone(880.0f, 120);
-  beepSilence(70);
-  beepTone(1175.0f, 400);
-  beepSilence(80);
-  beeperDeinit();
-  setTitle("");
+  Serial.println("[AUDIO] startup chime disabled");
 }
 
 void AudioPlayer::playShutdownChime() {
-  if (!_enabled) return;
-  if (!beeperInit()) return;
-  _playing = false;
-  setTitle("shutdown");
-
-  // 优先播放编译进固件的关机音效
-  if (playEmbeddedWav(shutdown_wav_start,
-                      (size_t)(shutdown_wav_end - shutdown_wav_start))) {
-    Serial.println("[AUDIO] shutdown chime (embedded wav)");
-    beepSilence(30);
-    beeperDeinit();
-    setTitle("");
-    return;
-  }
-
-  // 回退：合成「嘟嘟」声（两短一长，下行）
-  Serial.println("[AUDIO] shutdown chime (fallback beep)");
-  beepTone(880.0f, 120);
-  beepSilence(70);
-  beepTone(660.0f, 120);
-  beepSilence(70);
-  beepTone(440.0f, 400);
-  beepSilence(80);
-  beeperDeinit();
-  setTitle("");
+  Serial.println("[AUDIO] shutdown chime disabled");
 }
 
-// 用当前音量发一声短促「叮」，用于设置界面试听。
 void AudioPlayer::playBeepPreview() {
-  if (!_enabled) return;
-  if (!beeperInit()) return;
-  beepTone(1046.5f, 180);   // C6
-  beepSilence(40);
-  beeperDeinit();
+  Serial.println("[AUDIO] beep preview disabled");
 }
 
 // ============================================================================
 // MP3 播放（按需创建 Audio，独占 I2S_NUM_0）
 // ============================================================================
 void AudioPlayer::beginPlayback(const char *path) {
-  if (!sdCardReady()) return;
-
-  if (g_beeperReady) beeperDeinit();   // 释放提示音占用的 I2S
+  if (!sdCardReady() || !path || !path[0]) return;
 
   if (!g_audio) {
-    g_audio = std::unique_ptr<Audio>(new Audio(kI2sPort));
-    g_audio->setPinout(PIN_I2S_BCLK, PIN_I2S_LRC, PIN_I2S_DOUT);
+    if (!installAudioI2s()) return;
+    Audio *player = new (std::nothrow) Audio(kI2sPort);
+    if (!player) {
+      uninstallAudioI2s();
+      Serial.println("[AUDIO] insufficient heap for decoder");
+      return;
+    }
+    g_audio.reset(player);
+    g_audio->setBufsize(5000, 0);
+    if (!g_audio->setPinout(PIN_I2S_BCLK, PIN_I2S_LRC, PIN_I2S_DOUT)) {
+      Serial.println("[AUDIO] could not configure I2S pins");
+      releasePlayback();
+      return;
+    }
   }
   g_audio->setVolume(_volume);
   if (!g_audio->connecttoFS(sdFs(), path)) {
@@ -349,15 +133,21 @@ void AudioPlayer::beginPlayback(const char *path) {
 
 bool AudioPlayer::playFile(const char *path) {
   if (!_enabled || !path || !path[0]) return false;
-  if (g_audio) g_audio->stopSong();
+  releasePlayback();
   beginPlayback(path);
   return _playing;
 }
 
+void AudioPlayer::releasePlayback() {
+  if (g_audio) g_audio.reset();
+  uninstallAudioI2s();
+  _playing = false;
+  setTitle("");
+}
+
 void AudioPlayer::stop() {
   if (!_enabled) return;
-  if (g_audio) g_audio->stopSong();
-  _playing = false;
+  releasePlayback();
 }
 
 void AudioPlayer::pauseResume() {

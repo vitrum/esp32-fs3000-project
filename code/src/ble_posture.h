@@ -19,6 +19,7 @@ class BlePosture {
 public:
   void begin(const char *deviceName);
   bool tryConnect();               // 扫描并连接；未连接时可反复调用
+  void resetAfterStackShutdown() { s_connected = false; }
   bool connected() const { return s_connected; }
   float pitchDeg() const { return s_pitch; }   // 俯仰角（度）
   uint32_t notificationCount() const { return s_notificationCount; }

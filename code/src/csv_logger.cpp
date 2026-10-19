@@ -380,11 +380,6 @@ bool CsvLogger::begin() {
     unlockSdCard();
     return _ok;
   }
-  if (!ensureWriterTask()) {
-    Serial.println("[SD] Could not create SD writer task");
-    unlockSdCard();
-    return false;
-  }
   _sdReady = true;
   // 记录功能默认不开启；仅准备好 SD 与 /LOG 目录。
   unlockSdCard();
@@ -452,15 +447,21 @@ static bool isAudioName(const char *n) {
          !strcasecmp(dot, ".aac") || !strcasecmp(dot, ".ogg");
 }
 
-size_t listSdFiles(SdFileEntry *out, size_t maxCount) {
-  if (!out || maxCount == 0) return 0;
+size_t listSdFiles(const char *directory, SdFileEntry *out, size_t maxCount) {
+  if (!directory || directory[0] != '/' || strstr(directory, "..") ||
+      strchr(directory, '\\') || strlen(directory) >= 128 ||
+      !out || maxCount == 0)
+    return 0;
   if (!g_sdMounted) return 0;   // 未挂载：立即返回，避免在空挂载点上卡住
 
   if (!lockSdCard(pdMS_TO_TICKS(500))) return 0;
 
-  DIR *dir = opendir(kSdMountPoint);
+  char fullDirectory[sizeof(kSdMountPoint) + 128];
+  snprintf(fullDirectory, sizeof(fullDirectory), "%s%s",
+           kSdMountPoint, directory[1] ? directory : "");
+  DIR *dir = opendir(fullDirectory);
   if (!dir) {
-    Serial.printf("[SD] opendir(%s) failed\n", kSdMountPoint);
+    Serial.printf("[SD] opendir(%s) failed\n", fullDirectory);
     unlockSdCard();
     return 0;
   }
@@ -473,39 +474,44 @@ size_t listSdFiles(SdFileEntry *out, size_t maxCount) {
   static const int kMaxEntries = 400;   // 防御性上限
   int guard = 0;
   struct dirent *de;
-  while ((de = readdir(dir)) != nullptr && guard++ < kMaxEntries &&
-         count < maxCount) {
+  while ((de = readdir(dir)) != nullptr && guard++ < kMaxEntries) {
     const char *name = de->d_name;
     if (!name || name[0] == '.') continue;   // 跳过 . .. 及隐藏文件
 
-    char full[300];
-    snprintf(full, sizeof(full), "%s/%s", kSdMountPoint, name);
+    char full[sizeof(fullDirectory) + 1 + 256];
+    snprintf(full, sizeof(full), "%s/%s", fullDirectory, name);
     struct stat st;
-    if (stat(full, &st) != 0) continue;
-    if (S_ISDIR(st.st_mode)) continue;       // 跳过目录（含 /LOG）
+    if (stat(full, &st) != 0) {
+      Serial.printf("[SD] stat(%s) failed (errno=%d)\n", full, errno);
+      continue;
+    }
+    const bool isDirectory = S_ISDIR(st.st_mode);
+    if (!isDirectory && !S_ISREG(st.st_mode)) continue;
 
-    const bool audioFile = isAudioName(name);
-    // 两遍收集：先把音频放入前部，等等——这里单遍收集，稍后由排序保证音频在前。
-    snprintf(out[count].name, sizeof(out[count].name), "%s", name);
-    out[count].size = (uint32_t)st.st_size;
-    out[count].isAudio = audioFile;
-    ++count;
+    const bool audioFile = !isDirectory && isAudioName(name);
+    SdFileEntry entry = {};
+    snprintf(entry.name, sizeof(entry.name), "%s", name);
+    entry.size = (uint32_t)st.st_size;
+    entry.isAudio = audioFile;
+    entry.isDirectory = isDirectory;
+
+    const auto rank = [](const SdFileEntry &item) {
+      return item.isDirectory ? 2 : (item.isAudio ? 1 : 0);
+    };
+    size_t insertAt = count;
+    while (insertAt > 0 && rank(out[insertAt - 1]) < rank(entry))
+      --insertAt;
+    if (count == maxCount && insertAt == count) continue;
+    if (count < maxCount) ++count;
+    for (size_t i = count - 1; i > insertAt; --i)
+      out[i] = out[i - 1];
+    out[insertAt] = entry;
   }
   closedir(dir);
 
-  // 音频文件排在前面（稳定：保持各自相对顺序）。
-  for (size_t i = 1; i < count; ++i) {
-    SdFileEntry key = out[i];
-    size_t j = i;
-    while (j > 0 && out[j - 1].isAudio < key.isAudio) {
-      out[j] = out[j - 1];
-      --j;
-    }
-    out[j] = key;
-  }
-
   unlockSdCard();
-  Serial.printf("[SD] listed %u file(s) under %s\n", (unsigned)count, kSdMountPoint);
+  Serial.printf("[SD] listed %u item(s) under %s\n",
+                (unsigned)count, fullDirectory);
   return count;
 }
 

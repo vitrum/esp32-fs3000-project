@@ -19,6 +19,7 @@ public:
   bool scanDevices(BlePowerDevice *devices, size_t capacity, size_t &count);
   bool connectDevice(const char *address);
   void cancelCurrentOperation();
+  void clearScanResults();
   void disconnect();
   bool connected() const { return s_connected; }
   const char *lastError() const { return s_lastError; }

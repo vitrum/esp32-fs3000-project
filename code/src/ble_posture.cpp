@@ -43,8 +43,10 @@ void BlePosture::begin(const char *deviceName) {
 bool BlePosture::tryConnect() {
   if (s_connected) return true;
 
-  NimBLEDevice::getScan()->clearResults();
-  NimBLEScanResults results = NimBLEDevice::getScan()->getResults(4, false);
+  NimBLEScan *scan = NimBLEDevice::getScan();
+  if (!scan) return false;
+  scan->clearResults();
+  NimBLEScanResults results = scan->getResults(4, false);
 
   for (int i = 0; i < results.getCount(); i++) {
     const NimBLEAdvertisedDevice *ad = results.getDevice(i);
@@ -57,10 +59,14 @@ bool BlePosture::tryConnect() {
     if (!ad->isAdvertisingService(kSvcWit) && !nameHit) continue;
 
     NimBLEClient *cli = NimBLEDevice::createClient();
-    if (!cli) return false;
+    if (!cli) {
+      scan->clearResults();
+      return false;
+    }
 
     if (!cli->connect(ad)) {
       NimBLEDevice::deleteClient(cli);
+      scan->clearResults();
       return false;
     }
 
@@ -68,6 +74,7 @@ bool BlePosture::tryConnect() {
     if (!svc) {
       cli->disconnect();
       NimBLEDevice::deleteClient(cli);
+      scan->clearResults();
       return false;
     }
 
@@ -75,19 +82,23 @@ bool BlePosture::tryConnect() {
     if (!chr) {
       cli->disconnect();
       NimBLEDevice::deleteClient(cli);
+      scan->clearResults();
       return false;
     }
 
     if (!chr->subscribe(true, witNotify, true)) {
       cli->disconnect();
       NimBLEDevice::deleteClient(cli);
+      scan->clearResults();
       return false;
     }
 
+    const std::string address = ad->getAddress().toString();
     s_connected = true;
-    Serial.printf("BLE posture connected: %s\n",
-                  ad->getAddress().toString().c_str());
+    Serial.printf("BLE posture connected: %s\n", address.c_str());
+    scan->clearResults();
     return true;
   }
+  scan->clearResults();
   return false;
 }
