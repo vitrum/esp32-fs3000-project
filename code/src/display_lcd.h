@@ -11,6 +11,7 @@
 #include "wind_probe.h"
 #include "csv_logger.h"   // SdFileEntry
 #include "ui_navigation_guard.h"
+#include "ui_touch_buffer.h"
 
 // ST7789 240x320 display for wind, CdA, live power, cadence, and status.
 class DisplayLcd {
@@ -23,8 +24,13 @@ public:
   float virtualPowerW() const { return virtualPowerW_; }
   float virtualCadenceRpm() const { return virtualCadenceRpm_; }
   bool takeBleScanRequest();
-  bool takeBleConnectRequest(char *address, size_t capacity);
+  // 取出用户确认连接的地址，并带回该设备在扫描时记录的真实地址类型
+  // （addressType 可为 nullptr）。
+  bool takeBleConnectRequest(char *address, size_t capacity,
+                             uint8_t *addressType = nullptr);
   bool takeBleCancelRequest();
+  // 主循环处理完一次 BLE 操作后调用，允许 UI 再次接受 BLE 请求。
+  void clearBleRequestInFlight() { bleRequestInFlight_ = false; }
   void showBleLoading(const char *status);
   void finishBleCancelled();
   void showBleConnectFailure(const char *error);
@@ -207,6 +213,8 @@ private:
   int selectedPowerMode_ = 0;
   bool requestedBleScan_ = false;
   bool requestedBleConnect_ = false;
+  // 扫描阶段记录的被选设备真实地址类型，随连接请求一起回传给主循环。
+  uint8_t requestedBleAddressType_ = 0xFF;
   bool requestedBleCancel_ = false;
   bool bleOperationActive_ = false;
   char requestedBleAddress_[18] = {};
@@ -215,6 +223,15 @@ private:
   size_t selectedBleDevice_ = 0;
   bool touchReady_ = false;
   UiNavigationGuard navigationGuard_;
+
+  // BLE 相关按钮的触控缓冲：吃掉重复点击与界面切换后的穿透点击。
+  TouchBuffer bleScanTouch_{BLE_UI_TOUCH_GUARD_MS};
+  TouchBuffer bleDeviceTouch_{BLE_UI_TOUCH_GUARD_MS};
+  TouchBuffer bleConfirmTouch_{BLE_UI_TOUCH_GUARD_MS};
+  TouchBuffer bleCancelTouch_{BLE_UI_TOUCH_GUARD_MS};
+  // 当前是否有 UI 侧提交的 BLE 请求尚未被主循环消费。
+  // 期间拒绝新的同类点击，防止同一个请求被重复投递。
+  bool bleRequestInFlight_ = false;
 
   // ---- SD 浏览状态 ----
   bool sdListRequested_ = false;

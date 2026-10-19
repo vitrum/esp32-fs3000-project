@@ -55,7 +55,6 @@ static uint32_t lastUiMs     = 0;
 static uint32_t lastWindProbeMs = 0;
 static uint32_t lastWindValidMs = 0;
 static uint32_t windWindowSamples = 0;
-static uint32_t lastBleMs    = 0;
 #if WIFI_WEB_ENABLE
 static uint32_t lastWebMs    = 0;
 #endif
@@ -64,18 +63,38 @@ static uint32_t lastBleFtmsNotification = 0;
 static uint32_t lastBlePostureNotification = 0;
 static uint32_t lastBleDiagnosticsMs = 0;
 static uint32_t lastBleDisconnectCount = 0;
+static uint32_t lastBlePostureAttemptMs = 0;
+static bool     postAudioBleCatchUpNeeded = false;
 static bool     powerConnected = false;
 static bool     postureConnected = false;
-static bool     manualBlePairing = false;
+static bool     manualPairingActive = false;   // 用户正在手动挑选/连接设备
 static bool     wirelessSuspendedForAudio = false;
 static int      powerMode = 0;      // 0=AUTO 1=BLE 3=VIRTUAL; 2 is reserved.
 static WindVector wv;            // 最近一次探针读数（供显示）
 
-enum class BleOperationState : uint8_t { Idle, Running, Complete };
-enum class BleOperationKind : uint8_t { Scan, Connect, Posture };
+// ============================================================================
+// BLE 串行工作线程
+// ----------------------------------------------------------------------------
+// 之前的实现每来一个请求就 xTaskCreate 一个任务，两个任务（手动扫描/连接、
+// 姿态发现）会同时操作 NimBLE 的全局扫描器，还会争写共享的结果结构，导致
+// 「状态卡在 Running / 结果被覆盖 / 姿态发现饿死 / 界面莫名刷新」。
+//
+// 现在改为：一个常驻工作线程 + 一条命令队列。主循环（生产者）只负责入队和
+// 取结果，工作线程（唯一消费者）独占所有 NimBLE 调用，天然串行。
+//   主循环 --xQueueSend--> [cmd queue] --> bleWorkerTask --> [result queue] --> 主循环
+// 取消通过一个 volatile 标志传递，工作线程在每次长操作前后检查。
+// ============================================================================
+enum class BleOpKind : uint8_t { Scan, Connect, Posture };
 
-struct BleOperationResult {
-  BleOperationKind kind = BleOperationKind::Scan;
+struct BleCommand {
+  BleOpKind kind = BleOpKind::Scan;
+  char address[18] = {};
+  // 扫描阶段记录的真实地址类型，连接时原样透传给 connectDevice()。
+  uint8_t addressType = 0xFF;   // 0xFF = 未知，按 PUBLIC 处理
+};
+
+struct BleOutcome {
+  BleOpKind kind = BleOpKind::Scan;
   bool success = false;
   bool cancelled = false;
   size_t deviceCount = 0;
@@ -83,94 +102,133 @@ struct BleOperationResult {
   char error[320] = {};
 };
 
-static volatile BleOperationState bleOperationState = BleOperationState::Idle;
-static volatile bool bleOperationCancelRequested = false;
-static BleOperationResult bleOperationResult;
-static char bleOperationAddress[18] = {};
-static TaskHandle_t bleOperationTaskHandle = nullptr;
-static portMUX_TYPE bleOperationMux = portMUX_INITIALIZER_UNLOCKED;
+static QueueHandle_t bleCmdQueue = nullptr;
+static QueueHandle_t bleResultQueue = nullptr;
+static TaskHandle_t  bleWorkerHandle = nullptr;
+static volatile bool bleOpBusy = false;         // 工作线程正在执行命令
+static volatile bool bleOpCancelRequested = false;
 
-static void bleOperationTask(void *argument) {
-  const BleOperationKind kind =
-      (BleOperationKind)(uintptr_t)argument;
-  BleOperationResult result;
-  result.kind = kind;
+static void bleWorkerTask(void *) {
+  for (;;) {
+    BleCommand cmd;
+    if (xQueueReceive(bleCmdQueue, &cmd, portMAX_DELAY) != pdTRUE) continue;
 
-  if (kind == BleOperationKind::Scan) {
-    result.success = powerMeter.scanDevices(result.devices, 4, result.deviceCount);
-    if (!result.success) {
-      snprintf(result.error, sizeof(result.error), "%s", powerMeter.lastError());
+    bleOpCancelRequested = false;
+    bleOpBusy = true;
+
+    BleOutcome out;
+    out.kind = cmd.kind;
+
+    // 注意：不要在这里清扫描缓存。
+    //   * scanDevices() 内部第一步就是 clearResults()，Scan 自己会重置；
+    //   * Connect 只用扫描阶段拿到的地址字符串（副本），connect() 走
+    //     NimBLEAddress，不读扫描缓存；
+    //   * 在 Scan 与 Connect 之间插一次 clearResults() 正是上一版
+    //     "device is no longer in scan results" 的根因。
+    switch (cmd.kind) {
+      case BleOpKind::Scan:
+        out.success = powerMeter.scanDevices(out.devices, 4, out.deviceCount,
+                                             BLE_OP_SCAN_DURATION_MS);
+        if (!out.success)
+          snprintf(out.error, sizeof(out.error), "%s", powerMeter.lastError());
+        break;
+
+      case BleOpKind::Connect:
+        out.success = powerMeter.connectDevice(cmd.address, cmd.addressType);
+        if (!out.success)
+          snprintf(out.error, sizeof(out.error), "%s", powerMeter.lastError());
+        break;
+
+      case BleOpKind::Posture:
+        out.success = posture.tryConnect(BLE_OP_POSTURE_SCAN_MS,
+                                         &bleOpCancelRequested);
+        if (!out.success)
+          snprintf(out.error, sizeof(out.error), "%s", posture.lastError());
+        break;
     }
-  } else if (kind == BleOperationKind::Connect) {
-    result.success = powerMeter.connectDevice(bleOperationAddress);
-    if (!result.success) {
-      snprintf(result.error, sizeof(result.error), "%s", powerMeter.lastError());
-    }
-  } else {
-    result.success = posture.tryConnect();
-  }
 
-  result.cancelled = bleOperationCancelRequested;
-  if (result.cancelled && kind == BleOperationKind::Connect) {
-    powerMeter.disconnect();
-  }
+    out.cancelled = bleOpCancelRequested;
+    if (out.cancelled && cmd.kind == BleOpKind::Connect) powerMeter.disconnect();
 
-  portENTER_CRITICAL(&bleOperationMux);
-  bleOperationResult = result;
-  bleOperationState = BleOperationState::Complete;
-  portEXIT_CRITICAL(&bleOperationMux);
-  vTaskDelete(nullptr);
+    bleOpBusy = false;
+    xQueueSend(bleResultQueue, &out, portMAX_DELAY);
+
+    // 两次操作之间留一点空档，让协议栈处理断连/缓存回收等收尾工作。
+    vTaskDelay(pdMS_TO_TICKS(BLE_OP_MIN_GAP_MS));
+  }
 }
 
-static bool startBleOperation(BleOperationKind kind, const char *address = nullptr) {
-  if (bleOperationState != BleOperationState::Idle) return false;
-
-  if (kind == BleOperationKind::Connect) {
-    snprintf(bleOperationAddress, sizeof(bleOperationAddress), "%s",
-             address ? address : "");
-  }
-  bleOperationCancelRequested = false;
-  portENTER_CRITICAL(&bleOperationMux);
-  bleOperationResult = BleOperationResult();
-  bleOperationState = BleOperationState::Running;
-  portEXIT_CRITICAL(&bleOperationMux);
-
-  if (xTaskCreate(bleOperationTask, "bleOperation", 8192,
-                  (void *)(uintptr_t)kind, 1, &bleOperationTaskHandle) != pdPASS) {
-    portENTER_CRITICAL(&bleOperationMux);
-    bleOperationState = BleOperationState::Idle;
-    portEXIT_CRITICAL(&bleOperationMux);
-    bleOperationTaskHandle = nullptr;
+static bool beginBleWorker() {
+  if (bleWorkerHandle) return true;
+  bleCmdQueue = xQueueCreate(BLE_OP_QUEUE_LEN, sizeof(BleCommand));
+  bleResultQueue = xQueueCreate(1, sizeof(BleOutcome));
+  if (!bleCmdQueue || !bleResultQueue) {
+    Serial.println("[BLE] could not create operation queues");
     return false;
   }
+  if (xTaskCreatePinnedToCore(bleWorkerTask, "bleWorker", BLE_OP_TASK_STACK,
+                              nullptr, 2, &bleWorkerHandle, 0) != pdPASS) {
+    Serial.println("[BLE] could not create BLE worker task");
+    bleWorkerHandle = nullptr;
+    return false;
+  }
+  Serial.println("[BLE] serial worker started");
   return true;
 }
 
-static bool takeBleOperationResult(BleOperationResult &result) {
-  portENTER_CRITICAL(&bleOperationMux);
-  if (bleOperationState != BleOperationState::Complete) {
-    portEXIT_CRITICAL(&bleOperationMux);
-    return false;
-  }
-  result = bleOperationResult;
-  bleOperationState = BleOperationState::Idle;
-  portEXIT_CRITICAL(&bleOperationMux);
-  bleOperationTaskHandle = nullptr;
+// 工作线程退出/重启（音频占用 BLE 协议栈时需要释放全部内存）。
+static void stopBleWorker() {
+  if (!bleWorkerHandle) return;
+  vTaskDelete(bleWorkerHandle);
+  bleWorkerHandle = nullptr;
+  if (bleCmdQueue) { vQueueDelete(bleCmdQueue); bleCmdQueue = nullptr; }
+  if (bleResultQueue) { vQueueDelete(bleResultQueue); bleResultQueue = nullptr; }
+  bleOpBusy = false;
+  bleOpCancelRequested = false;
+}
+
+// 入队一条命令。队列满说明上一个操作还没结束，直接返回 false 由调用者提示。
+static bool enqueueBleCommand(BleOpKind kind, const char *address = nullptr,
+                              uint8_t addressType = 0xFF) {
+  if (!bleCmdQueue) return false;
+  BleCommand cmd;
+  cmd.kind = kind;
+  cmd.addressType = addressType;
+  if (address)
+    snprintf(cmd.address, sizeof(cmd.address), "%s", address);
+  if (xQueueSend(bleCmdQueue, &cmd, 0) != pdTRUE) return false;
   return true;
+}
+
+static bool takeBleOutcome(BleOutcome &out) {
+  if (!bleResultQueue) return false;
+  return xQueueReceive(bleResultQueue, &out, 0) == pdTRUE;
+}
+
+static void requestBleCancel() {
+  if (!bleOpBusy) return;
+  bleOpCancelRequested = true;
+  powerMeter.cancelCurrentOperation();
+  posture.cancelConnect();
 }
 
 static bool suspendWirelessForAudio() {
   if (wirelessSuspendedForAudio) return true;
-  if (bleOperationState != BleOperationState::Idle) {
+  if (bleOpBusy) {
     Serial.println("[AUDIO] wait for BLE operation to finish before playback");
     return false;
   }
+  // 先释放工作线程和队列，再释放协议栈；否则线程会在 NimBLE 全局对象被
+  // deinit 后继续轮询命令并调用已失效的 API。
+  stopBleWorker();
   powerMeter.disconnect();
   posture.resetAfterStackShutdown();
   if (NimBLEDevice::isInitialized() && !NimBLEDevice::deinit(true)) {
     Serial.println("[AUDIO] could not release BLE stack for playback");
     powerMeter.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
     posture.begin(BLE_DEVICE_NAME);
+    if (!beginBleWorker())
+      Serial.println("[BLE] worker could not be restarted after audio failure");
     return false;
   }
   powerConnected = false;
@@ -188,7 +246,11 @@ static void resumeWirelessAfterAudio() {
   powerMeter.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
   posture.begin(BLE_DEVICE_NAME);
   wirelessSuspendedForAudio = false;
-  lastBleMs = millis();
+  if (!beginBleWorker())
+    Serial.println("[BLE] worker could not be restarted after audio");
+  // 播放期间姿态重连被挂起，恢复后立刻补一次，不必再等 30s 周期。
+  lastBlePostureAttemptMs = millis();
+  postAudioBleCatchUpNeeded = true;
   Serial.println("[AUDIO] BLE stack resumed");
 }
 
@@ -257,6 +319,9 @@ void setup() {
   // BLE 设备（NimBLE 单例，两个客户端共用；init 幂等）
   powerMeter.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
   posture.begin(BLE_DEVICE_NAME);
+  // 单个串行工作线程负责所有扫描/连接；主循环只投递命令与取结果。
+  if (!beginBleWorker())
+    Serial.println("[BLE] serial worker unavailable; BLE pairing disabled");
   Serial.println("Scanning for BLE power meter & posture sensor...");
 }
 
@@ -530,84 +595,95 @@ void loop() {
                   (powerMode == 1 ? "BLE" : "AUTO"));
   }
 
+  // ------------------------------------------------------------------------
+  // BLE：用户请求 → 命令队列 → 工作线程执行 → 结果队列 → 界面更新
+  // ------------------------------------------------------------------------
+  // 音频播放期间 BLE 协议栈被释放，此时任何 BLE 请求都直接拒绝，
+  // 避免在未初始化的 NimBLE 上调用扫描/连接。
+  const bool bleAvailable = !wirelessSuspendedForAudio && bleWorkerHandle;
+
   if (lcd.takeBleCancelRequest()) {
-    if (bleOperationState != BleOperationState::Idle) {
-      bleOperationCancelRequested = true;
-      powerMeter.cancelCurrentOperation();
-      posture.cancelConnect();
-      Serial.println("[BLE] cancellation requested; waiting for the current GATT operation");
+    if (bleOpBusy) {
+      requestBleCancel();
+      Serial.println("[BLE] cancellation requested; waiting for the current operation");
     } else {
-      manualBlePairing = false;
-      powerMeter.clearScanResults();
+      // 没有正在执行的操作：这是一次纯界面返回，直接还原界面即可。
+      // 不要在这里清扫描缓存——用户按返回后可能马上再次选择同一台设备，
+      // 缓存留着无害（连接本身不依赖它），清了反而多一次不必要的释放。
+      manualPairingActive = false;
       Serial.println("[BLE] device selection cancelled");
     }
   }
 
   if (lcd.takeBleScanRequest()) {
-    // 自动姿态发现任务可能正在扫描；先取消它，否则 manualBlePairing 在任务
-    // 结束时被清掉，用户选择框会被意外关掉。
-    if (bleOperationState != BleOperationState::Idle &&
-        bleOperationResult.kind == BleOperationKind::Posture) {
-      bleOperationCancelRequested = true;
-      posture.cancelConnect();
-    }
-    manualBlePairing = true;
+    manualPairingActive = true;
     powerMode = 1;
-    Serial.println("[BLE] scanning for connectable devices (6 seconds)...");
-    if (!startBleOperation(BleOperationKind::Scan))
-      lcd.showBleConnectFailure("BLE is busy or the scan task could not start. Close this message and try again.");
+    if (!bleAvailable) {
+      manualPairingActive = false;
+      lcd.showBleConnectFailure(
+          "BLE is paused while audio is playing. Stop the music and try again.");
+    } else if (!enqueueBleCommand(BleOpKind::Scan)) {
+      Serial.println("[BLE] scan request dropped: worker busy");
+      lcd.showBleConnectFailure(
+          "The BLE module is still finishing the previous operation. "
+          "Wait a moment and press SCAN AGAIN.");
+    } else {
+      Serial.println("[BLE] scan queued (6 seconds)");
+    }
   }
 
   char selectedAddress[18] = {};
-  if (lcd.takeBleConnectRequest(selectedAddress, sizeof(selectedAddress))) {
-    Serial.printf("[BLE] user confirmed connection to %s\n", selectedAddress);
-    if (!startBleOperation(BleOperationKind::Connect, selectedAddress)) {
-      lcd.showBleConnectFailure("Could not start the BLE connection task. Close this message and try again.");
+  uint8_t selectedAddressType = 0xFF;
+  if (lcd.takeBleConnectRequest(selectedAddress, sizeof(selectedAddress),
+                                &selectedAddressType)) {
+    Serial.printf("[BLE] user confirmed connection to %s (addressType=%u)\n",
+                  selectedAddress, (unsigned)selectedAddressType);
+    if (!bleAvailable) {
+      manualPairingActive = false;
+      lcd.showBleConnectFailure(
+          "BLE is paused while audio is playing. Stop the music and try again.");
+    } else if (!enqueueBleCommand(BleOpKind::Connect, selectedAddress,
+                                  selectedAddressType)) {
+      manualPairingActive = false;
+      lcd.showBleConnectFailure(
+          "The BLE module is still finishing the previous operation. "
+          "Wait a moment and select the device again.");
+    } else {
+      manualPairingActive = true;
     }
   }
 
-  BleOperationResult operationResult;
-  if (takeBleOperationResult(operationResult)) {
-    if (operationResult.kind == BleOperationKind::Posture) {
-      postureConnected = operationResult.success;
-      if (operationResult.cancelled || bleOperationCancelRequested) {
-        bleOperationCancelRequested = false;
-        manualBlePairing = false;
-        lcd.finishBleCancelled();
-      }
+  BleOutcome outcome;
+  if (takeBleOutcome(outcome)) {
+    if (outcome.kind == BleOpKind::Posture) {
+      postureConnected = outcome.success;
       Serial.printf("[BLE] posture discovery %s\n",
                     postureConnected ? "connected"
-                                     : (operationResult.cancelled
+                                     : (outcome.cancelled
                                             ? "cancelled"
-                                            : "no connection; retry in 30s"));
-      if (!postureConnected && !operationResult.cancelled &&
-          posture.lastError()[0])
-        Serial.printf("[BLE-POSTURE] %s\n", posture.lastError());
-    } else if (operationResult.cancelled || bleOperationCancelRequested) {
-      if (operationResult.kind == BleOperationKind::Connect) {
-        powerMeter.disconnect();
-      }
-      powerMeter.clearScanResults();
-      bleOperationCancelRequested = false;
-      manualBlePairing = false;
+                                            : "no connection; retry later"));
+      if (!postureConnected && !outcome.cancelled && outcome.error[0])
+        Serial.printf("[BLE-POSTURE] %s\n", outcome.error);
+    } else if (outcome.cancelled) {
+      manualPairingActive = false;
       lcd.finishBleCancelled();
       Serial.println("[BLE] operation cancelled");
-    } else if (operationResult.success) {
-      if (operationResult.kind == BleOperationKind::Scan) {
+    } else if (outcome.success) {
+      if (outcome.kind == BleOpKind::Scan) {
         char status[48];
         snprintf(status, sizeof(status), "%u device(s) found",
-                 (unsigned)operationResult.deviceCount);
-        lcd.setBleDevices(operationResult.devices, operationResult.deviceCount, status);
+                 (unsigned)outcome.deviceCount);
+        lcd.setBleDevices(outcome.devices, outcome.deviceCount, status);
       } else {
         powerConnected = powerMeter.connected();
-        manualBlePairing = false;
+        manualPairingActive = false;
         lcd.closePowerMeterPanels();
       }
     } else {
       powerConnected = powerMeter.connected();
-      powerMeter.clearScanResults();
-      lcd.showBleConnectFailure(operationResult.error[0]
-                                    ? operationResult.error
+      if (outcome.kind == BleOpKind::Connect) manualPairingActive = false;
+      lcd.showBleConnectFailure(outcome.error[0]
+                                    ? outcome.error
                                     : "BLE operation failed without a reported reason.");
     }
   }
@@ -645,11 +721,19 @@ void loop() {
     lastBlePostureNotification = blePostureNotifications;
     Serial.printf("[BLE-POSTURE] pitch=%+.2f deg\n", posture.pitchDeg());
   }
-  if (!wirelessSuspendedForAudio && !manualBlePairing && !postureConnected &&
-      bleOperationState == BleOperationState::Idle &&
-      now - lastBleMs >= BLE_POSTURE_RECONNECT_MS) {
-    lastBleMs = now;
-    if (!startBleOperation(BleOperationKind::Posture))
-      Serial.println("[BLE] could not start posture discovery task");
+  if (!wirelessSuspendedForAudio && bleWorkerHandle && !manualPairingActive &&
+      !postureConnected) {
+    const uint32_t elapsed = now - lastBlePostureAttemptMs;
+    // 音频结束后补一次；其余情况按 BLE_POSTURE_RECONNECT_MS 限频。
+    const bool due = postAudioBleCatchUpNeeded
+                         ? !bleOpBusy
+                         : elapsed >= BLE_POSTURE_RECONNECT_MS;
+    // 队列满说明还有手动操作在排队/执行，姿态发现让位，下一轮再看。
+    if (due && !bleOpBusy && uxQueueMessagesWaiting(bleCmdQueue) == 0) {
+      if (enqueueBleCommand(BleOpKind::Posture)) {
+        lastBlePostureAttemptMs = now;
+        postAudioBleCatchUpNeeded = false;
+      }
+    }
   }
 }

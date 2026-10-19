@@ -18,7 +18,10 @@
 class BlePosture {
 public:
   void begin(const char *deviceName);
-  bool tryConnect();               // 扫描并连接；未连接时可反复调用
+  // 扫描并连接姿态传感器。scanMs 由调用方（BLE 工作线程）指定。
+  // cancelFlag 指向工作线程的取消标志：为 true 时尽快放弃本次扫描/连接。
+  bool tryConnect(uint32_t scanMs = 1500,
+                  const volatile bool *cancelFlag = nullptr);
   void disconnect();               // 断开并释放客户端
   void cancelConnect();            // 取消未完成的连接/扫描
   void resetAfterStackShutdown() { s_connected = false; s_client = nullptr; }
@@ -36,3 +39,4 @@ private:
   static char   s_lastError[160];
   static volatile bool s_cancelRequested;
 };
+

@@ -10,14 +10,23 @@ struct BlePowerDevice {
   bool cyclingPower;
   bool fitnessMachine;
   bool speedCadence;
+  // 扫描阶段记录的真实地址类型（0=PUBLIC, 1=RANDOM_STATIC, 2=RANDOM_PRIVATE_RESOLVABLE,
+  // 3=RANDOM_PRIVATE_NON_RESOLVABLE，见 BLE_ADDR_*）。连接时必须用真实类型，
+  // 否则「用 PUBLIC 去连 RANDOM 地址」会导致对端不应答、8s 后 ETIMEOUT(code 13)。
+  uint8_t addressType;
 };
 
 // BLE GATT Central supporting Cycling Power, FTMS trainers, and CSC sensors.
 class BlePowerMeter {
 public:
   void begin(const char *deviceName, float wheelCircM);
-  bool scanDevices(BlePowerDevice *devices, size_t capacity, size_t &count);
-  bool connectDevice(const char *address);
+  // 扫描可连接设备。durationMs 由调用方（BLE 工作线程）指定，避免模块内
+  // 硬编码时长与队列/取消逻辑脱节。
+  bool scanDevices(BlePowerDevice *devices, size_t capacity, size_t &count,
+                   uint32_t durationMs);
+  // addressType 来自扫描结果（BlePowerDevice::addressType）。0xFF 表示未知，
+  // 此时按 PUBLIC 连接，失败后不再重试其它类型。
+  bool connectDevice(const char *address, uint8_t addressType = 0xFF);
   void cancelCurrentOperation();
   void clearScanResults();
   void disconnect();
@@ -54,3 +63,4 @@ private:
   static char s_lastError[320];
   static bool s_hasSpeedCadence;
 };
+

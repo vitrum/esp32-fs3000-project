@@ -57,7 +57,7 @@ void BlePosture::cancelConnect() {
   if (s_client && !s_client->isConnected()) s_client->cancelConnect();
 }
 
-bool BlePosture::tryConnect() {
+bool BlePosture::tryConnect(uint32_t scanMs, const volatile bool *cancelFlag) {
   if (s_connected) return true;
 
   s_lastError[0] = '\0';
@@ -77,7 +77,8 @@ bool BlePosture::tryConnect() {
   scan->setActiveScan(true);
   scan->setInterval(100);
   scan->setWindow(30);
-  NimBLEScanResults results = scan->getResults(1500, false);
+  NimBLEScanResults results =
+      scan->getResults(scanMs ? scanMs : 1500, false);
 
   // 先把地址/名称拷出来再 clearResults()：扫描结果对象持有的是扫描缓存里的
   // 指针，一旦 clearResults() 调用（或缓存被回收），原来取到的
@@ -110,7 +111,7 @@ bool BlePosture::tryConnect() {
   Serial.printf("[BLE-POSTURE] candidate %s (%s)\n",
                 name[0] ? name : "unnamed", address);
 
-  if (s_cancelRequested) {
+  if (s_cancelRequested || (cancelFlag && *cancelFlag)) {
     snprintf(s_lastError, sizeof(s_lastError), "cancelled");
     return false;
   }
@@ -126,6 +127,7 @@ bool BlePosture::tryConnect() {
   s_client = cli;
 
   // 用地址连接（不依赖已清空的扫描缓存），地址类型由 NimBLE 自动解析。
+  // 工作线程串行执行，这里阻塞的时间不会与手动扫描/连接重叠。
   if (!cli->connect(NimBLEAddress(std::string(address), BLE_ADDR_PUBLIC))) {
     const int code = cli->getLastError();
     snprintf(s_lastError, sizeof(s_lastError),

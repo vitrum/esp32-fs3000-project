@@ -70,6 +70,18 @@
 // 接线（板上 12PIN 排针的 UART 口：TXD=GPIO43 / RXD=GPIO44）：
 //   GPS TX  -> ESP32 RXD (GPIO44)
 //   GPS RX  -> ESP32 TXD (GPIO43)   [可选：用于发配置语句]
+#define BLE_DEVICE_NAME      "AeroProbe"
+#define BLE_WHEEL_CIRC_M     2.105f   // 轮周长(m)，700x25C 约 2.105，按实际外胎设置
+#define BLE_RECONNECT_MS     5000     // 未连接时的重试间隔
+#define BLE_POSTURE_RECONNECT_MS 30000 // 姿态发现限频，减少与 Wi-Fi 的射频争用
+// 所有 BLE 操作（手动扫描 / 连接 / 姿态发现）由单一工作线程串行执行。
+// 主循环只投递命令、取回结果，不再直接调用 NimBLE，避免两个任务争抢扫描器。
+#define BLE_OP_QUEUE_LEN     4        // 命令队列深度（满则丢弃并提示 busy）
+#define BLE_OP_TASK_STACK    8192     // 工作线程栈（GATT 发现 + 日志缓冲）
+#define BLE_OP_SCAN_DURATION_MS   6000 // 手动扫描时长
+#define BLE_OP_POSTURE_SCAN_MS    1500 // 姿态传感器扫描时长
+#define BLE_OP_MIN_GAP_MS    1500     // 两次 BLE 操作之间的最小间隔，给协议栈喘口气
+#define BLE_UI_TOUCH_GUARD_MS 450     // BLE 相关按钮的触控缓冲（忽略连击/误触）
 //   GPS VCC -> 3V3（若模块带 LDO 可 5V，先确认模块耐压）
 //   GPS GND -> GND
 // 注意：本版本不使用 PPS 秒脉冲（仅串口，精度到秒级）。

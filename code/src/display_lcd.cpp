@@ -145,6 +145,9 @@ void DisplayLcd::onBackNavigation(lv_event_t *event) {
 
 void DisplayLcd::onPowerSourceButton(lv_event_t *) {
   if (!g_display) return;
+  // 重新进入功率源页：重置 BLE 按钮缓冲，页面切换瞬间的点击不算数。
+  g_display->bleScanTouch_.reset(millis());
+  g_display->bleRequestInFlight_ = false;
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(g_display->sdPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(g_display->virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -266,8 +269,12 @@ void DisplayLcd::refreshWifiStatus() {
 
 void DisplayLcd::onBleSelected(lv_event_t *) {
   if (!g_display) return;
+  if (!g_display->bleScanTouch_.accept(millis())) return;
+  // 上一次 BLE 请求还没被主循环消费：直接忽略，避免重复扫描。
+  if (g_display->bleRequestInFlight_) return;
   g_display->requestedPowerMode_ = 1;
   g_display->requestedBleScan_ = true;
+  g_display->bleRequestInFlight_ = true;
   g_display->selectedPowerMode_ = 1;
   lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
   g_display->showBleLoading("Scanning for BLE power meters and smart trainers...");
@@ -275,12 +282,16 @@ void DisplayLcd::onBleSelected(lv_event_t *) {
 
 void DisplayLcd::onBleScanAgain(lv_event_t *) {
   if (!g_display) return;
+  if (!g_display->bleScanTouch_.accept(millis())) return;
+  if (g_display->bleRequestInFlight_) return;
   g_display->requestedBleScan_ = true;
+  g_display->bleRequestInFlight_ = true;
   g_display->showBleLoading("Scanning for BLE power meters and smart trainers...");
 }
 
 void DisplayLcd::onBleDeviceSelected(lv_event_t *event) {
   if (!g_display) return;
+  if (!g_display->bleDeviceTouch_.accept(millis())) return;
   size_t index = (size_t)(uintptr_t)lv_event_get_user_data(event);
   if (index >= g_display->bleDeviceCount_) return;
 
@@ -309,15 +320,24 @@ void DisplayLcd::onBleDeviceSelected(lv_event_t *event) {
 
 void DisplayLcd::onBleConfirm(lv_event_t *) {
   if (!g_display || g_display->selectedBleDevice_ >= g_display->bleDeviceCount_) return;
+  // 触控缓冲：同一次按下只接受一次，彻底杜绝日志里那种同一设备被连续
+  // 确认两次（Second confirm while the first still running）的情况。
+  if (!g_display->bleConfirmTouch_.accept(millis())) return;
+  if (g_display->bleRequestInFlight_) return;
   snprintf(g_display->requestedBleAddress_, sizeof(g_display->requestedBleAddress_),
            "%s", g_display->bleDevices_[g_display->selectedBleDevice_].address);
+  // 连同扫描时记录的地址类型一起提交，主循环透传给 connectDevice()。
+  g_display->requestedBleAddressType_ =
+      g_display->bleDevices_[g_display->selectedBleDevice_].addressType;
   g_display->requestedBleConnect_ = true;
+  g_display->bleRequestInFlight_ = true;
   lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
   g_display->showBleLoading("Connecting to selected BLE device...");
 }
 
 void DisplayLcd::onBleBack(lv_event_t *) {
   if (!g_display) return;
+  if (!g_display->bleCancelTouch_.accept(millis())) return;
   g_display->requestedBleCancel_ = true;
   lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
@@ -326,12 +346,14 @@ void DisplayLcd::onBleBack(lv_event_t *) {
 
 void DisplayLcd::onBleConfirmBack(lv_event_t *) {
   if (!g_display) return;
+  if (!g_display->bleCancelTouch_.accept(millis())) return;
   lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::onBleLoadingBack(lv_event_t *) {
   if (!g_display) return;
+  if (!g_display->bleCancelTouch_.accept(millis())) return;
   if (g_display->bleOperationActive_) {
     g_display->requestedBleCancel_ = true;
     lv_obj_t *buttonLabel = lv_obj_get_child(g_display->bleLoadingBackButton_, 0);
@@ -2071,24 +2093,32 @@ bool DisplayLcd::takeBleScanRequest() {
   return true;
 }
 
-bool DisplayLcd::takeBleConnectRequest(char *address, size_t capacity) {
+bool DisplayLcd::takeBleConnectRequest(char *address, size_t capacity,
+                                       uint8_t *addressType) {
   if (!requestedBleConnect_) return false;
   requestedBleConnect_ = false;
   if (!address || capacity == 0) return false;
   snprintf(address, capacity, "%s", requestedBleAddress_);
+  if (addressType) *addressType = requestedBleAddressType_;
   requestedBleAddress_[0] = '\0';
+  requestedBleAddressType_ = 0xFF;
   return true;
 }
 
 bool DisplayLcd::takeBleCancelRequest() {
   if (!requestedBleCancel_) return false;
   requestedBleCancel_ = false;
+  // 用户明确返回：允许下一次进入 BLE 页面立即点击。
+  bleScanTouch_.reset(millis());
+  bleCancelTouch_.reset(millis());
   return true;
 }
 
 void DisplayLcd::showBleLoading(const char *status) {
   bleOperationActive_ = true;
   requestedBleCancel_ = false;
+  // 面板刚切换，吞掉这段时间内的手指残留/穿透点击。
+  bleCancelTouch_.reset(millis());
   lv_obj_clear_state(bleLoadingBackButton_, LV_STATE_DISABLED);
   lv_label_set_text(bleLoadingBackLabel_,
                     localized(LV_SYMBOL_LEFT " BACK", LV_SYMBOL_LEFT " 返回"));
@@ -2113,10 +2143,15 @@ void DisplayLcd::finishBleCancelled() {
   bleOperationActive_ = false;
   lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
+  // 从 loading 面板切回设备列表：缓冲一段时间，防止回弹的点击立刻又选中设备。
+  bleDeviceTouch_.reset(millis());
+  bleScanTouch_.reset(millis());
 }
 
 void DisplayLcd::showBleConnectFailure(const char *error) {
   bleOperationActive_ = false;
+  bleRequestInFlight_ = false;   // 失败后允许用户重新发起请求
+  bleCancelTouch_.reset(millis());
   lv_label_set_text(bleLoadingTitle_,
                     localized("CONNECTION FAILED", "连接失败"));
   lv_label_set_text(bleLoadingLabel_,
@@ -2134,6 +2169,10 @@ void DisplayLcd::showBleConnectFailure(const char *error) {
 void DisplayLcd::setBleDevices(const BlePowerDevice *devices, size_t count,
                                const char *status) {
   bleOperationActive_ = false;
+  bleRequestInFlight_ = false;
+  // 设备列表刚刷新：给触控一个缓冲窗口，避免扫描结束时手指恰好落下而误选。
+  bleDeviceTouch_.reset(millis());
+  bleScanTouch_.reset(millis());
   bleScanCompleted_ = true;
   bleDeviceCount_ = min(count, (size_t)4);
   if (devices)
@@ -2147,6 +2186,7 @@ void DisplayLcd::setBleDevices(const BlePowerDevice *devices, size_t count,
 
 void DisplayLcd::closePowerMeterPanels() {
   bleOperationActive_ = false;
+  bleRequestInFlight_ = false;
   lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);

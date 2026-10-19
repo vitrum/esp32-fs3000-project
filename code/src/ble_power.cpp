@@ -25,6 +25,28 @@ uint16_t readU16(const uint8_t *data, size_t index) {
 void logBleError(const char *message) {
   Serial.printf("[BLE] %s\n", message);
 }
+
+// NimBLEUtils::returnCodeToString() 对部分 HCI 层错误（如 13=ETIMEOUT）返回空串，
+// 这里补一个可读描述，避免日志出现 "code 13: " 这种没用的输出。
+const char *bleErrorText(int code) {
+  const char *text = NimBLEUtils::returnCodeToString(code);
+  if (text && text[0]) return text;
+  switch (code) {
+    case 13:  return "ETIMEOUT (no response from peer)";
+    case 6:   return "ENOTCONN";
+    case 0x3E: return "EREJECT";
+    default:  return "unknown";
+  }
+}
+
+const char *bleAddrTypeName(uint8_t type, char *buffer, size_t capacity) {
+  static const char *const kNames[] = {
+      "PUBLIC", "RANDOM_STATIC", "RANDOM_PRIVATE_RESOLVABLE",
+      "RANDOM_PRIVATE_NON_RESOLVABLE"};
+  if (type < 4) return kNames[type];
+  snprintf(buffer, capacity, "UNKNOWN(%u)", (unsigned)type);
+  return buffer;
+}
 }
 
 bool BlePowerMeter::s_connected = false;
@@ -240,7 +262,7 @@ void BlePowerMeter::clearScanResults() {
 }
 
 bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
-                                size_t &count) {
+                                size_t &count, uint32_t durationMs) {
   count = 0;
   if (!devices || capacity == 0) {
     setError("BLE scan failed: invalid output buffer");
@@ -260,7 +282,8 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
   scan->setActiveScan(true);
   scan->setInterval(100);
   scan->setWindow(30);
-  NimBLEScanResults results = scan->getResults(6000, false);
+  NimBLEScanResults results =
+      scan->getResults(durationMs ? durationMs : 6000, false);
 
   // 注意：NimBLEScanResults 持有的是扫描缓存里的指针。这里先把需要的字段
   // 全部拷进本地结构，再与上一次的「用户选择列表」做去重，最后才
@@ -273,6 +296,7 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     bool fitnessMachine;
     bool speedCadence;
     bool supported;
+    uint8_t addressType;
   };
   static Candidate candidates[32];
   size_t candidateCount = 0;
@@ -308,6 +332,8 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     c.fitnessMachine = fitnessMachine;
     c.speedCadence = speedCadence;
     c.supported = supported;
+    // 关键：记录真实地址类型，供后续 connect 使用（见 BlePowerDevice 注释）。
+    c.addressType = (uint8_t)ad->getAddress().getType();
   }
   scan->clearResults();
 
@@ -323,15 +349,19 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
       device.cyclingPower = c.cyclingPower;
       device.fitnessMachine = c.fitnessMachine;
       device.speedCadence = c.speedCadence;
+      device.addressType = c.addressType;
     }
   }
 
   Serial.printf("[BLE] scan complete: %u connectable device(s)\n",
                 (unsigned)count);
   for (size_t i = 0; i < count; ++i) {
-    Serial.printf("[BLE] %u: %s, %s, RSSI %d dBm%s%s\n",
+    char typeBuffer[24];
+    const char *typeName =
+        bleAddrTypeName(devices[i].addressType, typeBuffer, sizeof(typeBuffer));
+    Serial.printf("[BLE] %u: %s, %s [%s], RSSI %d dBm%s%s\n",
                   (unsigned)(i + 1), devices[i].name, devices[i].address,
-                  devices[i].rssi,
+                  typeName, devices[i].rssi,
                   devices[i].cyclingPower ? " CPS" : "",
                   devices[i].fitnessMachine ? " FTMS" :
                       (devices[i].speedCadence ? " CSC (cadence/speed only)" : ""));
@@ -365,7 +395,7 @@ void BlePowerMeter::cancelCurrentOperation() {
   if (s_client && !s_client->isConnected()) s_client->cancelConnect();
 }
 
-bool BlePowerMeter::connectDevice(const char *address) {
+bool BlePowerMeter::connectDevice(const char *address, uint8_t addressType) {
   if (!address || !address[0]) {
     setError("Connection failed: selected device address is empty");
     return false;
@@ -387,30 +417,59 @@ bool BlePowerMeter::connectDevice(const char *address) {
     setError("Connection failed: NimBLE scan results are unavailable");
     return false;
   }
-  // 只在「取地址 → 连接」这段窗口内引用扫描缓存；拷贝完地址字符串后立刻
-  // 清空结果，避免后续广播缓存被回收后指针悬空。
-  NimBLEScanResults results = scan->getResults();
-  bool found = false;
+
+  // ---------------------------------------------------------------------
+  // 不要依赖扫描缓存来连接。
+  //
+  // 旧实现要求「地址必须仍在本轮扫描缓存里」才允许连接，否则直接报
+  // "device is no longer in scan results"。但扫描缓存的生命周期和用户
+  // 点按时刻没有任何保证：扫描结束后的清缓存、下一次扫描开始时的
+  // clearResults()（NimBLEScan::start() 内部就会清）、或者其他串行操作
+  // 的复位，都会让刚扫到的设备在连接时「消失」。这正是日志里
+  //   [BLE] 4: CYCPLUS DC1 52449, f6:96:e2:c1:2a:40   ← 扫到了
+  //   [BLE] Connection failed ... no longer in scan results
+  // 的直接原因。
+  //
+  // 连接只需要地址，NimBLEAddress 可以自解析地址类型。因此这里改成：
+  //   1) 先在缓存里顺手取一下广播名（仅用于日志），取不到也无所谓；
+  //   2) 无论如何都尝试直接用地址连接。
+  // 若设备真的关机/走远，connect() 会超时并给出真实错误码，比一个
+  // 误导性的「不在扫描结果里」更有用。
+  // ---------------------------------------------------------------------
   char advertisedName[40] = {};
-  for (int i = 0; i < results.getCount(); ++i) {
-    const NimBLEAdvertisedDevice *candidate = results.getDevice(i);
-    if (!candidate) continue;
-    if (candidate->getAddress().toString() == address) {
-      snprintf(advertisedName, sizeof(advertisedName), "%s",
-               candidate->getName().c_str());
-      found = true;
-      break;
+  if (!scan->isScanning()) {
+    NimBLEScanResults cached = scan->getResults();
+    for (int i = 0; i < cached.getCount(); ++i) {
+      const NimBLEAdvertisedDevice *candidate = cached.getDevice(i);
+      if (candidate && candidate->getAddress().toString() == address) {
+        snprintf(advertisedName, sizeof(advertisedName), "%s",
+                 candidate->getName().c_str());
+        break;
+      }
     }
   }
-  scan->clearResults();
-  if (!found) {
-    char error[192];
-    snprintf(error, sizeof(error),
-             "Connection failed for %s: device is no longer in scan results. Scan again and select it nearby.",
-             address);
-    setError(error);
-    return false;
-  }
+
+  // ---------------------------------------------------------------------
+  // 地址类型：必须用扫描阶段记录的真实类型。
+  //
+  // 日志中 f6:96:e2:c1:2a:40 的最高字节为 0xF6（最高两位 = 11），是 BLE
+  // 随机地址（Random）。旧代码一律按 BLE_ADDR_PUBLIC 连接，会把连接请求
+  // 发到错误的地址解析路径，对端不应答 → 8s 后 ETIMEOUT(code 13)。
+  // ---------------------------------------------------------------------
+  const bool typeKnown = addressType < 4;
+  // NimBLEAddress 的构造参数是 uint8_t（BLE_ADDR_PUBLIC=0 / RANDOM=1..3）。
+  const uint8_t primaryType = typeKnown ? addressType : (uint8_t)BLE_ADDR_PUBLIC;
+  char typeBuffer[24];
+  const char *typeName =
+      typeKnown ? bleAddrTypeName(addressType, typeBuffer, sizeof(typeBuffer))
+                : "PUBLIC (assumed, unknown)";
+
+  Serial.printf("[BLE] connecting %s%s type=%s\n",
+                address, advertisedName[0] ? advertisedName : "",
+                typeName);
+  if (!advertisedName[0])
+    Serial.printf("[BLE] %s not in scan cache; connecting by address anyway\n",
+                  address);
 
   NimBLEClient *client = NimBLEDevice::createClient();
   if (!client) {
@@ -418,21 +477,64 @@ bool BlePowerMeter::connectDevice(const char *address) {
     return false;
   }
   client->setClientCallbacks(&s_clientCallbacks, false);
-  client->setConnectTimeout(8000);
+  const uint32_t connectTimeoutMs = 8000;
+  client->setConnectTimeout(connectTimeoutMs);
   s_client = client;
 
-  // 直接用地址连接（地址类型由 NimBLE 自动解析），不再依赖已清空的扫描缓存。
-  if (!client->connect(NimBLEAddress(std::string(address), BLE_ADDR_PUBLIC))) {
-    char error[192];
+  // 直接用地址 + 真实地址类型连接，不依赖扫描缓存。
+  const std::string addressString(address);
+  bool connected = client->connect(NimBLEAddress(addressString, primaryType));
+  if (connected) {
+    Serial.printf("[BLE] link established with type=%s in < %u ms\n", typeName,
+                  (unsigned)connectTimeoutMs);
+  } else {
+    const int primaryError = client->getLastError();
+    Serial.printf("[BLE] connect failed type=%s code=%d (%s)\n", typeName,
+                  primaryError, bleErrorText(primaryError));
+
+    // 二次尝试：真实类型失败后回退 PUBLIC。仅当类型已知且不是 PUBLIC 时进行，
+    // 用于覆盖「设备广播为 RANDOM、但实际接受 PUBLIC 连接」的少数厂商实现。
+    if (typeKnown && primaryType != BLE_ADDR_PUBLIC) {
+      Serial.println("[BLE] retrying with PUBLIC address type");
+      connected = client->connect(NimBLEAddress(addressString, BLE_ADDR_PUBLIC));
+      if (connected) {
+        Serial.println("[BLE] link established only with PUBLIC (address type mismatch)");
+        typeName = "PUBLIC (fallback)";
+      } else {
+        Serial.printf("[BLE] PUBLIC retry failed code=%d (%s)\n",
+                      client->getLastError(),
+                      bleErrorText(client->getLastError()));
+      }
+    }
+  }
+
+  if (!connected) {
+    const int code = client->getLastError();
+    const char *reason = "unknown error";
+    switch (code) {
+      case 13:  // BLE_HS_ETIMEOUT
+        reason = "no response from device; it may be connected to a phone app, "
+                 "in pairing mode, or out of range";
+        break;
+      case 0x06:  // BLE_HS_ENOTCONN
+        reason = "device rejected/cancelled the link";
+        break;
+      case 0x3E:  // BLE_HS_EREJECT
+        reason = "device rejected the connection request";
+        break;
+      default:
+        break;
+    }
+    char error[256];
     snprintf(error, sizeof(error),
-             "BLE connection to %s failed (code %d: %s). Wake the trainer and retry.",
-             address, client->getLastError(),
-             NimBLEUtils::returnCodeToString(client->getLastError()));
+             "BLE connection to %s failed (code %d: %s; type=%s). %s.",
+             address, code, bleErrorText(code), typeName, reason);
     setError(error);
     disconnect();
     return false;
   }
-  scan->clearResults();
+  // 连接成功后释放扫描缓存（连接用的地址是副本，不依赖缓存）。
+  if (!scan->isScanning()) scan->clearResults();
 
   const std::vector<NimBLERemoteService *> &services = client->getServices(true);
   NimBLERemoteCharacteristic *cpMeasurement = nullptr;
