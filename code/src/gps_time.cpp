@@ -1,4 +1,5 @@
 #include "gps_time.h"
+#include "runtime_log.h"
 
 #include <time.h>
 #include <driver/uart.h>
@@ -20,7 +21,7 @@ bool GpsTime::begin() {
   if (_enabled) return true;   // 已启动，幂等
   if (!_receiverStopped) _receiverStopped = xSemaphoreCreateBinary();
   if (!_receiverStopped) {
-    Serial.println("[GPS] could not allocate receiver stop semaphore");
+    AppLog.println("[GPS] could not allocate receiver stop semaphore");
     return false;
   }
   uart_config_t config = {};
@@ -37,7 +38,7 @@ bool GpsTime::begin() {
   if (err == ESP_OK)
     err = uart_driver_install(kGpsUart, kRxBuffer, 0, 16, &_uartEvents, 0);
   if (err != ESP_OK) {
-    Serial.printf("[GPS] UART initialization failed: %s\n", esp_err_to_name(err));
+    AppLog.printf("[GPS] UART initialization failed: %s\n", esp_err_to_name(err));
     return false;
   }
   portENTER_CRITICAL(&_snapshotMux);
@@ -48,7 +49,7 @@ bool GpsTime::begin() {
                   &_receiverTask) != pdPASS) {
     uart_driver_delete(kGpsUart);
     _uartEvents = nullptr;
-    Serial.println("[GPS] could not create receiver task");
+    AppLog.println("[GPS] could not create receiver task");
     return false;
   }
   _enabled = true;
@@ -59,11 +60,11 @@ bool GpsTime::begin() {
   _modulePresent = false;
   _lastRxMs = 0;
   _rxBytesTotal = 0;
-  Serial.printf("[GPS] UART2 receiver ready: RX=%d TX=%d baud=%d buffer=%d\n",
+  AppLog.printf("[GPS] UART2 receiver ready: RX=%d TX=%d baud=%d buffer=%d\n",
                 PIN_GPS_RX, PIN_GPS_TX, GPS_BAUD, kRxBuffer);
   return true;
 #else
-  Serial.println("[GPS] disabled by config");
+  AppLog.println("[GPS] disabled by config");
   _modulePresent = false;
   _presenceChecked = true;
   return false;
@@ -79,15 +80,15 @@ void GpsTime::stop() {
     _receiverTask = nullptr;
     const esp_err_t err = uart_driver_delete(kGpsUart);
     if (err != ESP_OK)
-      Serial.printf("[GPS] UART shutdown failed: %s\n", esp_err_to_name(err));
+      AppLog.printf("[GPS] UART shutdown failed: %s\n", esp_err_to_name(err));
     _uartEvents = nullptr;
-    Serial.println("[GPS] receiver stopped");
+    AppLog.println("[GPS] receiver stopped");
   }
   _enabled = false;
 }
 
 bool GpsTime::restart() {
-  Serial.println("[GPS] manual restart requested");
+  AppLog.println("[GPS] manual restart requested");
   stop();
   _gps = ParsedState();
   _lastFixMs = 0;
@@ -127,7 +128,7 @@ void GpsTime::receiverTask() {
     const int count = uart_read_bytes(kGpsUart, bytes, sizeof(bytes),
                                       pdMS_TO_TICKS(20));
     if (count < 0) {
-      Serial.println("[GPS] UART read failed");
+      AppLog.println("[GPS] UART read failed");
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
@@ -188,7 +189,7 @@ void GpsTime::tick() {
     _lastDiagnosticsMs = now;
     _reportedOverflows = _overflowCount;
     _reportedChecksumFailures = _failedChecksum;
-    Serial.printf("[GPS] rx=%lu checksum_failures=%lu overflows=%lu\n",
+    AppLog.printf("[GPS] rx=%lu checksum_failures=%lu overflows=%lu\n",
                   (unsigned long)_rxBytesTotal, (unsigned long)_failedChecksum,
                   (unsigned long)_overflowCount);
   }
@@ -208,7 +209,7 @@ void GpsTime::pollPresence() {
   // 一旦收到过数据，立即确认存在。
   if (_modulePresent) {
     _presenceChecked = true;
-    Serial.println("[GPS] module detected (NMEA data received)");
+    AppLog.println("[GPS] module detected (NMEA data received)");
     return;
   }
 
@@ -216,7 +217,7 @@ void GpsTime::pollPresence() {
   if (now - _presenceStartMs >= kPresenceTimeoutMs) {
     _presenceChecked = true;
     _modulePresent = false;
-    Serial.printf("[GPS] no module detected within %lums (RX=%d)\n",
+    AppLog.printf("[GPS] no module detected within %lums (RX=%d)\n",
                   (unsigned long)kPresenceTimeoutMs, PIN_GPS_RX);
   }
 }

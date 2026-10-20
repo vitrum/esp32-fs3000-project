@@ -15,6 +15,8 @@
 #include <cstring>
 
 #include "config.h"
+#include "runtime_log.h"
+#include "ble_diagnostics.h"
 #include "fs3000.h"
 #include "wind_probe.h"
 #include "ble_power.h"
@@ -163,16 +165,16 @@ static bool beginBleWorker() {
   bleCmdQueue = xQueueCreate(BLE_OP_QUEUE_LEN, sizeof(BleCommand));
   bleResultQueue = xQueueCreate(1, sizeof(BleOutcome));
   if (!bleCmdQueue || !bleResultQueue) {
-    Serial.println("[BLE] could not create operation queues");
+    AppLog.println("[BLE] could not create operation queues");
     return false;
   }
   if (xTaskCreatePinnedToCore(bleWorkerTask, "bleWorker", BLE_OP_TASK_STACK,
                               nullptr, 2, &bleWorkerHandle, 0) != pdPASS) {
-    Serial.println("[BLE] could not create BLE worker task");
+    AppLog.println("[BLE] could not create BLE worker task");
     bleWorkerHandle = nullptr;
     return false;
   }
-  Serial.println("[BLE] serial worker started");
+  AppLog.println("[BLE] serial worker started");
   return true;
 }
 
@@ -215,26 +217,30 @@ static void requestBleCancel() {
 static bool suspendWirelessForAudio() {
   if (wirelessSuspendedForAudio) return true;
   if (bleOpBusy) {
-    Serial.println("[AUDIO] wait for BLE operation to finish before playback");
+    AppLog.println("[AUDIO] wait for BLE operation to finish before playback");
     return false;
   }
   // 先释放工作线程和队列，再释放协议栈；否则线程会在 NimBLE 全局对象被
   // deinit 后继续轮询命令并调用已失效的 API。
   stopBleWorker();
+  AppLog.println("[BLE-LOG] suspending phone service for audio");
+  bleDiagnostics.suspend();
   powerMeter.disconnect();
   posture.resetAfterStackShutdown();
   if (NimBLEDevice::isInitialized() && !NimBLEDevice::deinit(true)) {
-    Serial.println("[AUDIO] could not release BLE stack for playback");
+    AppLog.println("[AUDIO] could not release BLE stack for playback");
     powerMeter.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
     posture.begin(BLE_DEVICE_NAME);
+    if (!bleDiagnostics.begin())
+      AppLog.println("[BLE-LOG] service recovery failed after audio release failure");
     if (!beginBleWorker())
-      Serial.println("[BLE] worker could not be restarted after audio failure");
+      AppLog.println("[BLE] worker could not be restarted after audio failure");
     return false;
   }
   powerConnected = false;
   postureConnected = false;
   wirelessSuspendedForAudio = true;
-  Serial.printf("[AUDIO] BLE stack suspended; internal heap free=%u largest=%u\n",
+  AppLog.printf("[AUDIO] BLE stack suspended; internal heap free=%u largest=%u\n",
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
   return true;
@@ -245,13 +251,15 @@ static void resumeWirelessAfterAudio() {
   if (!wirelessSuspendedForAudio) return;
   powerMeter.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
   posture.begin(BLE_DEVICE_NAME);
+  if (!bleDiagnostics.begin())
+    AppLog.println("[BLE-LOG] service could not resume after audio");
   wirelessSuspendedForAudio = false;
   if (!beginBleWorker())
-    Serial.println("[BLE] worker could not be restarted after audio");
+    AppLog.println("[BLE] worker could not be restarted after audio");
   // 播放期间姿态重连被挂起，恢复后立刻补一次，不必再等 30s 周期。
   lastBlePostureAttemptMs = millis();
   postAudioBleCatchUpNeeded = true;
-  Serial.println("[AUDIO] BLE stack resumed");
+  AppLog.println("[AUDIO] BLE stack resumed");
 }
 
 // Keep historical CSV source IDs: 0=none, 1=BLE, 2=reserved, 3=virtual.
@@ -275,9 +283,9 @@ void setup() {
 
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n== Aero Probe (single FS3000 + touch UI + BLE PM) ==");
-  Serial.println("[PM] Use SELECT POWER METER to choose BLE, virtual, or automatic input.");
-  Serial.println("[PM] BLE measurements are streamed to this monitor.");
+  AppLog.println("\n== Aero Probe (single FS3000 + touch UI + BLE PM) ==");
+  AppLog.println("[PM] Use SELECT POWER METER to choose BLE, virtual, or automatic input.");
+  AppLog.println("[PM] BLE measurements are streamed to this monitor.");
 
   // GPS UART 先启动并进行限时、非阻塞探测；不等待定位。
   // 放在可能耗时的 SD 初始化之前，避免错过模块输出的 NMEA 数据。
@@ -287,18 +295,18 @@ void setup() {
   Wire.begin(PIN_I2C1_SDA, PIN_I2C1_SCL, 400000);
 
   bool windOk = windSensor.begin(Wire);
-  Serial.printf("FS3000 %s addr=0x%02X bus=GPIO%d/%d clock=400kHz\n",
+  AppLog.printf("FS3000 %s addr=0x%02X bus=GPIO%d/%d clock=400kHz\n",
                 windOk ? "OK" : "FAIL", FS3000_ADDR,
                 PIN_I2C1_SDA, PIN_I2C1_SCL);
 
   env.begin(Wire);                   // 可选 BME280（挂在 I2C1）
-  Serial.printf("BME280 %s\n", env.present() ? "OK" : "absent");
+  AppLog.printf("BME280 %s\n", env.present() ? "OK" : "absent");
 
   // BOOT 按钮（GPIO0）：按下为低电平，用于打开设置页。
   pinMode(PIN_BOOT_KEY, INPUT_PULLUP);
 
   if (!beginSdCardMutex())
-    Serial.println("[SD] Could not create SD card mutex; SD access is unavailable");
+    AppLog.println("[SD] Could not create SD card mutex; SD access is unavailable");
   logger.begin();                    // TF 卡（可选，失败不阻塞）
   lcd.begin();                       // 屏幕
 
@@ -319,14 +327,17 @@ void setup() {
   // BLE 设备（NimBLE 单例，两个客户端共用；init 幂等）
   powerMeter.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
   posture.begin(BLE_DEVICE_NAME);
+  if (!bleDiagnostics.begin())
+    AppLog.println("[BLE-LOG] phone diagnostic service unavailable");
   // 单个串行工作线程负责所有扫描/连接；主循环只投递命令与取结果。
   if (!beginBleWorker())
-    Serial.println("[BLE] serial worker unavailable; BLE pairing disabled");
-  Serial.println("Scanning for BLE power meter & posture sensor...");
+    AppLog.println("[BLE] serial worker unavailable; BLE pairing disabled");
+  AppLog.println("Scanning for BLE power meter & posture sensor...");
 }
 
 void loop() {
   uint32_t now = millis();
+  bleDiagnostics.tick();
 
   // 电源开关：长按 5 秒关机（非阻塞）
   powerKey.tick();
@@ -338,7 +349,7 @@ void loop() {
       return;
     if (!logger.stop()) {
       lastLogStopAttemptMs = shutdownAttemptMs;
-      Serial.println("[SD] log could not be fully synced before shutdown");
+      AppLog.println("[SD] log could not be fully synced before shutdown");
       return;
     }
     lastLogStopAttemptMs = 0;
@@ -368,10 +379,10 @@ void loop() {
   const bool audioPlaying = audio.playing();
   if (audioPlaying && !audioWasPlaying) {
     logger.pause();
-    Serial.println("[SD] audio playback started -> CSV logging paused");
+    AppLog.println("[SD] audio playback started -> CSV logging paused");
   } else if (!audioPlaying && audioWasPlaying) {
     logger.resume();
-    Serial.println("[SD] audio playback ended -> CSV logging resumed");
+    AppLog.println("[SD] audio playback ended -> CSV logging resumed");
   }
   if (!audioPlaying && wirelessSuspendedForAudio) resumeWirelessAfterAudio();
   audioWasPlaying = audioPlaying;
@@ -385,7 +396,7 @@ void loop() {
       prefs.putUChar("vol", newVolume);
       prefs.end();
     }
-    Serial.printf("[AUDIO] volume set to %u%%\n", (unsigned)newVolume);
+    AppLog.printf("[AUDIO] volume set to %u%%\n", (unsigned)newVolume);
     audio.playBeepPreview();
   }
 
@@ -400,24 +411,24 @@ void loop() {
   if (lcd.takeSdPlayRequest(sdPlayPath, sizeof(sdPlayPath))) {
     const bool wirelessReady = suspendWirelessForAudio();
     if (wirelessReady && audio.playFile(sdPlayPath)) {
-      Serial.printf("[SD] play mp3: %s\n", sdPlayPath);
+      AppLog.printf("[SD] play mp3: %s\n", sdPlayPath);
     } else {
-      Serial.printf("[SD] could not play: %s\n", sdPlayPath);
+      AppLog.printf("[SD] could not play: %s\n", sdPlayPath);
       resumeWirelessAfterAudio();
     }
   }
   if (lcd.takeSdStopRequest()) {
     if (audio.stop())
-      Serial.println("[SD] playback stopped");
+      AppLog.println("[SD] playback stopped");
     else
-      Serial.println("[SD] playback could not stop; SD card is busy");
+      AppLog.println("[SD] playback could not stop; SD card is busy");
   }
 
 #if WIFI_WEB_ENABLE
   bool wifiEnabled = false;
   if (lcd.takeWifiEnableRequest(wifiEnabled)) {
     if (!wifiWeb.setEnabled(wifiEnabled))
-      Serial.println("[WiFi] Could not change Wi-Fi state");
+      AppLog.println("[WiFi] Could not change Wi-Fi state");
   }
 
   // Wi-Fi / SmartConfig / Web 服务器事件泵（非阻塞）
@@ -431,14 +442,14 @@ void loop() {
   if (wifiWeb.takeRecordingRequest(startRecording)) {
     if (startRecording) {
       if (logger.start())
-        Serial.println("[WEB] recording started");
+        AppLog.println("[WEB] recording started");
       else
-        Serial.println("[WEB] recording could not start; check SD card");
+        AppLog.println("[WEB] recording could not start; check SD card");
     } else {
       if (logger.stop())
-        Serial.println("[WEB] recording stopped");
+        AppLog.println("[WEB] recording stopped");
       else
-        Serial.println("[WEB] recording could not stop; SD card is busy");
+        AppLog.println("[WEB] recording could not stop; SD card is busy");
     }
   }
 
@@ -447,7 +458,7 @@ void loop() {
   if (wifiWeb.takeSourceRequest(webSource) &&
       (webSource == 0 || webSource == 1 || webSource == 3)) {
     powerMode = webSource;
-    Serial.printf("[WEB] power source -> %d\n", powerMode);
+    AppLog.printf("[WEB] power source -> %d\n", powerMode);
   }
 #endif
 
@@ -501,7 +512,7 @@ void loop() {
 
     const char *sourceName = src == 3 ? "VIRTUAL" : (src == 1 ? "BLE" : "--");
     const uint8_t *frame = windSensor.lastFrame();
-    Serial.printf("%lu P=%5.0fW(%s) cad=%4.0f vg=%4.2f vAir=%4.2f yaw=%+5.1f pos=%+5.1f rho=%.3f windSamples=%lu fs=%s err=%s short=%lu checksum=%lu bytes=%u raw=%02X%02X%02X%02X%02X sd=%s gps=%s fix=%u sat=%u hdop=%u lat=%.5f lon=%.5f gspd=%.2f utc=%lu\n",
+    AppLog.printf("%lu P=%5.0fW(%s) cad=%4.0f vg=%4.2f vAir=%4.2f yaw=%+5.1f pos=%+5.1f rho=%.3f windSamples=%lu fs=%s err=%s short=%lu checksum=%lu bytes=%u raw=%02X%02X%02X%02X%02X sd=%s gps=%s fix=%u sat=%u hdop=%u lat=%.5f lon=%.5f gspd=%.2f utc=%lu\n",
                   (unsigned long)now, power,
                   sourceName,
                   pmCadence(), vg, vAir, yaw, post, rho,
@@ -532,9 +543,9 @@ void loop() {
   if (!windSensor.present() && now - lastWindProbeMs >= 5000) {
     lastWindProbeMs = now;
     if (windSensor.begin(Wire))
-      Serial.println("[FS3000] Sensor recovered on I2C bus");
+      AppLog.println("[FS3000] Sensor recovered on I2C bus");
     else
-      Serial.printf("[FS3000] Not found at 0x%02X on GPIO%d/%d; retrying\n",
+      AppLog.printf("[FS3000] Not found at 0x%02X on GPIO%d/%d; retrying\n",
                     FS3000_ADDR, PIN_I2C1_SDA, PIN_I2C1_SCL);
   }
 
@@ -550,7 +561,7 @@ void loop() {
       bootWasPressed = bootPressed;
       if (bootPressed) {
         lcd.showSettings();
-        Serial.println("[BOOT] settings opened");
+        AppLog.println("[BOOT] settings opened");
       }
     }
   }
@@ -590,7 +601,7 @@ void loop() {
   int requestedMode = -1;
   if (lcd.takePowerSourceRequest(requestedMode)) {
     powerMode = requestedMode;
-    Serial.printf("[PM] selected mode: %s\n",
+    AppLog.printf("[PM] selected mode: %s\n",
                   powerMode == 3 ? "VIRTUAL" :
                   (powerMode == 1 ? "BLE" : "AUTO"));
   }
@@ -605,13 +616,13 @@ void loop() {
   if (lcd.takeBleCancelRequest()) {
     if (bleOpBusy) {
       requestBleCancel();
-      Serial.println("[BLE] cancellation requested; waiting for the current operation");
+      AppLog.println("[BLE] cancellation requested; waiting for the current operation");
     } else {
       // 没有正在执行的操作：这是一次纯界面返回，直接还原界面即可。
       // 不要在这里清扫描缓存——用户按返回后可能马上再次选择同一台设备，
       // 缓存留着无害（连接本身不依赖它），清了反而多一次不必要的释放。
       manualPairingActive = false;
-      Serial.println("[BLE] device selection cancelled");
+      AppLog.println("[BLE] device selection cancelled");
     }
   }
 
@@ -623,12 +634,12 @@ void loop() {
       lcd.showBleConnectFailure(
           "BLE is paused while audio is playing. Stop the music and try again.");
     } else if (!enqueueBleCommand(BleOpKind::Scan)) {
-      Serial.println("[BLE] scan request dropped: worker busy");
+      AppLog.println("[BLE] scan request dropped: worker busy");
       lcd.showBleConnectFailure(
           "The BLE module is still finishing the previous operation. "
           "Wait a moment and press SCAN AGAIN.");
     } else {
-      Serial.println("[BLE] scan queued (6 seconds)");
+      AppLog.println("[BLE] scan queued (6 seconds)");
     }
   }
 
@@ -636,7 +647,7 @@ void loop() {
   uint8_t selectedAddressType = 0xFF;
   if (lcd.takeBleConnectRequest(selectedAddress, sizeof(selectedAddress),
                                 &selectedAddressType)) {
-    Serial.printf("[BLE] user confirmed connection to %s (addressType=%u)\n",
+    AppLog.printf("[BLE] user confirmed connection to %s (addressType=%u)\n",
                   selectedAddress, (unsigned)selectedAddressType);
     if (!bleAvailable) {
       manualPairingActive = false;
@@ -657,17 +668,17 @@ void loop() {
   if (takeBleOutcome(outcome)) {
     if (outcome.kind == BleOpKind::Posture) {
       postureConnected = outcome.success;
-      Serial.printf("[BLE] posture discovery %s\n",
+      AppLog.printf("[BLE] posture discovery %s\n",
                     postureConnected ? "connected"
                                      : (outcome.cancelled
                                             ? "cancelled"
                                             : "no connection; retry later"));
       if (!postureConnected && !outcome.cancelled && outcome.error[0])
-        Serial.printf("[BLE-POSTURE] %s\n", outcome.error);
+        AppLog.printf("[BLE-POSTURE] %s\n", outcome.error);
     } else if (outcome.cancelled) {
       manualPairingActive = false;
       lcd.finishBleCancelled();
-      Serial.println("[BLE] operation cancelled");
+      AppLog.println("[BLE] operation cancelled");
     } else if (outcome.success) {
       if (outcome.kind == BleOpKind::Scan) {
         char status[48];
@@ -692,7 +703,7 @@ void loop() {
   uint32_t bleDisconnects = powerMeter.disconnectCount();
   if (bleDisconnects != lastBleDisconnectCount) {
     lastBleDisconnectCount = bleDisconnects;
-    Serial.printf("[BLE] power meter disconnected (total %lu)\n",
+    AppLog.printf("[BLE] power meter disconnected (total %lu)\n",
                   (unsigned long)bleDisconnects);
   }
 
@@ -708,9 +719,9 @@ void loop() {
       now - lastBleDiagnosticsMs >= 5000) {
     lastBleDiagnosticsMs = now;
     const uint16_t flags = powerMeter.lastFitnessMachineFlags();
-    Serial.printf("[BLE-DATA] P=%.0f W cad=%.0f rpm speed=%.2f m/s\n",
+    AppLog.printf("[BLE-DATA] P=%.0f W cad=%.0f rpm speed=%.2f m/s\n",
                   powerMeter.power(), powerMeter.cadence(), powerMeter.speed());
-    Serial.printf("[BLE-FTMS] notify=%lu flags=0x%04X powerField=%s P=%.0f W cadenceField=%s cad=%.1f rpm speedField=%s speed=%.2f m/s\n",
+    AppLog.printf("[BLE-FTMS] notify=%lu flags=0x%04X powerField=%s P=%.0f W cadenceField=%s cad=%.1f rpm speedField=%s speed=%.2f m/s\n",
                   (unsigned long)bleFtmsNotifications, flags,
                   (flags & 0x0040) ? "yes" : "no", powerMeter.power(),
                   (flags & 0x0004) ? "yes" : "no", powerMeter.cadence(),
@@ -719,7 +730,7 @@ void loop() {
   uint32_t blePostureNotifications = posture.notificationCount();
   if (blePostureNotifications != lastBlePostureNotification) {
     lastBlePostureNotification = blePostureNotifications;
-    Serial.printf("[BLE-POSTURE] pitch=%+.2f deg\n", posture.pitchDeg());
+    AppLog.printf("[BLE-POSTURE] pitch=%+.2f deg\n", posture.pitchDeg());
   }
   if (!wirelessSuspendedForAudio && bleWorkerHandle && !manualPairingActive &&
       !postureConnected) {

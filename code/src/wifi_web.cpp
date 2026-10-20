@@ -1,4 +1,5 @@
 #include "wifi_web.h"
+#include "runtime_log.h"
 #include <math.h>
 #include "config.h"
 #include "web_assets.h"
@@ -53,7 +54,7 @@ bool WifiWeb::takeSourceRequest(int &mode) {
 // ============================================================================
 void WifiWeb::loadCredentials() {
   if (!_prefs.begin("aero-wifi", true)) {
-    Serial.println("[WiFi] Could not open preferences to load Wi-Fi credentials");
+    AppLog.println("[WiFi] Could not open preferences to load Wi-Fi credentials");
     return;
   }
   _ssid = _prefs.getString("ssid", "");
@@ -63,14 +64,14 @@ void WifiWeb::loadCredentials() {
 
 bool WifiWeb::saveCredentials(const String &ssid, const String &pass) {
   if (!_prefs.begin("aero-wifi", false)) {
-    Serial.println("[WiFi] Could not open preferences to save Wi-Fi credentials");
+    AppLog.println("[WiFi] Could not open preferences to save Wi-Fi credentials");
     return false;
   }
   const size_t ssidWritten = _prefs.putString("ssid", ssid);
   const size_t passWritten = _prefs.putString("pass", pass);
   _prefs.end();
   if (ssidWritten == 0 || passWritten == 0) {
-    Serial.println("[WiFi] Could not save Wi-Fi credentials");
+    AppLog.println("[WiFi] Could not save Wi-Fi credentials");
     return false;
   }
   return true;
@@ -78,17 +79,17 @@ bool WifiWeb::saveCredentials(const String &ssid, const String &pass) {
 
 void WifiWeb::clearCredentials() {
   if (!_prefs.begin("aero-wifi", false)) {
-    Serial.println("[WiFi] Could not open preferences to clear credentials");
+    AppLog.println("[WiFi] Could not open preferences to clear credentials");
     return;
   }
   const bool ssidRemoved = _prefs.remove("ssid");
   const bool passRemoved = _prefs.remove("pass");
   _prefs.end();
   if (!ssidRemoved && !passRemoved)
-    Serial.println("[WiFi] No saved Wi-Fi credentials to clear");
+    AppLog.println("[WiFi] No saved Wi-Fi credentials to clear");
   _ssid = "";
   _pass = "";
-  Serial.println("[WiFi] credentials cleared");
+  AppLog.println("[WiFi] credentials cleared");
 }
 
 // ============================================================================
@@ -97,15 +98,15 @@ void WifiWeb::clearCredentials() {
 void WifiWeb::beginSmartConfig() {
   if (_smartConfigRunning) return;
   _smartConfigRetryAtMs = 0;
-  Serial.println("[WiFi] starting SmartConfig (ESP-Touch).");
-  Serial.println("[WiFi] Open the phone app (ESP Touch / Espressif) and push your SSID & password.");
+  AppLog.println("[WiFi] starting SmartConfig (ESP-Touch).");
+  AppLog.println("[WiFi] Open the phone app (ESP Touch / Espressif) and push your SSID & password.");
   if (!_wifiModeReady) {
     if (!_wifiBuffersConfigured) {
       WiFi.useStaticBuffers(true);
       _wifiBuffersConfigured = true;
     }
     if (!WiFi.mode(WIFI_STA)) {
-      Serial.printf("[WiFi] STA initialization failed; internal heap free=%u largest=%u\n",
+      AppLog.printf("[WiFi] STA initialization failed; internal heap free=%u largest=%u\n",
                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
       _smartConfigRetryAtMs = millis() + 60000;
@@ -135,7 +136,7 @@ void WifiWeb::pollSmartConfig() {
 
   // 超时保护：长时间无人配网则停止，避免射频被一直占用
   if (millis() - _smartConfigStartMs >= WIFI_SMART_CONFIG_TIMEOUT_MS) {
-    Serial.println("[WiFi] SmartConfig timed out; stopping.");
+    AppLog.println("[WiFi] SmartConfig timed out; stopping.");
     WiFi.stopSmartConfig();
     _smartConfigRunning = false;
     if (_ssid.isEmpty()) _smartConfigRetryAtMs = millis() + 5000;
@@ -145,10 +146,10 @@ void WifiWeb::pollSmartConfig() {
   if (WiFi.smartConfigDone()) {
     String ssid = WiFi.SSID();
     String pass = WiFi.psk();
-    Serial.printf("[WiFi] SmartConfig received credentials for SSID=%s\n",
+    AppLog.printf("[WiFi] SmartConfig received credentials for SSID=%s\n",
                   ssid.c_str());
     if (!saveCredentials(ssid, pass))
-      Serial.println("[WiFi] Credentials work for this session but were not persisted");
+      AppLog.println("[WiFi] Credentials work for this session but were not persisted");
     _ssid = ssid;
     _pass = pass;
     _smartConfigRunning = false;
@@ -156,7 +157,7 @@ void WifiWeb::pollSmartConfig() {
     _lastReconnectMs = millis();
     _disconnectedSinceMs = millis();
     _smartConfigRetryAtMs = 0;
-    Serial.println("[WiFi] joining the configured network asynchronously");
+    AppLog.println("[WiFi] joining the configured network asynchronously");
   }
 }
 
@@ -175,7 +176,7 @@ bool WifiWeb::connectStation() {
           heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
       const uint32_t largestBlock =
           heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-      Serial.printf("[WiFi] STA initialization failed; internal heap free=%lu largest=%lu\n",
+      AppLog.printf("[WiFi] STA initialization failed; internal heap free=%lu largest=%lu\n",
                     (unsigned long)freeHeap, (unsigned long)largestBlock);
       _lastReconnectMs = millis();
       return false;
@@ -183,10 +184,10 @@ bool WifiWeb::connectStation() {
     _wifiModeReady = true;
     WiFi.setAutoReconnect(true);
   }
-  Serial.printf("[WiFi] connecting to saved SSID=%s ...\n", _ssid.c_str());
+  AppLog.printf("[WiFi] connecting to saved SSID=%s ...\n", _ssid.c_str());
   const wl_status_t status = WiFi.begin(_ssid.c_str(), _pass.c_str());
   if (status == WL_CONNECT_FAILED) {
-    Serial.println("[WiFi] station start failed; waiting before retry");
+    AppLog.println("[WiFi] station start failed; waiting before retry");
     _lastReconnectMs = millis();
     return false;
   }
@@ -198,9 +199,9 @@ void WifiWeb::startMdns() {
   if (MDNS.begin(WIFI_MDNS_HOST)) {
     MDNS.addService("http", "tcp", 80);
     _mdnsStarted = true;
-    Serial.printf("[WiFi] mDNS ready: http://%s.local/\n", WIFI_MDNS_HOST);
+    AppLog.printf("[WiFi] mDNS ready: http://%s.local/\n", WIFI_MDNS_HOST);
   } else {
-    Serial.println("[WiFi] mDNS start failed");
+    AppLog.println("[WiFi] mDNS start failed");
   }
 }
 
@@ -216,12 +217,12 @@ bool WifiWeb::begin(bool autoSmartConfig) {
   loadCredentials();
   bool radioStarted = false;
   if (_ssid.isEmpty()) {
-    Serial.println("[WiFi] no saved credentials.");
+    AppLog.println("[WiFi] no saved credentials.");
     if (autoSmartConfig) {
       beginSmartConfig();
       radioStarted = _smartConfigRunning;
     } else {
-      Serial.println("[WiFi] SmartConfig disabled; Wi-Fi idle.");
+      AppLog.println("[WiFi] SmartConfig disabled; Wi-Fi idle.");
       return false;
     }
   } else {
@@ -236,14 +237,14 @@ bool WifiWeb::begin(bool autoSmartConfig) {
     }
     _enabled = false;
     _startRetryNotBeforeMs = millis() + kWifiStartFailureCooldownMs;
-    Serial.println("[WiFi] radio start failed; server not started");
+    AppLog.println("[WiFi] radio start failed; server not started");
     return false;
   }
 
   const uint32_t largestBlock =
       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (largestBlock < 20 * 1024) {
-    Serial.printf("[WiFi] not enough contiguous internal heap for AsyncTCP: largest=%lu\n",
+    AppLog.printf("[WiFi] not enough contiguous internal heap for AsyncTCP: largest=%lu\n",
                   (unsigned long)largestBlock);
     if (_smartConfigRunning) WiFi.stopSmartConfig();
     _smartConfigRunning = false;
@@ -259,7 +260,7 @@ bool WifiWeb::begin(bool autoSmartConfig) {
   _server.begin();
   _enabled = true;
   _started = true;
-  Serial.println("[WiFi] HTTP server started on port 80 (no login required)");
+  AppLog.println("[WiFi] HTTP server started on port 80 (no login required)");
   return true;
 }
 
@@ -303,7 +304,7 @@ bool WifiWeb::setEnabled(bool enabled) {
     WiFi.mode(WIFI_OFF);
   }
   _wifiModeReady = false;
-  Serial.println("[WiFi] disabled by user");
+  AppLog.println("[WiFi] disabled by user");
   return true;
 }
 
@@ -324,7 +325,7 @@ void WifiWeb::tick() {
     if (nowConnected && !_connected) {
       _connected = true;
       startMdns();
-      Serial.printf("[WiFi] reconnected. IP=%s\n", WiFi.localIP().toString().c_str());
+      AppLog.printf("[WiFi] reconnected. IP=%s\n", WiFi.localIP().toString().c_str());
     } else if (!nowConnected && _connected) {
       _connected = false;
       _disconnectedSinceMs = millis();
@@ -333,7 +334,7 @@ void WifiWeb::tick() {
         MDNS.end();
         _mdnsStarted = false;
       }
-      Serial.println("[WiFi] disconnected");
+      AppLog.println("[WiFi] disconnected");
     }
     if (!nowConnected && !_ssid.isEmpty() &&
         millis() - _lastReconnectMs >= WIFI_RECONNECT_MS) {
@@ -341,7 +342,7 @@ void WifiWeb::tick() {
       if (_reconnectAttempts < UINT8_MAX) ++_reconnectAttempts;
       if (_wifiModeReady && _reconnectAttempts >= 6 &&
           millis() - _disconnectedSinceMs >= 60000) {
-        Serial.println("[WiFi] saved network unavailable; entering SmartConfig");
+        AppLog.println("[WiFi] saved network unavailable; entering SmartConfig");
         startSmartConfig();
       } else {
         if (_wifiModeReady) {
@@ -364,10 +365,10 @@ uint32_t WifiWeb::clientCount() const {
 void WifiWeb::onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                         AwsEventType type, void *arg, uint8_t *data, size_t len) {
   if (type == WS_EVT_CONNECT) {
-    Serial.printf("[WS] client #%u connected from %s\n", client->id(),
+    AppLog.printf("[WS] client #%u connected from %s\n", client->id(),
                   client->remoteIP().toString().c_str());
   } else if (type == WS_EVT_DISCONNECT) {
-    Serial.printf("[WS] client #%u disconnected\n", client->id());
+    AppLog.printf("[WS] client #%u disconnected\n", client->id());
   } else if (type == WS_EVT_DATA) {
     // 后续可解析前端上行控制（当前控制走 /api/control）
     (void)arg; (void)data; (void)len;

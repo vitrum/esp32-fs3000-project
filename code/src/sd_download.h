@@ -4,6 +4,7 @@
 #include <WebResponseImpl.h>
 #include <atomic>
 #include "csv_logger.h"
+#include "runtime_log.h"
 
 class SdDownloadResponse : public AsyncAbstractResponse {
 public:
@@ -68,7 +69,7 @@ private:
   }
   void fail(const char *reason) {
     _failed = true;
-    Serial.printf("[WEB] download failed: %s at %u/%u: %s\n",
+    AppLog.printf("[WEB] download failed: %s at %u/%u: %s\n",
                   _path.c_str(), (unsigned)_offset,
                   (unsigned)_contentLength, reason);
   }

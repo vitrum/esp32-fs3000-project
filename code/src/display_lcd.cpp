@@ -1,4 +1,5 @@
 #include "display_lcd.h"
+#include "runtime_log.h"
 #include "config.h"
 #include <cstring>
 
@@ -93,7 +94,7 @@ bool DisplayLcd::initTouch() {
   if (!touchReadRegister(0xD1F4, info, sizeof(info))) return false;
   uint16_t signature = ((uint16_t)info[11] << 8) | info[10];
   if (signature != 0xCACA) {
-    Serial.printf("[TOUCH] unexpected CST328 signature 0x%04X\n", signature);
+    AppLog.printf("[TOUCH] unexpected CST328 signature 0x%04X\n", signature);
     touchCommand(0xD109);
     return false;
   }
@@ -202,7 +203,7 @@ void DisplayLcd::onLanguageSelected(lv_event_t *event) {
   const bool chinese = (uintptr_t)lv_event_get_user_data(event) == 1;
   // 中文界面暂时禁用（渲染卡死待修复）：忽略选择，始终保持英文。
   if (chinese) {
-    Serial.println("[UI] Chinese language temporarily disabled; staying English.");
+    AppLog.println("[UI] Chinese language temporarily disabled; staying English.");
     return;
   }
   g_display->setLanguage(false);
@@ -1570,11 +1571,11 @@ void DisplayLcd::setLanguage(bool chinese) {
   chinese_ = chinese;
   Preferences preferences;
   if (!preferences.begin("aero-ui", false)) {
-    Serial.println("[UI] Could not open preferences to save language.");
+    AppLog.println("[UI] Could not open preferences to save language.");
   } else {
     size_t written = preferences.putBool("zh", chinese_);
     if (written == 0) {
-      Serial.println("[UI] Could not save language preference.");
+      AppLog.println("[UI] Could not save language preference.");
     }
     preferences.end();
   }
@@ -1607,7 +1608,7 @@ void DisplayLcd::refreshBleDeviceButtons() {
 }
 
 void DisplayLcd::refreshLanguage() {
-  Serial.printf("[LANG] begin zh=%d\n", (int)chinese_);
+  AppLog.printf("[LANG] begin zh=%d\n", (int)chinese_);
   const lv_font_t *font = chinese_ ? &lv_font_noto_sans_sc_14
                                    : &lv_font_montserrat_14;
   const lv_font_t *titleFont = chinese_ ? &lv_font_noto_sans_sc_14
@@ -1638,7 +1639,7 @@ void DisplayLcd::refreshLanguage() {
                     localized("LOG: OFF", "日志: 关闭"));
   lv_obj_set_style_text_font(statusLabel_, font, 0);
   lv_obj_set_style_text_font(cadenceLabel_, font, 0);
-  Serial.println("[LANG] 1 main done");
+  AppLog.println("[LANG] 1 main done");
 
   lv_label_set_text(powerSourceTitle_, localized("POWER SOURCE", "功率来源"));
   lv_label_set_text(powerSourceHint_, localized("Choose a power source", "选择功率来源"));
@@ -1656,7 +1657,7 @@ void DisplayLcd::refreshLanguage() {
   }
   lv_obj_set_style_text_font(powerSourceTitle_, titleFont, 0);
   lv_obj_set_style_text_font(powerSourceHint_, font, 0);
-  Serial.println("[LANG] 2 powersrc done");
+  AppLog.println("[LANG] 2 powersrc done");
 
   lv_label_set_text(bleDeviceTitle_, localized("BLE DEVICES", "蓝牙设备"));
   lv_label_set_text(bleDeviceHint_, localized("Tap a device, then confirm",
@@ -1679,7 +1680,7 @@ void DisplayLcd::refreshLanguage() {
   }
   lv_obj_set_style_text_font(bleStatusLabel_, font, 0);
   refreshBleDeviceButtons();
-  Serial.println("[LANG] 3 ble done");
+  AppLog.println("[LANG] 3 ble done");
 
   lv_label_set_text(bleConfirmTitle_, localized("CONFIRM DEVICE", "确认设备"));
   lv_label_set_text(bleConfirmButtonLabel_, localized("CONNECT", "连接"));
@@ -1695,7 +1696,7 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_set_style_text_font(bleLoadingLabel_, font, 0);
   for (size_t i = 0; i < 4; ++i)
     lv_obj_set_style_text_font(lv_obj_get_child(bleDeviceButtons_[i], 0), font, 0);
-  Serial.println("[LANG] 4 ble2 done");
+  AppLog.println("[LANG] 4 ble2 done");
 
   lv_label_set_text(virtualTitle_, localized("VIRTUAL POWER", "虚拟功率计"));
   lv_label_set_text(virtualPowerTitle_, localized("POWER", "功率"));
@@ -1707,7 +1708,7 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_set_style_text_font(virtualPowerTitle_, font, 0);
   lv_obj_set_style_text_font(virtualCadenceTitle_, font, 0);
   lv_obj_set_style_text_font(virtualHint_, font, 0);
-  Serial.println("[LANG] 5 virtual done");
+  AppLog.println("[LANG] 5 virtual done");
 
   lv_label_set_text(settingsTitle_, localized("SETTINGS", "设置"));
   if (settingsPowerButtonLabel_)
@@ -1754,7 +1755,7 @@ void DisplayLcd::refreshLanguage() {
                       i == 1 ? localized("ON", "开启") : localized("OFF", "关闭"));
     lv_obj_set_style_text_font(settingsWifiButtonLabels_[i], font, 0);
   }
-  Serial.println("[LANG] 6 settings+lang+wifi pages done");
+  AppLog.println("[LANG] 6 settings+lang+wifi pages done");
 
   // GPS 页面文字
   lv_label_set_text(gpsTitle_, localized("GPS", "GPS"));
@@ -1770,7 +1771,7 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_set_style_text_font(gpsSatLabel_, font, 0);
   lv_obj_set_style_text_font(gpsAltLabel_, font, 0);
   lv_obj_set_style_text_font(gpsSpeedLabel_, font, 0);
-  Serial.println("[LANG] 7 gps done");
+  AppLog.println("[LANG] 7 gps done");
   lv_obj_set_style_text_font(settingsTitle_, titleFont, 0);
   if (settingsWifiLabel_) lv_obj_set_style_text_font(settingsWifiLabel_, font, 0);
   if (settingsPowerButtonLabel_) lv_obj_set_style_text_font(settingsPowerButtonLabel_, font, 0);
@@ -1786,7 +1787,7 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_set_style_text_font(soundHint_, font, 0);
   lv_obj_set_style_text_font(soundVolumeLabel_, font, 0);
   refreshSoundVolume();
-  Serial.println("[LANG] 8 sound done");
+  AppLog.println("[LANG] 8 sound done");
 
   // SD 浏览页文字
   lv_label_set_text(sdTitle_, localized("SD CARD", "SD 卡"));
@@ -1804,7 +1805,7 @@ void DisplayLcd::refreshLanguage() {
       snprintf(text, sizeof(text), "%s", localized("Stopped", "已停止"));
     lv_label_set_text(sdNowPlayingLabel_, text);
   }
-  Serial.println("[LANG] 9 sd done");
+  AppLog.println("[LANG] 9 sd done");
   lv_obj_set_style_text_font(settingsWifiStatus_,
                              chinese_ ? &lv_font_noto_sans_sc_14
                                       : &lv_font_montserrat_14, 0);
@@ -1822,14 +1823,14 @@ void DisplayLcd::refreshLanguage() {
                                          : lv_color_make(51, 65, 85), 0);
   }
   refreshWifiStatus();
-  Serial.println("[LANG] 10 langbtn+wifi done");
+  AppLog.println("[LANG] 10 langbtn+wifi done");
 
   if (noticeBackLabel_) {
     lv_label_set_text(noticeBackLabel_, localized("OK", "确定"));
     lv_obj_set_style_text_font(noticeBackLabel_, font, 0);
   }
 
-  Serial.println("[LANG] 11 panels begin");
+  AppLog.println("[LANG] 11 panels begin");
   lv_obj_t *panels[] = {
     powerSourcePanel_, bleDevicePanel_, bleConfirmPanel_,
     bleLoadingPanel_, virtualPowerPanel_, settingsPanel_, soundPanel_, sdPanel_,
@@ -1842,7 +1843,7 @@ void DisplayLcd::refreshLanguage() {
                       localized(LV_SYMBOL_LEFT " BACK", LV_SYMBOL_LEFT " 返回"));
     lv_obj_set_style_text_font(backLabel, font, 0);
   }
-  Serial.println("[LANG] 12 done");
+  AppLog.println("[LANG] 12 done");
 }
 
 void DisplayLcd::begin() {
@@ -1856,7 +1857,7 @@ void DisplayLcd::begin() {
     if (preferences.begin("aero-ui", false)) {
       if (preferences.getBool("zh", false)) {
         preferences.putBool("zh", false);
-        Serial.println("[UI] Language forced to English (Chinese temporarily disabled).");
+        AppLog.println("[UI] Language forced to English (Chinese temporarily disabled).");
       }
       preferences.end();
     }
@@ -1892,9 +1893,9 @@ void DisplayLcd::begin() {
     indevDrv.type = LV_INDEV_TYPE_POINTER;
     indevDrv.read_cb = lvglTouchReadCb;
     lv_indev_drv_register(&indevDrv);
-    Serial.println("[TOUCH] CST328 ready");
+    AppLog.println("[TOUCH] CST328 ready");
   } else {
-    Serial.println("[TOUCH] CST328 unavailable; touch controls disabled");
+    AppLog.println("[TOUCH] CST328 unavailable; touch controls disabled");
   }
 
   screen_ = lv_obj_create(nullptr);

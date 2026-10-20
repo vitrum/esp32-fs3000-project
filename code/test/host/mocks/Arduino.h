@@ -26,5 +26,6 @@ struct HostSerial {
   std::atomic<unsigned> messages{0};
   template <typename... Args> void printf(const char *, Args...) { ++messages; }
   void println(const char *) { ++messages; }
+  size_t write(const uint8_t *, size_t length) { ++messages; return length; }
 };
 extern HostSerial Serial;

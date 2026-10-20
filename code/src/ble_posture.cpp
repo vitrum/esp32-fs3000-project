@@ -1,5 +1,6 @@
 #include "ble_posture.h"
 #include "config.h"
+#include "runtime_log.h"
 #include <NimBLEDevice.h>
 
 // ---- WitMotion WT9011DCL BLE 协议 ----
@@ -20,6 +21,7 @@ volatile bool BlePosture::s_cancelRequested = false;
 // ---------------------------------------------------------------------------
 void BlePosture::witNotify(NimBLERemoteCharacteristic *chr, uint8_t *d, size_t n,
                            bool isNotify) {
+  AppLog.packet("POSTURE/FFE1", d, n);
   (void)chr; (void)isNotify;
   if (n < 11) return;
 
@@ -108,7 +110,7 @@ bool BlePosture::tryConnect(uint32_t scanMs, const volatile bool *cancelFlag) {
              "posture sensor '%s*' not seen in last scan", BLE_POSTURE_NAME_PREFIX);
     return false;
   }
-  Serial.printf("[BLE-POSTURE] candidate %s (%s)\n",
+  AppLog.printf("[BLE-POSTURE] candidate %s (%s)\n",
                 name[0] ? name : "unnamed", address);
 
   if (s_cancelRequested || (cancelFlag && *cancelFlag)) {
@@ -133,7 +135,7 @@ bool BlePosture::tryConnect(uint32_t scanMs, const volatile bool *cancelFlag) {
     snprintf(s_lastError, sizeof(s_lastError),
              "connect to %s failed (BLE error %d: %s)", address, code,
              NimBLEUtils::returnCodeToString(code));
-    Serial.printf("[BLE-POSTURE] %s\n", s_lastError);
+    AppLog.printf("[BLE-POSTURE] %s\n", s_lastError);
     disconnect();
     return false;
   }
@@ -162,7 +164,6 @@ bool BlePosture::tryConnect(uint32_t scanMs, const volatile bool *cancelFlag) {
   }
 
   s_connected = true;
-  Serial.printf("[BLE-POSTURE] connected: %s\n", address);
+  AppLog.printf("[BLE-POSTURE] connected: %s\n", address);
   return true;
 }
-

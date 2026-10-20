@@ -1,5 +1,6 @@
 // SD-card audio playback through ESP32-audioI2S.
 #include "audio.h"
+#include "runtime_log.h"
 #include "config.h"
 #include "csv_logger.h"   // sdFs() / sdCardReady()
 
@@ -25,7 +26,7 @@ bool installAudioI2s() {
   const size_t largestBlock =
       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
   if (largestBlock < kAudioMinDmaBlock) {
-    Serial.printf("[AUDIO] insufficient DMA heap: largest=%u required=%u\n",
+    AppLog.printf("[AUDIO] insufficient DMA heap: largest=%u required=%u\n",
                   (unsigned)largestBlock, (unsigned)kAudioMinDmaBlock);
     return false;
   }
@@ -44,7 +45,7 @@ bool installAudioI2s() {
 
   const esp_err_t result = i2s_driver_install(kI2sPort, &config, 0, nullptr);
   if (result != ESP_OK) {
-    Serial.printf("[AUDIO] I2S DMA install failed: %s free=%u largest=%u\n",
+    AppLog.printf("[AUDIO] I2S DMA install failed: %s free=%u largest=%u\n",
                   esp_err_to_name(result),
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
@@ -71,11 +72,11 @@ void AudioPlayer::setTitle(const char *t) {
 bool AudioPlayer::begin() {
 #if AUDIO_ENABLE
   _enabled = true;
-  Serial.printf("[AUDIO] ready (BCLK=%d LRC=%d DOUT=%d)\n",
+  AppLog.printf("[AUDIO] ready (BCLK=%d LRC=%d DOUT=%d)\n",
                 PIN_I2S_BCLK, PIN_I2S_LRC, PIN_I2S_DOUT);
   return true;
 #else
-  Serial.println("[AUDIO] disabled by config");
+  AppLog.println("[AUDIO] disabled by config");
   return false;
 #endif
 }
@@ -86,7 +87,7 @@ void AudioPlayer::tick() {
     static uint32_t lastBusyMs = 0;
     if (millis() - lastBusyMs >= 5000) {
       lastBusyMs = millis();
-      Serial.println("[AUDIO] waiting for SD card");
+      AppLog.println("[AUDIO] waiting for SD card");
     }
     return;
   }
@@ -96,15 +97,15 @@ void AudioPlayer::tick() {
 }
 
 void AudioPlayer::playStartupChime() {
-  Serial.println("[AUDIO] startup chime disabled");
+  AppLog.println("[AUDIO] startup chime disabled");
 }
 
 void AudioPlayer::playShutdownChime() {
-  Serial.println("[AUDIO] shutdown chime disabled");
+  AppLog.println("[AUDIO] shutdown chime disabled");
 }
 
 void AudioPlayer::playBeepPreview() {
-  Serial.println("[AUDIO] beep preview disabled");
+  AppLog.println("[AUDIO] beep preview disabled");
 }
 
 // ============================================================================
@@ -118,32 +119,32 @@ void AudioPlayer::beginPlayback(const char *path) {
     Audio *player = new (std::nothrow) Audio(kI2sPort);
     if (!player) {
       uninstallAudioI2s();
-      Serial.println("[AUDIO] insufficient heap for decoder");
+      AppLog.println("[AUDIO] insufficient heap for decoder");
       return;
     }
     g_audio.reset(player);
     g_audio->setBufsize(5000, 0);
     if (!g_audio->setPinout(PIN_I2S_BCLK, PIN_I2S_LRC, PIN_I2S_DOUT)) {
-      Serial.println("[AUDIO] could not configure I2S pins");
+      AppLog.println("[AUDIO] could not configure I2S pins");
       releasePlayback();
       return;
     }
   }
   g_audio->setVolume(_volume);
   if (!lockSdCard()) {
-    Serial.println("[AUDIO] SD card busy; could not open audio file");
+    AppLog.println("[AUDIO] SD card busy; could not open audio file");
     return;
   }
   const bool opened = g_audio->connecttoFS(sdFs(), path);
   unlockSdCard();
   if (!opened) {
-    Serial.printf("[AUDIO] play failed: %s\n", path);
+    AppLog.printf("[AUDIO] play failed: %s\n", path);
     _playing = false;
     return;
   }
   _playing = true;
   setTitle(path);
-  Serial.printf("[AUDIO] playing: %s\n", path);
+  AppLog.printf("[AUDIO] playing: %s\n", path);
 }
 
 bool AudioPlayer::playFile(const char *path) {
@@ -156,7 +157,7 @@ bool AudioPlayer::playFile(const char *path) {
 bool AudioPlayer::releasePlayback() {
   if (g_audio) {
     if (!lockSdCard()) {
-      Serial.println("[AUDIO] SD card busy; could not release playback");
+      AppLog.println("[AUDIO] SD card busy; could not release playback");
       return false;
     }
     g_audio.reset();

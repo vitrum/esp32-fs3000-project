@@ -1,4 +1,5 @@
 #include "power_key.h"
+#include "runtime_log.h"
 #include "config.h"
 
 // 按键按下为低电平（与官方示例一致：开机时检查 !gpio_get_level(PIN)）
@@ -18,9 +19,9 @@ void PowerKey::begin() {
   if (digitalRead(PIN_PWR_KEY) == kActiveLevel) {
     digitalWrite(PIN_PWR_CONTROL, HIGH);
     _powerHeld = true;
-    Serial.println("[PWR] power key pressed at boot -> power latched ON");
+    AppLog.println("[PWR] power key pressed at boot -> power latched ON");
   } else {
-    Serial.println("[PWR] boot without key press -> power NOT latched");
+    AppLog.println("[PWR] boot without key press -> power NOT latched");
   }
 }
 
@@ -36,7 +37,7 @@ void PowerKey::tick() {
     if (!_powerHeld) {
       digitalWrite(PIN_PWR_CONTROL, HIGH);
       _powerHeld = true;
-      Serial.println("[PWR] power latched ON (held key)");
+      AppLog.println("[PWR] power latched ON (held key)");
     }
   } else if (!pressed && _buttonActive) {
     // 松开沿：仅用于结束计时，不触发关机
@@ -45,7 +46,7 @@ void PowerKey::tick() {
 
   if (_buttonActive && !_shuttingDown && !_shutdownRequested &&
       millis() - _pressStartMs >= PWR_LONG_PRESS_MS) {
-    Serial.printf("[PWR] long press %lums -> shutdown requested\n",
+    AppLog.printf("[PWR] long press %lums -> shutdown requested\n",
                   (unsigned long)PWR_LONG_PRESS_MS);
     _shutdownRequested = true;   // 交由主循环处理（先播放关机音再断电）
   }
@@ -66,6 +67,6 @@ void PowerKey::shutdown() {
   pinMode(PIN_LCD_BL, OUTPUT);
   digitalWrite(PIN_LCD_BL, LOW);
 #endif
-  Serial.println("[PWR] power OFF");
+  AppLog.println("[PWR] power OFF");
   // 断电通常立即生效；若未生效则在此停留，等待硬件掉电。
 }

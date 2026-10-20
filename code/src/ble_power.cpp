@@ -1,5 +1,6 @@
 #include "ble_power.h"
 #include "config.h"
+#include "runtime_log.h"
 #include <NimBLEDevice.h>
 
 namespace {
@@ -23,7 +24,7 @@ uint16_t readU16(const uint8_t *data, size_t index) {
 }
 
 void logBleError(const char *message) {
-  Serial.printf("[BLE] %s\n", message);
+  AppLog.printf("[BLE] %s\n", message);
 }
 
 // NimBLEUtils::returnCodeToString() 对部分 HCI 层错误（如 13=ETIMEOUT）返回空串，
@@ -67,7 +68,7 @@ char BlePowerMeter::s_lastError[320] = {};
 
 class BlePowerClientCallbacks : public NimBLEClientCallbacks {
   void onDisconnect(NimBLEClient *, int reason) override {
-    (void)reason;
+    AppLog.printf("[BLE] power link disconnected reason=%d\n", reason);
     BlePowerMeter::s_connected = false;
     BlePowerMeter::s_connectedAddress[0] = '\0';
     BlePowerMeter::s_hasCyclingPower = false;
@@ -90,6 +91,7 @@ void BlePowerMeter::setError(const char *message) {
 
 void BlePowerMeter::cpmNotify(NimBLERemoteCharacteristic *, uint8_t *data,
                               size_t length, bool) {
+  AppLog.packet("CPS/2A63", data, length);
   if (!data || length < 4) return;
 
   const uint16_t flags = readU16(data, 0);
@@ -138,6 +140,7 @@ void BlePowerMeter::cpmNotify(NimBLERemoteCharacteristic *, uint8_t *data,
 
 void BlePowerMeter::indoorBikeNotify(NimBLERemoteCharacteristic *, uint8_t *data,
                                      size_t length, bool) {
+  AppLog.packet("FTMS/2AD2", data, length);
   if (!data || length < 2) return;
 
   const uint16_t flags = readU16(data, 0);
@@ -209,6 +212,7 @@ void BlePowerMeter::indoorBikeNotify(NimBLERemoteCharacteristic *, uint8_t *data
 
 void BlePowerMeter::speedCadenceNotify(NimBLERemoteCharacteristic *, uint8_t *data,
                                        size_t length, bool) {
+  AppLog.packet("CSC/2A5B", data, length);
   if (!data || length < 1) return;
 
   const uint8_t flags = data[0];
@@ -353,13 +357,13 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     }
   }
 
-  Serial.printf("[BLE] scan complete: %u connectable device(s)\n",
+  AppLog.printf("[BLE] scan complete: %u connectable device(s)\n",
                 (unsigned)count);
   for (size_t i = 0; i < count; ++i) {
     char typeBuffer[24];
     const char *typeName =
         bleAddrTypeName(devices[i].addressType, typeBuffer, sizeof(typeBuffer));
-    Serial.printf("[BLE] %u: %s, %s [%s], RSSI %d dBm%s%s\n",
+    AppLog.printf("[BLE] %u: %s, %s [%s], RSSI %d dBm%s%s\n",
                   (unsigned)(i + 1), devices[i].name, devices[i].address,
                   typeName, devices[i].rssi,
                   devices[i].cyclingPower ? " CPS" : "",
@@ -464,11 +468,11 @@ bool BlePowerMeter::connectDevice(const char *address, uint8_t addressType) {
       typeKnown ? bleAddrTypeName(addressType, typeBuffer, sizeof(typeBuffer))
                 : "PUBLIC (assumed, unknown)";
 
-  Serial.printf("[BLE] connecting %s%s type=%s\n",
+  AppLog.printf("[BLE] connecting %s%s type=%s\n",
                 address, advertisedName[0] ? advertisedName : "",
                 typeName);
   if (!advertisedName[0])
-    Serial.printf("[BLE] %s not in scan cache; connecting by address anyway\n",
+    AppLog.printf("[BLE] %s not in scan cache; connecting by address anyway\n",
                   address);
 
   NimBLEClient *client = NimBLEDevice::createClient();
@@ -485,23 +489,23 @@ bool BlePowerMeter::connectDevice(const char *address, uint8_t addressType) {
   const std::string addressString(address);
   bool connected = client->connect(NimBLEAddress(addressString, primaryType));
   if (connected) {
-    Serial.printf("[BLE] link established with type=%s in < %u ms\n", typeName,
+    AppLog.printf("[BLE] link established with type=%s in < %u ms\n", typeName,
                   (unsigned)connectTimeoutMs);
   } else {
     const int primaryError = client->getLastError();
-    Serial.printf("[BLE] connect failed type=%s code=%d (%s)\n", typeName,
+    AppLog.printf("[BLE] connect failed type=%s code=%d (%s)\n", typeName,
                   primaryError, bleErrorText(primaryError));
 
     // 二次尝试：真实类型失败后回退 PUBLIC。仅当类型已知且不是 PUBLIC 时进行，
     // 用于覆盖「设备广播为 RANDOM、但实际接受 PUBLIC 连接」的少数厂商实现。
     if (typeKnown && primaryType != BLE_ADDR_PUBLIC) {
-      Serial.println("[BLE] retrying with PUBLIC address type");
+      AppLog.println("[BLE] retrying with PUBLIC address type");
       connected = client->connect(NimBLEAddress(addressString, BLE_ADDR_PUBLIC));
       if (connected) {
-        Serial.println("[BLE] link established only with PUBLIC (address type mismatch)");
+        AppLog.println("[BLE] link established only with PUBLIC (address type mismatch)");
         typeName = "PUBLIC (fallback)";
       } else {
-        Serial.printf("[BLE] PUBLIC retry failed code=%d (%s)\n",
+        AppLog.printf("[BLE] PUBLIC retry failed code=%d (%s)\n",
                       client->getLastError(),
                       bleErrorText(client->getLastError()));
       }
@@ -541,14 +545,14 @@ bool BlePowerMeter::connectDevice(const char *address, uint8_t addressType) {
   NimBLERemoteCharacteristic *indoorBikeData = nullptr;
   NimBLERemoteCharacteristic *cscMeasurement = nullptr;
 
-  Serial.printf("[BLE-GATT] %s: discovered %u service(s)\n",
+  AppLog.printf("[BLE-GATT] %s: discovered %u service(s)\n",
                 address, (unsigned)services.size());
   for (NimBLERemoteService *service : services) {
     const std::string serviceUuid = service->getUUID().toString();
     const bool isCpService = serviceUuid == "0x1818";
     const bool isFtmsService = serviceUuid == "0x1826";
     const bool isCscService = serviceUuid == "0x1816";
-    Serial.printf("[BLE-GATT] service %s\n", serviceUuid.c_str());
+    AppLog.printf("[BLE-GATT] service %s\n", serviceUuid.c_str());
     const std::vector<NimBLERemoteCharacteristic *> &characteristics =
         service->getCharacteristics(true);
     for (NimBLERemoteCharacteristic *characteristic : characteristics) {
@@ -559,36 +563,36 @@ bool BlePowerMeter::connectDevice(const char *address, uint8_t addressType) {
           isFtmsService && characteristicUuid == "0x2ad2";
       const bool isCscMeasurement =
           isCscService && characteristicUuid == "0x2a5b";
-      Serial.printf("[BLE-GATT]   characteristic %s%s%s\n",
+      AppLog.printf("[BLE-GATT]   characteristic %s%s%s\n",
                     characteristicUuid.c_str(),
                     characteristic->canNotify() ? " notify" : "",
                     characteristic->canIndicate() ? " indicate" : "");
       if (isCpMeasurement) {
         cpMeasurement = characteristic;
-        Serial.println("[BLE-GATT]   matched Cycling Power Measurement");
+        AppLog.println("[BLE-GATT]   matched Cycling Power Measurement");
       } else if (isIndoorBikeData) {
         indoorBikeData = characteristic;
-        Serial.println("[BLE-GATT]   matched FTMS Indoor Bike Data");
+        AppLog.println("[BLE-GATT]   matched FTMS Indoor Bike Data");
       } else if (isCscMeasurement) {
         cscMeasurement = characteristic;
-        Serial.println("[BLE-GATT]   matched CSC Measurement");
+        AppLog.println("[BLE-GATT]   matched CSC Measurement");
       }
     }
   }
 
   if (cpMeasurement) {
     s_hasCyclingPower = cpMeasurement->subscribe(true, cpmNotify, true);
-    Serial.printf("[BLE-GATT] subscribe CPS 0x2A63: %s\n",
+    AppLog.printf("[BLE-GATT] subscribe CPS 0x2A63: %s\n",
                   s_hasCyclingPower ? "OK" : "FAILED");
   }
   if (indoorBikeData) {
     s_hasFitnessMachine = indoorBikeData->subscribe(true, indoorBikeNotify, true);
-    Serial.printf("[BLE-GATT] subscribe FTMS Indoor Bike Data 0x2AD2: %s\n",
+    AppLog.printf("[BLE-GATT] subscribe FTMS Indoor Bike Data 0x2AD2: %s\n",
                   s_hasFitnessMachine ? "OK" : "FAILED");
   }
   if (cscMeasurement) {
     s_hasSpeedCadence = cscMeasurement->subscribe(true, speedCadenceNotify, true);
-    Serial.printf("[BLE-GATT] subscribe CSC 0x2A5B: %s\n",
+    AppLog.printf("[BLE-GATT] subscribe CSC 0x2A5B: %s\n",
                   s_hasSpeedCadence ? "OK" : "FAILED");
   }
 
@@ -638,7 +642,7 @@ bool BlePowerMeter::connectDevice(const char *address, uint8_t addressType) {
   s_fitnessMachineNotificationCount = 0;
   s_lastFitnessMachineFlags = 0;
   s_lastError[0] = '\0';
-  Serial.printf("[BLE] connected: %s (%s), profiles:%s%s%s%s\n",
+  AppLog.printf("[BLE] connected: %s (%s), profiles:%s%s%s%s\n",
                 advertisedName[0] ? advertisedName : "unnamed", address,
                 s_hasCyclingPower ? " CPS" : "",
                 s_hasFitnessMachine ? " FTMS" : "",

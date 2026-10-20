@@ -1,4 +1,5 @@
 #include "csv_logger.h"
+#include "runtime_log.h"
 
 #include "config.h"
 
@@ -73,7 +74,7 @@ void unlockSdCard() {
 static bool mountSdCard() {
   if (g_sdMounted) return true;
 
-  Serial.printf("[SD] mounting via IDF SDSPI (SCLK=%d MISO=%d MOSI=%d CS=%d @ %luHz)...\n",
+  AppLog.printf("[SD] mounting via IDF SDSPI (SCLK=%d MISO=%d MOSI=%d CS=%d @ %luHz)...\n",
                 PIN_SD_SCLK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS,
                 (unsigned long)SD_SPI_FREQ_HZ);
 
@@ -87,7 +88,7 @@ static bool mountSdCard() {
 
   esp_err_t err = spi_bus_initialize(kSpiHost, &busCfg, SPI_DMA_CH_AUTO);
   if (err != ESP_OK) {
-    Serial.printf("[SD] spi_bus_initialize failed: %s\n", esp_err_to_name(err));
+    AppLog.printf("[SD] spi_bus_initialize failed: %s\n", esp_err_to_name(err));
     return false;
   }
 
@@ -109,11 +110,11 @@ static bool mountSdCard() {
   err = esp_vfs_fat_sdspi_mount(kSdMountPoint, &host, &slotCfg, &mountCfg,
                                 &g_sdCard);
   if (err != ESP_OK) {
-    Serial.printf("[SD] mount FAILED: %s\n", esp_err_to_name(err));
-    Serial.println("[SD] hints: (1) the card must be FAT16/FAT32; a 64GB card is");
-    Serial.println("[SD]        usually exFAT, which is NOT supported by this FW.");
-    Serial.println("[SD]        Reformat it as FAT32 (use a PC tool for >32GB).");
-    Serial.println("[SD]        (2) check wiring: SCLK=14 MISO=16 MOSI=17 CS=21.");
+    AppLog.printf("[SD] mount FAILED: %s\n", esp_err_to_name(err));
+    AppLog.println("[SD] hints: (1) the card must be FAT16/FAT32; a 64GB card is");
+    AppLog.println("[SD]        usually exFAT, which is NOT supported by this FW.");
+    AppLog.println("[SD]        Reformat it as FAT32 (use a PC tool for >32GB).");
+    AppLog.println("[SD]        (2) check wiring: SCLK=14 MISO=16 MOSI=17 CS=21.");
     spi_bus_free(kSpiHost);
     return false;
   }
@@ -122,7 +123,7 @@ static bool mountSdCard() {
   g_sdMounted = true;
 
   const uint64_t mb = g_sdCard ? ((uint64_t)g_sdCard->csd.capacity / 1024) : 0;
-  Serial.printf("[SD] mounted OK. size=%lluMB @ %luHz (IDF FATFS)\n",
+  AppLog.printf("[SD] mounted OK. size=%lluMB @ %luHz (IDF FATFS)\n",
                 (unsigned long long)mb, (unsigned long)SD_SPI_FREQ_HZ);
   return true;
 }
@@ -149,11 +150,11 @@ bool CsvLogger::openFileForDate(const char *date) {
     snprintf(nextDir, sizeof(nextDir), "/LOG");
   }
   if (!ensureDir("/LOG")) {
-    Serial.println("[SD] Could not create /LOG directory");
+    AppLog.println("[SD] Could not create /LOG directory");
     return false;
   }
   if (date && date[0] && !ensureDir(nextDir)) {
-    Serial.printf("[SD] Could not create date directory %s\n", nextDir);
+    AppLog.printf("[SD] Could not create date directory %s\n", nextDir);
     return false;
   }
 
@@ -167,13 +168,13 @@ bool CsvLogger::openFileForDate(const char *date) {
     nextFd = ::open(fullPath, O_WRONLY | O_CREAT | O_EXCL | O_APPEND, 0666);
     if (nextFd >= 0) break;
     if (errno != EEXIST) {
-      Serial.printf("[SD] open failed: %s (errno=%d)\n", fullPath, errno);
+      AppLog.printf("[SD] open failed: %s (errno=%d)\n", fullPath, errno);
       return false;
     }
     stamp = (stamp + 1) % 1000000UL;
   }
   if (nextFd < 0) {
-    Serial.println("[SD] Could not find an unused log filename");
+    AppLog.println("[SD] Could not find an unused log filename");
     return false;
   }
 
@@ -196,7 +197,7 @@ bool CsvLogger::writeHeader(int fd) {
   static const char header[] =
       "t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc\n";
   if (!writeAll(fd, header, sizeof(header) - 1) || ::fsync(fd) != 0) {
-    Serial.printf("[SD] header write/sync failed (errno=%d)\n", errno);
+    AppLog.printf("[SD] header write/sync failed (errno=%d)\n", errno);
     return false;
   }
   return true;
@@ -208,7 +209,7 @@ bool CsvLogger::flushBuffer() {
 
   if (_syncPending) {
     if (::fsync(_fd) != 0) {
-      Serial.printf("[SD] sync retry failed (errno=%d)\n", errno);
+      AppLog.printf("[SD] sync retry failed (errno=%d)\n", errno);
       return false;
     }
   } else {
@@ -224,7 +225,7 @@ bool CsvLogger::flushBuffer() {
             s.vAirMps, s.yawDeg, s.postureDeg, s.rho,
             (unsigned)s.powerSrc);
         if (length < 0 || (size_t)length >= remaining) {
-          Serial.printf("[SD] could not format buffer index %u\n",
+          AppLog.printf("[SD] could not format buffer index %u\n",
                         (unsigned)i);
           _flushDataSize = 0;
           _flushOffset = 0;
@@ -240,7 +241,7 @@ bool CsvLogger::flushBuffer() {
           _fd, _flushData + _flushOffset, _flushDataSize - _flushOffset);
       if (written < 0 && errno == EINTR) continue;
       if (written <= 0) {
-        Serial.printf("[SD] write failed at byte %u (errno=%d)\n",
+        AppLog.printf("[SD] write failed at byte %u (errno=%d)\n",
                       (unsigned)_flushOffset, errno);
         return false;
       }
@@ -248,7 +249,7 @@ bool CsvLogger::flushBuffer() {
     }
     if (::fsync(_fd) != 0) {
       _syncPending = true;
-      Serial.printf("[SD] sync failed; retaining batch (errno=%d)\n", errno);
+      AppLog.printf("[SD] sync failed; retaining batch (errno=%d)\n", errno);
       return false;
     }
   }
@@ -341,7 +342,7 @@ void CsvLogger::writerTask() {
       portEXIT_CRITICAL(&_bufferMux);
       if (_flushDone) xSemaphoreGive(_flushDone);
       if (dropped > 0)
-        Serial.printf("[SD] writer backlog dropped %lu sample(s)\n",
+        AppLog.printf("[SD] writer backlog dropped %lu sample(s)\n",
                       (unsigned long)dropped);
     }
   }
@@ -363,7 +364,7 @@ void CsvLogger::setLocalDate(const char *dateYmd) {
     }
     snprintf(_date, sizeof(_date), "%s", nextDate);
     unlockSdCard();
-    if (_fd >= 0) Serial.printf("[SD] date changed -> %s\n", _name);
+    if (_fd >= 0) AppLog.printf("[SD] date changed -> %s\n", _name);
   } else {
     snprintf(_date, sizeof(_date), "%s", nextDate);
   }
@@ -371,7 +372,7 @@ void CsvLogger::setLocalDate(const char *dateYmd) {
 
 bool CsvLogger::begin() {
   if (!lockSdCard()) {
-    Serial.println("[SD] Could not acquire SD mutex for initialization");
+    AppLog.println("[SD] Could not acquire SD mutex for initialization");
     return false;
   }
   if (!mountSdCard()) {
@@ -389,19 +390,19 @@ bool CsvLogger::begin() {
 bool CsvLogger::start() {
   if (_ok) return true;
   if (!lockSdCard()) {
-    Serial.println("[SD] Could not acquire SD mutex to start logging");
+    AppLog.println("[SD] Could not acquire SD mutex to start logging");
     return false;
   }
   if (!_sdReady) {
     _sdReady = mountSdCard();
     if (!_sdReady) {
-      Serial.println("[SD] Cannot start logging; card mount failed");
+      AppLog.println("[SD] Cannot start logging; card mount failed");
       unlockSdCard();
       return false;
     }
   }
   if (!ensureWriterTask()) {
-    Serial.println("[SD] Cannot start logging; writer task unavailable");
+    AppLog.println("[SD] Cannot start logging; writer task unavailable");
     unlockSdCard();
     return false;
   }
@@ -415,18 +416,18 @@ bool CsvLogger::start() {
   }
   _ok = true;
   unlockSdCard();
-  Serial.printf("Logging to %s (buffered, 1-min chunks)\n", _name);
+  AppLog.printf("Logging to %s (buffered, 1-min chunks)\n", _name);
   return _ok;
 }
 
 bool CsvLogger::stop() {
   if (!_ok) return true;
   if (!lockSdCard()) {
-    Serial.println("[SD] Could not acquire SD mutex to stop logging");
+    AppLog.println("[SD] Could not acquire SD mutex to stop logging");
     return false;
   }
   if (!flushPending(pdMS_TO_TICKS(5000))) {
-    Serial.println("[SD] Stop deferred; pending samples were retained");
+    AppLog.println("[SD] Stop deferred; pending samples were retained");
     unlockSdCard();
     return false;
   }
@@ -461,7 +462,7 @@ size_t listSdFiles(const char *directory, SdFileEntry *out, size_t maxCount) {
            kSdMountPoint, directory[1] ? directory : "");
   DIR *dir = opendir(fullDirectory);
   if (!dir) {
-    Serial.printf("[SD] opendir(%s) failed\n", fullDirectory);
+    AppLog.printf("[SD] opendir(%s) failed\n", fullDirectory);
     unlockSdCard();
     return 0;
   }
@@ -482,7 +483,7 @@ size_t listSdFiles(const char *directory, SdFileEntry *out, size_t maxCount) {
     snprintf(full, sizeof(full), "%s/%s", fullDirectory, name);
     struct stat st;
     if (stat(full, &st) != 0) {
-      Serial.printf("[SD] stat(%s) failed (errno=%d)\n", full, errno);
+      AppLog.printf("[SD] stat(%s) failed (errno=%d)\n", full, errno);
       continue;
     }
     const bool isDirectory = S_ISDIR(st.st_mode);
@@ -510,7 +511,7 @@ size_t listSdFiles(const char *directory, SdFileEntry *out, size_t maxCount) {
   closedir(dir);
 
   unlockSdCard();
-  Serial.printf("[SD] listed %u item(s) under %s\n",
+  AppLog.printf("[SD] listed %u item(s) under %s\n",
                 (unsigned)count, fullDirectory);
   return count;
 }
