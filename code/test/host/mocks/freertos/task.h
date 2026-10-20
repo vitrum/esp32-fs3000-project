@@ -7,7 +7,7 @@ extern bool failTaskCreation;
 inline int xTaskCreate(void (*entry)(void *), const char *, uint32_t, void *arg,
                        unsigned, TaskHandle_t *handle) {
   if (failTaskCreation) return pdFALSE;
-  *handle = arg;
+  if (handle) *handle = arg;
   std::thread(entry, arg).detach();
   return pdPASS;
 }

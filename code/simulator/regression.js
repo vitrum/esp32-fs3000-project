@@ -28,7 +28,7 @@
   try {
     assert(snapshot().language === "en" && snapshot().powerSrc === 0 && !snapshot().recording, "Default: English, AUTO/no source, recording off");
     $("boot-key").click();
-    assert(snapshot().page === "settings-dialog" && document.querySelectorAll(".settings-grid button").length === 6, "BOOT opens all six settings entries");
+    assert(snapshot().page === "settings-dialog" && document.querySelectorAll(".settings-grid button").length === 7, "BOOT opens six settings entries plus RIDE LOG");
     $("settings-language").click();
     $("language-zh").click();
     assert(snapshot().language === "en" && snapshot().error.includes("disabled"), "Chinese selection stays disabled like firmware");
@@ -197,6 +197,7 @@
       ["settings-sound", "#sound-page [data-back]"],
       ["settings-gps", "#gps-page [data-back]"],
       ["settings-sd", "#sd-page [data-back]"],
+      ["settings-log", "#ride-log-page [data-back]"],
       ["settings-meter", "#dialog-close"]
     ]) {
       sim.step(1);
@@ -209,6 +210,38 @@
       $("settings-back").click();
       assert(snapshot().page === "dashboard", `${entry}: a fresh BACK reaches the dashboard`);
     }
+    $("boot-key").click(); $("settings-log").click();
+    assert(snapshot().page === "ride-log-page" && $("ride-log-data").textContent.includes("Samples:"), "RIDE LOG shows current record and live values");
+    sim.recording(true);
+    sim.step(3);
+    $("fit-save").click();
+    assert(snapshot().recording && snapshot().error.includes("GPS time"), "Missing trusted GPS time does not stop recording or fabricate FIT dates");
+    dismiss();
+    change("gps-input", "fixed");
+    sim.step(1);
+    change("sd-ready", false);
+    $("fit-save").click();
+    assert(snapshot().recording && snapshot().error.includes("SD card"), "Missing SD rejects FIT without ending the recording");
+    dismiss(); change("sd-ready", true);
+    const rowsBeforeFit = snapshot().buffered + snapshot().written + snapshot().queued;
+    $("fit-save").click();
+    assert(snapshot().fitSaving && !snapshot().recording && $("fit-save").disabled, "SAVE FIT ends recording, flushes pending data and prevents double-save");
+    assert(snapshot().buffered === 0 && snapshot().written === rowsBeforeFit, "FIT finalization includes the pending CSV cache");
+    sim.step(1);
+    const fit = snapshot().fitBytes;
+    assert(fit && String.fromCharCode(...fit.slice(8,12)) === ".FIT", "Saved FIT is a binary FIT file, not renamed CSV");
+    const fitSize = fit[4] | fit[5] << 8 | fit[6] << 16 | fit[7] << 24;
+    assert(fitSize + 16 === fit.length && fitSize === 480 + rowsBeforeFit * 31, "FIT header length matches all records and developer fields");
+    let crc = 0;
+    for (const byte of fit) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++) crc = crc & 1 ? (crc >>> 1) ^ 0xA001 : crc >>> 1;
+    }
+    assert(crc === 0 && snapshot().fitPath.endsWith(".fit"), "FIT file CRC passes and SD path is reported");
+    dismiss();
+    $("fit-save").click();
+    assert(snapshot().error.includes("already exists"), "FIT save never silently overwrites an existing activity");
+    dismiss();
     assert(document.querySelectorAll('[data-source="ANT+"], #connect-ant').length === 0, "No ANT entry remains");
     window.simulatorTestResult = { passed: results.length, failures: [], checks: results };
     output.textContent = `PASS: ${results.length} checks\n` + results.join("\n");

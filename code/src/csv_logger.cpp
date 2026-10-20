@@ -189,6 +189,12 @@ bool CsvLogger::openFileForDate(const char *date) {
   snprintf(_dir, sizeof(_dir), "%s", nextDir);
   snprintf(_name, sizeof(_name), "%s", nextName);
   if (oldFd >= 0) ::close(oldFd);
+  if (_sessionFileCount < kSessionFiles)
+    snprintf(_sessionFiles[_sessionFileCount++], sizeof(_sessionFiles[0]), "%s", _name);
+  else {
+    _sessionOverflow = true;
+    AppLog.println("[SD] session spans too many CSV files; FIT export unavailable");
+  }
   _lastFlush = millis();
   return true;
 }
@@ -409,12 +415,16 @@ bool CsvLogger::start() {
 
   _bufCount = 0;
   _writeCount = 0;
+  _sessionFileCount = 0;
+  _sessionOverflow = false;
   if (!openFileForDate(_date)) {
     _ok = false;
     unlockSdCard();
     return false;
   }
   _ok = true;
+  _sampleCount = _sessionDropped = 0;
+  _referenceUtc = _referenceMs = 0;
   unlockSdCard();
   AppLog.printf("Logging to %s (buffered, 1-min chunks)\n", _name);
   return _ok;
@@ -422,22 +432,46 @@ bool CsvLogger::start() {
 
 bool CsvLogger::stop() {
   if (!_ok) return true;
+  if (!flushPending(pdMS_TO_TICKS(5000))) {
+    AppLog.println("[SD] Stop deferred; pending samples were retained");
+    return false;
+  }
   if (!lockSdCard()) {
     AppLog.println("[SD] Could not acquire SD mutex to stop logging");
     return false;
   }
-  if (!flushPending(pdMS_TO_TICKS(5000))) {
-    AppLog.println("[SD] Stop deferred; pending samples were retained");
-    unlockSdCard();
-    return false;
-  }
   if (_fd >= 0) {
-    ::close(_fd);
+    if (::fsync(_fd) != 0) {
+      AppLog.println("[SD] Stop failed to sync file");
+      unlockSdCard();
+      return false;
+    }
+    const int result = ::close(_fd);
     _fd = -1;
+    if (result != 0) {
+      _ok = false;
+      AppLog.println("[SD] Stop failed to close file; FIT export cancelled");
+      unlockSdCard();
+      return false;
+    }
   }
+
   _ok = false;
   unlockSdCard();
   return true;
+}
+
+void CsvLogger::setUtcReference(uint32_t utc, uint32_t milliseconds) {
+  if (_ok && !_referenceUtc && utc >= 1577836800) {
+    _referenceUtc = utc;
+    _referenceMs = milliseconds;
+  }
+}
+
+bool CsvLogger::utcReference(uint32_t &utc, uint32_t &milliseconds) const {
+  utc = _referenceUtc;
+  milliseconds = _referenceMs;
+  return utc != 0;
 }
 
 static bool isAudioName(const char *n) {
@@ -526,12 +560,14 @@ void CsvLogger::log(uint32_t tMs, float powerW, float cadRpm, float vgMps,
     if (_paused || !queueBuffer()) {
       portENTER_CRITICAL(&_bufferMux);
       ++_droppedSamples;
+      ++_sessionDropped;
       portEXIT_CRITICAL(&_bufferMux);
       return;
     }
   }
 
   Sample &s = _buf[_bufCount++];
+  ++_sampleCount;
   s.tMs = tMs;
   s.powerW = powerW;
   s.cadRpm = cadRpm;

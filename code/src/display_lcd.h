@@ -57,6 +57,11 @@ public:
   bool takeVolumeRequest(uint8_t &vol);
   // 主循环回填当前音量，用于高亮所选档位。
   void setVolume(uint8_t vol);
+  bool takeFitSaveRequest();
+  void updateRideLog(const char *path, bool recording, uint32_t samples,
+                     uint32_t dropped, float power, float cadence, float speed);
+  void setFitSaving(bool saving);
+  void showFitResult(const char *message);
 
   // ---- GPS 页面 ----
   // 用户在 GPS 页点击"重启 GPS"：主循环据此调用 gps.restart()。
@@ -105,6 +110,13 @@ private:
   lv_obj_t *powerSourceOptions_[3] = {};
   lv_obj_t *settingsPanel_ = nullptr;
   lv_obj_t *settingsTitle_ = nullptr;
+  lv_obj_t *rideLogPanel_ = nullptr;
+  lv_obj_t *rideLogText_ = nullptr;
+  lv_obj_t *fitSaveButton_ = nullptr;
+  lv_obj_t *fitSaveLabel_ = nullptr;
+  bool fitSaveRequested_ = false;
+  char rideHistory_[360] = {};
+  uint32_t rideLastSample_ = 0;
   lv_obj_t *settingsLanguageLabel_ = nullptr;
   lv_obj_t *settingsPowerLabel_ = nullptr;
   lv_obj_t *settingsPowerButton_ = nullptr;
@@ -256,6 +268,9 @@ private:
   static void onPowerSourceButton(lv_event_t *event);
   static void onSettingsButton(lv_event_t *event);
   static void onSettingsBack(lv_event_t *event);
+  static void onRideLogButton(lv_event_t *event);
+  static void onRideLogBack(lv_event_t *event);
+  static void onFitSave(lv_event_t *event);
   static void onLanguageSelected(lv_event_t *event);
   static void onLanguageButton(lv_event_t *event);
   static void onLanguageBack(lv_event_t *event);

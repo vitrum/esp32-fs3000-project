@@ -6,6 +6,7 @@
 #include <freertos/FreeRTOS.h>
 
 #include <FS.h>
+#include <atomic>
 
 bool beginSdCardMutex();
 bool lockSdCard(TickType_t timeout = pdMS_TO_TICKS(1000));
@@ -59,6 +60,14 @@ public:
            float vAirMps, float yawDeg, float postureDeg, float rho,
            uint8_t powerSrc);
   const char *fileName() const { return _name; }
+  uint32_t sampleCount() const { return _sampleCount; }
+  uint32_t droppedCount() const { return _sessionDropped; }
+  void setUtcReference(uint32_t utc, uint32_t milliseconds);
+  bool utcReference(uint32_t &utc, uint32_t &milliseconds) const;
+  static constexpr size_t kSessionFiles = 8;
+  size_t sessionFileCount() const { return _sessionFileCount; }
+  const char *sessionFile(size_t index) const { return _sessionFiles[index]; }
+  bool sessionComplete() const { return !_sessionOverflow; }
 
 private:
   struct Sample {
@@ -85,7 +94,7 @@ private:
   static constexpr size_t kMaxSamples = 60;   // 1 分钟（1Hz）
   static constexpr size_t kMaxCsvLineBytes = 160;
 
-  bool   _ok = false;
+  std::atomic<bool> _ok{false};
   bool   _sdReady = false;
   bool   _paused = false;      // 音频播放期间暂停写盘，避免 SD 争用
   TaskHandle_t _writerTaskHandle = nullptr;
@@ -104,6 +113,11 @@ private:
   Sample _buf[kMaxSamples];
   size_t _bufCount = 0;
   uint32_t _droppedSamples = 0;
+  uint32_t _sampleCount = 0, _sessionDropped = 0;
+  uint32_t _referenceUtc = 0, _referenceMs = 0;
+  char _sessionFiles[kSessionFiles][80] = {};
+  size_t _sessionFileCount = 0;
+  bool _sessionOverflow = false;
   Sample _writeBuf[kMaxSamples];
   size_t _writeCount = 0;
 };

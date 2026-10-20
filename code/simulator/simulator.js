@@ -29,7 +29,8 @@
     operation: null, bleResult: "success", discoveredDevices: [], manualPairing: false,
     postureEnvironment: "absent", postureConnected: false, nextPostureMs: 30000,
     recording: false, currentRecord: null, logDate: "", pending: [], writer: [], dropped: 0,
-    download: null, downloadMessage: "", error: "", extraMs: 0, fileSequence: 0
+    download: null, downloadMessage: "", error: "", extraMs: 0, fileSequence: 0,
+    sessionRecords: [], fitSaving: null, fitPath: "", fitBytes: null, trustedTime: false
   };
   const now = () => performance.now() + state.extraMs;
   let backBlockedUntil = 0;
@@ -139,6 +140,15 @@
     $("download-status").textContent = state.download
       ? `Downloading ${state.download.offset}/${state.download.text.length} bytes (simulated)`
       : state.downloadMessage;
+    $("fit-save").disabled = Boolean(state.fitSaving);
+    $("fit-save").textContent = state.fitSaving ? "SAVING" : "SAVE FIT";
+    const recent = state.currentRecord ? [...state.currentRecord.rows, ...state.writer, ...state.pending] : [];
+    $("ride-log-data").textContent = `${state.recording ? "RECORDING" : "STOPPED"}\n${state.currentRecord?.path ?? "No recording yet"}\n\n` +
+      `Samples: ${state.sessionRecords.reduce((sum, record) => sum + record.rows.length, 0) + state.writer.length + state.pending.length}\nDropped: ${state.dropped}\n` +
+      `\nPower: ${Math.round(power())} W\nCadence: ${Math.round(cadence())} rpm\n` +
+      `Speed: ${((gpsFixed() ? state.gpsSpeed : state.bleConnected ? state.bleSpeed : 0) * 3.6).toFixed(1)} km/h\n\nRecent samples (ms,W,rpm,m/s):\n` +
+      recent.slice(-6).map((row) => row.trim().split(",").slice(0,4).join(",")).join("\n") +
+      "\n\nSAVE FIT ends recording.\nOriginal CSV is retained." + (state.fitPath ? `\nSaved: ${state.fitPath}` : "");
   }
 
   function flushWriter() {
@@ -165,12 +175,16 @@
     const record = { path, date, rows: [] };
     files.set(path, record);
     state.currentRecord = record;
+    state.sessionRecords.push(record);
   }
   function recording(enabled) {
+    if (state.fitSaving) return notice("Wait for FIT export before recording control.");
     if (state.wifi !== "connected") return notice("Web command unavailable: connect Wi-Fi first.");
     if (!state.sdReady || state.sdBusy) return notice("SD card unavailable or busy. Recording state unchanged.");
     if (enabled && !state.recording) {
       state.pending = []; state.writer = []; state.dropped = 0;
+      state.sessionRecords = []; state.fitPath = ""; state.fitBytes = null;
+      state.trustedTime = gpsFixed() || state.gps === "stale";
       createRecord();
       state.recording = true;
     } else if (!enabled && state.recording) {
@@ -186,6 +200,7 @@
     if (state.samples.length > 60) state.samples.shift();
     flushWriter();
     if (!state.recording) return;
+    if (gpsFixed() || state.gps === "stale") state.trustedTime = true;
     if (gpsFixed() || state.gps === "stale") state.logDate = localDate().toISOString().slice(0, 10);
     const date = state.logDate;
     if (date !== state.currentRecord.date && !state.sdBusy && state.sdReady) {
@@ -282,6 +297,7 @@
     render();
   }
   function play(path) {
+    if (state.fitSaving) return notice("Wait for FIT export before playing audio.");
     if (!state.sdReady || state.sdBusy) return notice("Cannot play: SD card unavailable or busy.");
     if (state.operation) return notice("Wait for the BLE operation to finish before playback.");
     disconnect();
@@ -314,6 +330,12 @@
       button.addEventListener("click", () => {
         if (entry.directory) browse(path);
         else if (entry.audio) play(path);
+        else if (entry.binary) {
+          const url = URL.createObjectURL(new Blob([entry.binary], { type: "application/octet-stream" }));
+          const link = document.createElement("a");
+          link.href = url; link.download = path.split("/").pop(); link.click();
+          setTimeout(() => URL.revokeObjectURL(url),1000);
+        }
         else notice("Not an audio file");
       });
       $("sd-files").append(button);
@@ -335,6 +357,16 @@
   }
   function processEvents() {
     const time = now();
+    if (state.fitSaving && time >= state.fitSaving.deadline) {
+      const pending = state.fitSaving;
+      state.fitSaving = null;
+      if (!state.sdReady || state.sdBusy) notice("FIT export failed. CSV retained; retry saving.");
+      else {
+        state.fitPath = pending.path; state.fitBytes = pending.bytes;
+        files.set(pending.path, { binary: pending.bytes });
+        notice(`Saved ${pending.path}`);
+      }
+    }
     if (state.wifiEnabled && state.wifiEnvironment === "connected" && time >= state.wifiDeadline) state.wifi = "connected";
     if (["detecting", "restarting"].includes(state.gps) && time >= state.gpsDeadline)
       state.gps = state.gpsEnvironment === "absent" ? "absent" : "searching";
@@ -398,6 +430,27 @@
   for (const [button, page] of [["language", "language-page"], ["wifi", "wifi-page"], ["sound", "sound-page"]])
     $(`settings-${button}`).onclick = () => showPage(page);
   $("settings-sd").onclick = () => browse("/");
+  $("settings-log").onclick = () => showPage("ride-log-page");
+  function saveFit() {
+    if (state.fitSaving) return;
+    if (!(gpsFixed() || state.gps === "stale")) return notice("Acquire GPS time before saving FIT.");
+    if (!state.trustedTime) return notice("No trusted time for this recording.");
+    if (!state.sdReady || state.sdBusy) return notice("SD card unavailable or busy. Recording state unchanged.");
+    if (state.audio) return notice("Stop audio before saving FIT.");
+    const rows = [...state.sessionRecords.flatMap((record) => record.rows), ...state.writer, ...state.pending]
+      .map((row) => row.trim().split(",").map(Number));
+    if (!rows.length) return notice("No recorded samples. Start recording first.");
+    const path = state.sessionRecords[0].path.replace(/\.csv$/, ".fit");
+    if (files.has(path)) return notice("FIT already exists. CSV retained.");
+    if (state.sessionRecords.length > 8) return notice("Too many daily CSV segments for FIT export.");
+    const bytes = window.encodeRideFit(rows, Date.UTC(2026,9,19,4) / 1000 + Math.floor(rows[0][0] / 1000));
+    // A local screen command does not require Wi-Fi.
+    state.currentRecord.rows.push(...state.writer, ...state.pending);
+    state.writer = []; state.pending = []; state.recording = false;
+    state.fitSaving = { path, bytes, deadline: now() + 1000 };
+    render();
+  }
+  $("fit-save").onclick = saveFit;
   $("settings-gps").onclick = () => state.gps === "absent"
     ? notice("GPS module not found.\nCheck the UART wiring and power.") : showPage("gps-page");
   document.querySelectorAll("[data-back]").forEach((button) => {
@@ -468,7 +521,7 @@
   }, 20);
 
   window.aeroProbeSim = {
-    connect, disconnect, openMeterDialog, step, showPage, browse, recording, download,
+    connect, disconnect, openMeterDialog, step, showPage, browse, recording, download, saveFit,
     reset() { state.samples = []; render(); },
     setInput(values) {
       for (const field of ["power", "cadence", "virtualPower", "virtualCadence"])
@@ -488,7 +541,8 @@
         recording: state.recording, buffered: state.pending.length, queued: state.writer.length, dropped: state.dropped,
         written: state.currentRecord?.rows.length ?? 0, csv: CSV_HEADER + (state.currentRecord?.rows.join("") ?? ""),
         recordPath: state.currentRecord?.path ?? null, downloading: Boolean(state.download), downloadMessage: state.downloadMessage,
-        error: state.error
+        error: state.error, fitSaving: Boolean(state.fitSaving), fitPath: state.fitPath,
+        fitBytes: state.fitBytes ? Array.from(state.fitBytes) : null
       };
     }
   };

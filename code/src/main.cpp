@@ -17,6 +17,7 @@
 #include "config.h"
 #include "runtime_log.h"
 #include "ble_diagnostics.h"
+#include "fit_export.h"
 #include "fs3000.h"
 #include "wind_probe.h"
 #include "ble_power.h"
@@ -341,7 +342,9 @@ void loop() {
 
   // 电源开关：长按 5 秒关机（非阻塞）
   powerKey.tick();
-  if (powerKey.takeShutdownRequest()) {
+  static bool shutdownPending = false;
+  if (powerKey.takeShutdownRequest()) shutdownPending = true;
+  if (shutdownPending && !fitExport.busy()) {
     static uint32_t lastLogStopAttemptMs = 0;
     const uint32_t shutdownAttemptMs = millis();
     if (logger.ok() && lastLogStopAttemptMs != 0 &&
@@ -373,6 +376,19 @@ void loop() {
   }
   // 回填检测结果，供 GPS 页面显示或提示未找到模块。
   lcd.setGpsModulePresent(gps.modulePresent(), gps.presenceChecked());
+  if (!fitExport.busy() && gps.timeValid())
+    logger.setUtcReference(gps.unixSec(), now);
+  if (lcd.takeFitSaveRequest()) {
+    if (audio.playing())
+      lcd.showFitResult("Stop audio before saving FIT.");
+    else if (!fitExport.busy())
+      fitExport.start(logger, gps.timeValid());
+  }
+  lcd.setFitSaving(fitExport.busy());
+  bool fitSaved;
+  char fitResult[160];
+  if (fitExport.takeResult(fitSaved, fitResult, sizeof(fitResult)))
+    lcd.showFitResult(fitResult);
 
   // 播放音频时暂停提交新的 CSV 批次；已排队批次仍由后台任务完成。
   static bool audioWasPlaying = false;
@@ -409,12 +425,16 @@ void loop() {
   }
   char sdPlayPath[256] = {};
   if (lcd.takeSdPlayRequest(sdPlayPath, sizeof(sdPlayPath))) {
-    const bool wirelessReady = suspendWirelessForAudio();
-    if (wirelessReady && audio.playFile(sdPlayPath)) {
-      AppLog.printf("[SD] play mp3: %s\n", sdPlayPath);
+    if (fitExport.busy()) {
+      lcd.showFitResult("Wait for FIT export before playing audio.");
     } else {
-      AppLog.printf("[SD] could not play: %s\n", sdPlayPath);
-      resumeWirelessAfterAudio();
+      const bool wirelessReady = suspendWirelessForAudio();
+      if (wirelessReady && audio.playFile(sdPlayPath)) {
+        AppLog.printf("[SD] play mp3: %s\n", sdPlayPath);
+      } else {
+        AppLog.printf("[SD] could not play: %s\n", sdPlayPath);
+        resumeWirelessAfterAudio();
+      }
     }
   }
   if (lcd.takeSdStopRequest()) {
@@ -440,7 +460,9 @@ void loop() {
 
   bool startRecording = false;
   if (wifiWeb.takeRecordingRequest(startRecording)) {
-    if (startRecording) {
+    if (fitExport.busy()) {
+      AppLog.println("[FIT] recording control rejected during export");
+    } else if (startRecording) {
       if (logger.start())
         AppLog.println("[WEB] recording started");
       else
@@ -501,7 +523,11 @@ void loop() {
     }
 #endif
 
-    logger.log(now, power, pmCadence(), vg, vAir, yaw, post, rho, src);
+    if (!fitExport.busy()) {
+      logger.log(now, power, pmCadence(), vg, vAir, yaw, post, rho, src);
+      lcd.updateRideLog(logger.fileName(), logger.ok(), logger.sampleCount(),
+                        logger.droppedCount(), power, pmCadence(), vg);
+    }
 
 #if WIFI_WEB_ENABLE
     const bool windValid = lastWindValidMs != 0 &&
@@ -583,7 +609,7 @@ void loop() {
       gps.formatLocalDateTime(localStr, sizeof(localStr), 8 * 60);
       // 把本地日期（"YYYY-MM-DD"）交给日志器：有定位时按日期建子目录。
       // localStr 形如 "YYYY-MM-DD HH:MM:SS"（无定位时为 "--"）。
-      if (gps.timeValid() && strlen(localStr) >= 10 && localStr[4] == '-') {
+      if (!fitExport.busy() && gps.timeValid() && strlen(localStr) >= 10 && localStr[4] == '-') {
         char ymd[12];
         snprintf(ymd, sizeof(ymd), "%.10s", localStr);
         logger.setLocalDate(ymd);

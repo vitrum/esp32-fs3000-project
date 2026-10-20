@@ -173,6 +173,62 @@ void DisplayLcd::onSettingsBack(lv_event_t *) {
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
+void DisplayLcd::onRideLogButton(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->rideLogPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onRideLogBack(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->rideLogPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onFitSave(lv_event_t *) {
+  if (g_display) g_display->fitSaveRequested_ = true;
+}
+
+bool DisplayLcd::takeFitSaveRequest() {
+  const bool requested = fitSaveRequested_;
+  fitSaveRequested_ = false;
+  return requested;
+}
+
+void DisplayLcd::setFitSaving(bool saving) {
+  if (!fitSaveButton_) return;
+  if (lv_obj_has_state(fitSaveButton_, LV_STATE_DISABLED) == saving) return;
+  if (saving) lv_obj_add_state(fitSaveButton_, LV_STATE_DISABLED);
+  else lv_obj_clear_state(fitSaveButton_, LV_STATE_DISABLED);
+  lv_label_set_text(fitSaveLabel_, saving ? "SAVING" : "SAVE FIT");
+}
+
+void DisplayLcd::showFitResult(const char *message) { showNotice(message); }
+
+void DisplayLcd::updateRideLog(const char *path, bool recording, uint32_t samples,
+                              uint32_t dropped, float power, float cadence, float speed) {
+  if (!rideLogText_) return;
+  if (samples < rideLastSample_) rideHistory_[0] = '\0';
+  if (samples != rideLastSample_) {
+    char row[64];
+    snprintf(row, sizeof(row), "#%lu %.0fW %.0frpm %.1fkm/h\n",
+             (unsigned long)samples, power, cadence, speed * 3.6f);
+    while (strlen(rideHistory_) + strlen(row) >= sizeof(rideHistory_)) {
+      const char *next = strchr(rideHistory_, '\n');
+      if (!next) { rideHistory_[0] = '\0'; break; }
+      memmove(rideHistory_, next + 1, strlen(next + 1) + 1);
+    }
+    strcat(rideHistory_, row);
+    rideLastSample_ = samples;
+  }
+  char text[800];
+  snprintf(text, sizeof(text),
+           "%s\n%s\n\nSamples: %lu\nDropped: %lu\n\nPower: %.0f W\nCadence: %.0f rpm\nSpeed: %.1f km/h\n\nRecent samples:\n%s\nSAVE FIT ends recording.\nOriginal CSV is retained.",
+           recording ? "RECORDING" : "STOPPED", path && path[0] ? path : "No recording yet",
+           (unsigned long)samples, (unsigned long)dropped, power, cadence, speed * 3.6f, rideHistory_);
+  lv_label_set_text(rideLogText_, text);
+}
+
 void DisplayLcd::onLanguageButton(lv_event_t *) {
   if (!g_display) return;
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -621,6 +677,7 @@ bool DisplayLcd::takeGpsRestartRequest() {
 
 void DisplayLcd::showGpsPanel() {
   if (!gpsPanel_) return;
+  if (rideLogPanel_) lv_obj_add_flag(rideLogPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
@@ -634,6 +691,7 @@ void DisplayLcd::showGpsPanel() {
 
 void DisplayLcd::showSettings() {
   if (!settingsPanel_) return;
+  if (rideLogPanel_) lv_obj_add_flag(rideLogPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -1324,6 +1382,48 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_text_align(settingsGpsButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(settingsGpsButtonLabel_, &lv_font_montserrat_14, 0);
   lv_obj_center(settingsGpsButtonLabel_);
+
+  lv_obj_t *logs = lv_btn_create(settingsPanel_);
+  lv_obj_set_size(logs, 208, 42);
+  lv_obj_align(logs, LV_ALIGN_TOP_LEFT, 16, 246);
+  lv_obj_set_style_radius(logs, 8, 0);
+  lv_obj_set_style_bg_color(logs, lv_color_make(51, 65, 85), 0);
+  lv_obj_add_event_cb(logs, onRideLogButton, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *logsLabel = lv_label_create(logs);
+  lv_label_set_text(logsLabel, LV_SYMBOL_LIST " RIDE LOG");
+  lv_obj_set_style_text_color(logsLabel, lv_color_white(), 0);
+  lv_obj_center(logsLabel);
+
+  rideLogPanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(rideLogPanel_, 240, 320);
+  lv_obj_center(rideLogPanel_);
+  lv_obj_set_style_pad_all(rideLogPanel_, 0, 0);
+  lv_obj_set_style_radius(rideLogPanel_, 0, 0);
+  lv_obj_set_style_border_width(rideLogPanel_, 0, 0);
+  lv_obj_clear_flag(rideLogPanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(rideLogPanel_, lv_color_make(248, 250, 252), 0);
+  buildPanelHeader(rideLogPanel_, "LOG", onRideLogBack);
+  lv_obj_set_width(lv_obj_get_child(rideLogPanel_, 1), 50);
+  fitSaveButton_ = lv_btn_create(rideLogPanel_);
+  lv_obj_set_size(fitSaveButton_, 78, 30);
+  lv_obj_set_style_pad_all(fitSaveButton_, 4, 0);
+  lv_obj_align(fitSaveButton_, LV_ALIGN_TOP_RIGHT, -10, 10);
+  lv_obj_add_event_cb(fitSaveButton_, onFitSave, LV_EVENT_CLICKED, nullptr);
+  fitSaveLabel_ = lv_label_create(fitSaveButton_);
+  lv_label_set_text(fitSaveLabel_, "SAVE FIT");
+  lv_obj_set_style_text_font(fitSaveLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_center(fitSaveLabel_);
+  lv_obj_t *scroll = lv_obj_create(rideLogPanel_);
+  lv_obj_set_size(scroll, 224, 258);
+  lv_obj_align(scroll, LV_ALIGN_TOP_LEFT, 8, 54);
+  lv_obj_set_style_pad_all(scroll, 6, 0);
+  lv_obj_set_scroll_dir(scroll, LV_DIR_VER);
+  rideLogText_ = lv_label_create(scroll);
+  lv_obj_set_width(rideLogText_, 204);
+  lv_label_set_long_mode(rideLogText_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(rideLogText_, &lv_font_montserrat_14, 0);
+  updateRideLog("", false, 0, 0, 0, 0, 0);
+  lv_obj_add_flag(rideLogPanel_, LV_OBJ_FLAG_HIDDEN);
 
   lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 
