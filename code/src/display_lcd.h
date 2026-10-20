@@ -58,6 +58,11 @@ public:
   // 主循环回填当前音量，用于高亮所选档位。
   void setVolume(uint8_t vol);
   bool takeFitSaveRequest();
+  // 用户在日志页点击"开始/停止记录"：主循环据此调用 logger.start()/stop()。
+  // start=true 表示请求开始记录，false 表示请求停止。
+  bool takeRecordingRequest(bool &start);
+  // 主循环回填当前记录状态，用于切换按钮文字（RECORD / STOP）与颜色。
+  void setRecording(bool recording);
   void updateRideLog(const char *path, bool recording, uint32_t samples,
                      uint32_t dropped, float power, float cadence, float speed);
   void setFitSaving(bool saving);
@@ -115,6 +120,11 @@ private:
   lv_obj_t *fitSaveButton_ = nullptr;
   lv_obj_t *fitSaveLabel_ = nullptr;
   bool fitSaveRequested_ = false;
+  lv_obj_t *recordButton_ = nullptr;
+  lv_obj_t *recordLabel_ = nullptr;
+  bool recordingRequested_ = false;
+  bool recordingRequestStart_ = false;
+  bool recording_ = false;
   char rideHistory_[360] = {};
   uint32_t rideLastSample_ = 0;
   lv_obj_t *settingsLanguageLabel_ = nullptr;
@@ -271,6 +281,7 @@ private:
   static void onRideLogButton(lv_event_t *event);
   static void onRideLogBack(lv_event_t *event);
   static void onFitSave(lv_event_t *event);
+  static void onRecordToggle(lv_event_t *event);
   static void onLanguageSelected(lv_event_t *event);
   static void onLanguageButton(lv_event_t *event);
   static void onLanguageBack(lv_event_t *event);

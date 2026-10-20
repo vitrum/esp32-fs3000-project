@@ -424,7 +424,15 @@ bool CsvLogger::start() {
   }
   _ok = true;
   _sampleCount = _sessionDropped = 0;
-  _referenceUtc = _referenceMs = 0;
+  // 不要无条件清零 UTC 参考：GPS 可能在本轮 start() 之前就已授时，
+  // 那是真实且可用的绝对时间锚点，清掉会导致 FIT 保存被拒绝
+  // （日志中的 "[FIT] No trusted time for this recording."）。
+  // 这里只清除「兜底默认时间」，保留 GPS 授时；若既无 GPS 也无兜底，
+  // FIT 导出时会再写入开机默认时间。
+  if (!_referenceFromGps) {
+    _referenceUtc = _referenceMs = 0;
+    _referenceFromGps = false;
+  }
   unlockSdCard();
   AppLog.printf("Logging to %s (buffered, 1-min chunks)\n", _name);
   return _ok;
@@ -462,10 +470,24 @@ bool CsvLogger::stop() {
 }
 
 void CsvLogger::setUtcReference(uint32_t utc, uint32_t milliseconds) {
-  if (_ok && !_referenceUtc && utc >= 1577836800) {
+  // 不再要求 _ok：FIT 导出需要绝对时间锚点，而 GPS 授时可能发生在
+  // start() 之前（设备早就定位好了）或记录已经 stop() 之后才点保存。
+  // GPS 授时优先级最高：即使已经写入了开机默认时间，也被真实授时覆盖。
+  if (!_referenceFromGps && utc >= 1577836800) {
     _referenceUtc = utc;
     _referenceMs = milliseconds;
+    _referenceFromGps = true;
+    AppLog.printf("[SD] UTC reference set from GPS: %lu\n",
+                  (unsigned long)utc);
   }
+}
+
+void CsvLogger::useFallbackUtcReference(uint32_t utc, uint32_t milliseconds) {
+  // 兜底只在没有任何参考时间时写入；有 GPS 时间就绝不覆盖。
+  if (_referenceUtc || utc == 0) return;
+  _referenceUtc = utc;
+  _referenceMs = milliseconds;
+  _referenceFromGps = false;
 }
 
 bool CsvLogger::utcReference(uint32_t &utc, uint32_t &milliseconds) const {

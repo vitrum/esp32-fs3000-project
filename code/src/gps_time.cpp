@@ -14,6 +14,10 @@ constexpr int kRxBuffer = 4096;
 constexpr uint32_t kFixFreshMs = 3000;
 // 模块存在性检测窗口：该时间内若一直收不到任何 NMEA 字节，判为不存在。
 constexpr uint32_t kPresenceTimeoutMs = 3000;
+// UTC 时间新鲜度阈值：超过该时长未更新 RMC 时间，视为不可信。
+constexpr uint32_t kTimeFreshMs = 5000;
+// 卫星数合理上限：超过即视为解析到脏数据（日志中出现过 sat=300）。
+constexpr uint16_t kMaxPlausibleSatellites = 64;
 }  // namespace
 
 bool GpsTime::begin() {
@@ -262,11 +266,32 @@ bool GpsTime::timeValid() {
   if (!_enabled) return false;
   if (!_gps.date.isValid() || !_gps.time.isValid()) return false;
   const int year = _gps.date.year();
-  return year >= 2020 && year <= 2099;   // 排除未定位时的默认/乱值
+  if (year < 2020 || year > 2099) return false;   // 排除未定位时的默认/乱值
+
+  // 时间必须新鲜：RMC 时间语句过期（例如模块输出陈旧/半帧数据）时不可信。
+  // _gps.time.age() 单位是毫秒。
+  if (_gps.time.age() > kTimeFreshMs) return false;
+
+  // 卫星数必须落在合理区间。TinyGPSPlus 的 satellites 若被脏帧污染，
+  // 会出现 300 这类荒谬值（日志中出现过 sat=300），此时数据不可信。
+  const uint16_t sats = _gps.satellites.isValid()
+                            ? (uint16_t)_gps.satellites.value()
+                            : 0;
+  if (sats > kMaxPlausibleSatellites) return false;
+
+  // 时间/日期来自 RMC，其可靠性依赖有效定位。若从未定位过，宁可视作不可信，
+  // 避免把「无定位时的空时间戳」当成可信时间用于 FIT 锚点。
+  // 注意：这里只要求「曾经定位过」，不要求当前 fix 新鲜（记录中会短暂丢星）。
+  if (_lastFixMs == 0) return false;
+
+  return true;
 }
 
 uint8_t GpsTime::satellites() {
-  return _gps.satellites.isValid() ? (uint8_t)_gps.satellites.value() : 0;
+  if (!_gps.satellites.isValid()) return 0;
+  const uint32_t sats = _gps.satellites.value();
+  // 脏帧会给出 300 这类荒谬值，直接归零，避免 UI/日志显示误导信息。
+  return sats <= kMaxPlausibleSatellites ? (uint8_t)sats : 0;
 }
 
 uint32_t GpsTime::hdop() {

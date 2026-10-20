@@ -205,6 +205,33 @@ void DisplayLcd::setFitSaving(bool saving) {
 
 void DisplayLcd::showFitResult(const char *message) { showNotice(message); }
 
+void DisplayLcd::onRecordToggle(lv_event_t *) {
+  if (!g_display) return;
+  // 点击时按当前状态取反：未记录→请求开始，记录中→请求停止。
+  g_display->recordingRequestStart_ = !g_display->recording_;
+  g_display->recordingRequested_ = true;
+}
+
+bool DisplayLcd::takeRecordingRequest(bool &start) {
+  if (!recordingRequested_) return false;
+  recordingRequested_ = false;
+  start = recordingRequestStart_;
+  return true;
+}
+
+void DisplayLcd::setRecording(bool recording) {
+  recording_ = recording;
+  if (!recordButton_) return;
+  // 记录中：红色 STOP；空闲：绿色 RECORD。
+  lv_obj_set_style_bg_color(
+      recordButton_,
+      recording ? lv_color_make(220, 38, 38) : lv_color_make(22, 163, 74), 0);
+  if (recordLabel_)
+    lv_label_set_text(recordLabel_,
+                      recording ? localized(LV_SYMBOL_STOP " STOP", LV_SYMBOL_STOP " 停止")
+                                : localized(LV_SYMBOL_PLAY " RECORD", LV_SYMBOL_PLAY " 记录"));
+}
+
 void DisplayLcd::updateRideLog(const char *path, bool recording, uint32_t samples,
                               uint32_t dropped, float power, float cadence, float speed) {
   if (!rideLogText_) return;
@@ -1413,9 +1440,22 @@ void DisplayLcd::buildSettingsPanel() {
   lv_label_set_text(fitSaveLabel_, "SAVE FIT");
   lv_obj_set_style_text_font(fitSaveLabel_, &lv_font_montserrat_14, 0);
   lv_obj_center(fitSaveLabel_);
+  // 开始/停止记录按钮（本地入口，无需依赖网页）。
+  recordButton_ = lv_btn_create(rideLogPanel_);
+  lv_obj_set_size(recordButton_, 224, 30);
+  lv_obj_set_style_pad_all(recordButton_, 4, 0);
+  lv_obj_set_style_radius(recordButton_, 6, 0);
+  lv_obj_set_style_bg_color(recordButton_, lv_color_make(22, 163, 74), 0);
+  lv_obj_align(recordButton_, LV_ALIGN_TOP_LEFT, 8, 50);
+  lv_obj_add_event_cb(recordButton_, onRecordToggle, LV_EVENT_CLICKED, nullptr);
+  recordLabel_ = lv_label_create(recordButton_);
+  lv_label_set_text(recordLabel_, LV_SYMBOL_PLAY " RECORD");
+  lv_obj_set_style_text_color(recordLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_font(recordLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_center(recordLabel_);
   lv_obj_t *scroll = lv_obj_create(rideLogPanel_);
-  lv_obj_set_size(scroll, 224, 258);
-  lv_obj_align(scroll, LV_ALIGN_TOP_LEFT, 8, 54);
+  lv_obj_set_size(scroll, 224, 220);
+  lv_obj_align(scroll, LV_ALIGN_TOP_LEFT, 8, 84);
   lv_obj_set_style_pad_all(scroll, 6, 0);
   lv_obj_set_scroll_dir(scroll, LV_DIR_VER);
   rideLogText_ = lv_label_create(scroll);
@@ -1862,6 +1902,14 @@ void DisplayLcd::refreshLanguage() {
   lv_label_set_text(gpsRestartLabel_,
                     localized(LV_SYMBOL_REFRESH " RESTART GPS",
                               LV_SYMBOL_REFRESH " 重启 GPS"));
+  if (recordLabel_) {
+    lv_label_set_text(recordLabel_,
+                      recording_ ? localized(LV_SYMBOL_STOP " STOP", LV_SYMBOL_STOP " 停止")
+                                 : localized(LV_SYMBOL_PLAY " RECORD", LV_SYMBOL_PLAY " 记录"));
+    lv_obj_set_style_text_font(recordLabel_, font, 0);
+  }
+  if (fitSaveLabel_)
+    lv_obj_set_style_text_font(fitSaveLabel_, font, 0);
   lv_obj_set_style_text_font(gpsTitle_, titleFont, 0);
   lv_obj_set_style_text_font(gpsRestartLabel_, font, 0);
   lv_obj_set_style_text_font(gpsFixLabel_, titleFont, 0);

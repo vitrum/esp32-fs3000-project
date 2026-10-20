@@ -62,8 +62,15 @@ public:
   const char *fileName() const { return _name; }
   uint32_t sampleCount() const { return _sampleCount; }
   uint32_t droppedCount() const { return _sessionDropped; }
+  // 记录本次会话的 UTC 参考（GPS 授时）。允许在未开始记录时调用：
+  // FIT 导出需要绝对时间锚点，而 GPS 授时可能早于/晚于 start()。
   void setUtcReference(uint32_t utc, uint32_t milliseconds);
   bool utcReference(uint32_t &utc, uint32_t &milliseconds) const;
+  // 当前 UTC 参考是否来自 GPS 授时（false = 开机默认时间或尚不可用）。
+  bool utcReferenceFromGps() const { return _referenceFromGps; }
+  // 无 GPS 授时时的兜底：写入开机默认 UTC 时间。
+  // 仅在当前没有 GPS 参考时生效，绝不覆盖真实 GPS 时间。
+  void useFallbackUtcReference(uint32_t utc, uint32_t milliseconds);
   static constexpr size_t kSessionFiles = 8;
   size_t sessionFileCount() const { return _sessionFileCount; }
   const char *sessionFile(size_t index) const { return _sessionFiles[index]; }
@@ -115,6 +122,7 @@ private:
   uint32_t _droppedSamples = 0;
   uint32_t _sampleCount = 0, _sessionDropped = 0;
   uint32_t _referenceUtc = 0, _referenceMs = 0;
+  bool     _referenceFromGps = false;   // UTC 参考是否来自 GPS 授时
   char _sessionFiles[kSessionFiles][80] = {};
   size_t _sessionFileCount = 0;
   bool _sessionOverflow = false;

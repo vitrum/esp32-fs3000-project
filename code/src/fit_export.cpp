@@ -1,6 +1,7 @@
 #include "fit_export.h"
 #include "fit_activity.h"
 #include "runtime_log.h"
+#include "config.h"
 #include <freertos/task.h>
 #include <cmath>
 #include <cstdio>
@@ -40,11 +41,28 @@ struct Scan {
 bool FitExport::start(CsvLogger &logger, bool timeValid) {
   if (busy() || ready_.load()) return false;
   uint32_t utc, milliseconds;
-  const char *error = !timeValid ? "Acquire GPS time before saving FIT." :
-      !logger.utcReference(utc, milliseconds) ? "No trusted time for this recording." :
-      !sdCardReady() ? "SD card is not ready." :
-      !logger.sampleCount() ? "No recorded samples. Start recording first." :
-      !logger.sessionComplete() ? "Too many daily CSV segments for FIT export." : nullptr;
+
+  // 只有在记录期间（main 循环）已写入兜底时才可能走到这里；若仍无参考，
+  // 用固定默认时间 + 当前 millis 作为锚点，保证 FIT 一定能生成。
+  if (!logger.utcReference(utc, milliseconds) && FIT_DEFAULT_UTC != 0) {
+    logger.useFallbackUtcReference(FIT_DEFAULT_UTC, millis());
+    AppLog.printf("[FIT] no GPS time; using default UTC %lu for this export\n",
+                  (unsigned long)FIT_DEFAULT_UTC);
+  }
+
+  // 错误提示要能区分「完全没时间」与「有 GPS 但记录期间没授时」。
+  const char *error = nullptr;
+  if (!logger.utcReference(utc, milliseconds)) {
+    // 走到这里说明既没有 GPS 参考，也没有可用的默认时间（FIT_DEFAULT_UTC==0）。
+    error = timeValid ? "No trusted time for this recording."
+                      : "Acquire GPS time before saving FIT.";
+  } else if (!sdCardReady()) {
+    error = "SD card is not ready.";
+  } else if (!logger.sampleCount()) {
+    error = "No recorded samples. Start recording first.";
+  } else if (!logger.sessionComplete()) {
+    error = "Too many daily CSV segments for FIT export.";
+  }
   if (error) {
     snprintf(result_, sizeof(result_), "%s", error);
     success_ = false;

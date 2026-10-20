@@ -215,6 +215,7 @@ static void requestBleCancel() {
   posture.cancelConnect();
 }
 
+#if AUDIO_ENABLE
 static bool suspendWirelessForAudio() {
   if (wirelessSuspendedForAudio) return true;
   if (bleOpBusy) {
@@ -262,6 +263,7 @@ static void resumeWirelessAfterAudio() {
   postAudioBleCatchUpNeeded = true;
   AppLog.println("[AUDIO] BLE stack resumed");
 }
+#endif  // AUDIO_ENABLE
 
 // Keep historical CSV source IDs: 0=none, 1=BLE, 2=reserved, 3=virtual.
 static int pmSrc() {
@@ -378,6 +380,11 @@ void loop() {
   lcd.setGpsModulePresent(gps.modulePresent(), gps.presenceChecked());
   if (!fitExport.busy() && gps.timeValid())
     logger.setUtcReference(gps.unixSec(), now);
+  // 测试阶段兜底：拿不到 GPS 授时就用开机默认时间做 FIT 锚点。
+  // 样本时间轴来自 millis()，相对时间正确，仅绝对日期不准。
+  // 放在 GPS 之后，确保真实授时优先（useFallback 不会覆盖已存在的 GPS 时间）。
+  if (!fitExport.busy() && logger.ok() && FIT_DEFAULT_UTC != 0)
+    logger.useFallbackUtcReference(FIT_DEFAULT_UTC, now);
   if (lcd.takeFitSaveRequest()) {
     if (audio.playing())
       lcd.showFitResult("Stop audio before saving FIT.");
@@ -385,12 +392,35 @@ void loop() {
       fitExport.start(logger, gps.timeValid());
   }
   lcd.setFitSaving(fitExport.busy());
+  lcd.setRecording(logger.ok());
   bool fitSaved;
   char fitResult[160];
   if (fitExport.takeResult(fitSaved, fitResult, sizeof(fitResult)))
     lcd.showFitResult(fitResult);
 
+  // 本地"开始/停止记录"入口（日志页 RECORD/STOP 按钮）。
+  bool localStartRecording = false;
+  if (lcd.takeRecordingRequest(localStartRecording)) {
+    if (fitExport.busy()) {
+      AppLog.println("[FIT] recording control rejected during export");
+      lcd.showFitResult("Wait for FIT export to finish.");
+    } else if (localStartRecording) {
+      if (logger.start())
+        AppLog.println("[UI] recording started");
+      else
+        lcd.showFitResult("Recording could not start; check SD card.");
+    } else {
+      if (logger.stop())
+        AppLog.println("[UI] recording stopped");
+      else
+        lcd.showFitResult("Recording could not stop; SD card is busy.");
+    }
+    lcd.setRecording(logger.ok());
+  }
+
   // 播放音频时暂停提交新的 CSV 批次；已排队批次仍由后台任务完成。
+  // 音频整体禁用时，这段逻辑不参与，BLE 与日志互不影响。
+#if AUDIO_ENABLE
   static bool audioWasPlaying = false;
   const bool audioPlaying = audio.playing();
   if (audioPlaying && !audioWasPlaying) {
@@ -402,6 +432,7 @@ void loop() {
   }
   if (!audioPlaying && wirelessSuspendedForAudio) resumeWirelessAfterAudio();
   audioWasPlaying = audioPlaying;
+#endif
 
   // 声音设置：应用音量并用该音量试听
   uint8_t newVolume = 0;
@@ -425,6 +456,7 @@ void loop() {
   }
   char sdPlayPath[256] = {};
   if (lcd.takeSdPlayRequest(sdPlayPath, sizeof(sdPlayPath))) {
+#if AUDIO_ENABLE
     if (fitExport.busy()) {
       lcd.showFitResult("Wait for FIT export before playing audio.");
     } else {
@@ -436,6 +468,13 @@ void loop() {
         resumeWirelessAfterAudio();
       }
     }
+#else
+    // 音频已禁用：绝不要为此 suspending BLE 协议栈（曾导致扫描时提示
+    // "BLE is paused while audio is playing" 的误报）。直接忽略播放请求。
+    (void)sdPlayPath;
+    AppLog.println("[SD] audio disabled; ignoring play request");
+    lcd.showFitResult("Audio playback is disabled.");
+#endif
   }
   if (lcd.takeSdStopRequest()) {
     if (audio.stop())
@@ -635,9 +674,15 @@ void loop() {
   // ------------------------------------------------------------------------
   // BLE：用户请求 → 命令队列 → 工作线程执行 → 结果队列 → 界面更新
   // ------------------------------------------------------------------------
-  // 音频播放期间 BLE 协议栈被释放，此时任何 BLE 请求都直接拒绝，
+  // 音频播放期间 BLE 协议栈会被释放，此时任何 BLE 请求都直接拒绝，
   // 避免在未初始化的 NimBLE 上调用扫描/连接。
+  // 注意：音频整体禁用（AUDIO_ENABLE=0）时 wirelessSuspendedForAudio 永远为
+  // false，BLE 不受任何音频状态影响，这里再显式兜一层，杜绝误报。
+#if AUDIO_ENABLE
   const bool bleAvailable = !wirelessSuspendedForAudio && bleWorkerHandle;
+#else
+  const bool bleAvailable = bleWorkerHandle != nullptr;
+#endif
 
   if (lcd.takeBleCancelRequest()) {
     if (bleOpBusy) {
@@ -658,7 +703,7 @@ void loop() {
     if (!bleAvailable) {
       manualPairingActive = false;
       lcd.showBleConnectFailure(
-          "BLE is paused while audio is playing. Stop the music and try again.");
+          "BLE is not ready. Wait a moment and try again.");
     } else if (!enqueueBleCommand(BleOpKind::Scan)) {
       AppLog.println("[BLE] scan request dropped: worker busy");
       lcd.showBleConnectFailure(
@@ -678,7 +723,7 @@ void loop() {
     if (!bleAvailable) {
       manualPairingActive = false;
       lcd.showBleConnectFailure(
-          "BLE is paused while audio is playing. Stop the music and try again.");
+          "BLE is not ready. Wait a moment and try again.");
     } else if (!enqueueBleCommand(BleOpKind::Connect, selectedAddress,
                                   selectedAddressType)) {
       manualPairingActive = false;
