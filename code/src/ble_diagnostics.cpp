@@ -30,6 +30,7 @@ class BleDiagnostics::ServerCallbacks : public NimBLEServerCallbacks {
     if (!bleDiagnostics.peer_.compare_exchange_strong(expected, UINT16_MAX)) return;
     bleDiagnostics.subscribed_.store(false);
     bleDiagnostics.paused_.store(false);
+    bleDiagnostics.commands_.reset();
     AppLog.setRaw(false);
     AppLog.printf("[BLE-LOG] phone disconnected reason=%d; raw capture off\n", reason);
   }
@@ -56,13 +57,18 @@ class BleDiagnostics::CommandCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &info) override {
     if (info.getConnHandle() != bleDiagnostics.peer_.load()) return;
     const auto value = characteristic->getValue();
-    if (value.size() == 0 || value.size() > 32) {
+    bleDiagnostics.commands_.push(0, reinterpret_cast<const uint8_t *>(value.data()), value.size());
+  }
+};
+
+void BleDiagnostics::processCommand(const uint8_t *data, size_t size) {
+    if (size == 0 || size > 32) {
       AppLog.println("[BLE-LOG] ERROR command must contain 1..32 ASCII bytes");
       return;
     }
     char command[33];
-    memcpy(command, value.data(), value.size());
-    size_t length = value.size();
+    memcpy(command, data, size);
+    size_t length = size;
     while (length && (command[length - 1] == '\r' || command[length - 1] == '\n' ||
                       command[length - 1] == ' ')) --length;
     command[length] = '\0';
@@ -90,8 +96,7 @@ class BleDiagnostics::CommandCallbacks : public NimBLECharacteristicCallbacks {
       return;
     }
     AppLog.printf("[BLE-LOG] OK %s\n", command);
-  }
-};
+}
 
 void BleDiagnostics::status(char *text, size_t capacity) const {
   snprintf(text, capacity, "BLE-LOG v1 raw=%u paused=%u subscribed=%u lost_bytes=%lu notify_fail=%lu truncated=%lu ring=%u",
@@ -145,6 +150,9 @@ bool BleDiagnostics::begin() {
     return false;
   }
   running_ = true;
+  creditMilliBytes_ = 180000;
+  lastBudgetMs_ = millis();
+  retryIntervalMs_ = 20;
   lastAdvertiseMs_ = millis();
   if (!advertising->start())
     AppLog.println("[BLE-LOG] advertising start failed; will retry");
@@ -166,6 +174,7 @@ void BleDiagnostics::suspend() {
   paused_.store(false);
   AppLog.setRaw(false);
   pendingLength_ = 0;
+  commands_.reset();
   // NimBLE owns these objects and deletes them in deinit(true).
   server_ = nullptr;
   tx_ = nullptr;
@@ -186,7 +195,18 @@ bool BleDiagnostics::setSensorBusy(bool busy) {
 }
 
 void BleDiagnostics::tick() {
-  if (!running_ || sensorBusy_) return;
+  if (!running_) return;
+  BleInbox<8, 32>::Packet command;
+  const uint32_t dropped = commands_.dropped();
+  if (reportedCommandDrops_ != dropped) {
+    reportedCommandDrops_ = dropped;
+    AppLog.println("[BLE-LOG] ERROR command rejected: expected 1..32 ASCII bytes or command queue full");
+  }
+  for (size_t processed = 0; processed < 8 && commands_.pop(command); ++processed) {
+    if (connected() && command.generation == commands_.generation())
+      processCommand(command.data, command.length);
+  }
+  if (sensorBusy_) return;
   const uint32_t now = millis();
   if (peer_.load() == UINT16_MAX) {
     pendingLength_ = 0;
@@ -205,12 +225,19 @@ void BleDiagnostics::tick() {
     pendingLength_ = 0;
     lastReplay_ = replay;
   }
-  if (now - lastSendMs_ < 20) return;
+  if (now - lastSendMs_ < retryIntervalMs_) return;
+  const uint32_t elapsed = now - lastBudgetMs_;
+  lastBudgetMs_ = now;
+  const uint32_t credit = creditMilliBytes_ + (elapsed > 1000 ? 1000 : elapsed) * byteRate_;
+  creditMilliBytes_ = credit > 180000 ? 180000 : credit;
+  if (creditMilliBytes_ < 5000) return;
   lastSendMs_ = now;
   const uint16_t peer = peer_.load();
   const uint16_t mtu = server_->getPeerMTU(peer);
   if (mtu < 23) return;
-  const size_t capacity = mtu - 3 < sizeof(pending_) ? mtu - 3 : sizeof(pending_);
+  size_t capacity = mtu - 3 < sizeof(pending_) ? mtu - 3 : sizeof(pending_);
+  if (capacity > creditMilliBytes_ / 1000) capacity = creditMilliBytes_ / 1000;
+  if (pendingLength_ > capacity) return;
   if (pendingLength_ == 0) {
     pendingCursor_ = cursor_;
     uint64_t lost = 0;
@@ -225,9 +252,12 @@ void BleDiagnostics::tick() {
   }
   if (!pendingLength_) return;
   if (tx_->notify(pending_, pendingLength_, peer)) {
+    creditMilliBytes_ -= pendingLength_ * 1000;
+    retryIntervalMs_ = 20;
     cursor_ = pendingCursor_;
     pendingLength_ = 0;
   } else {
+    retryIntervalMs_ = retryIntervalMs_ < 500 ? retryIntervalMs_ * 2 : 1000;
     notifyFailures_.fetch_add(1);
     if (now - lastErrorMs_ >= 5000) {
       lastErrorMs_ = now;

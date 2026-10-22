@@ -2,6 +2,7 @@
 #include "FreeRTOS.h"
 
 inline SemaphoreHandle_t xSemaphoreCreateBinary() { return new HostSemaphore; }
+inline void vSemaphoreDelete(SemaphoreHandle_t semaphore) { delete semaphore; }
 inline int xSemaphoreTake(SemaphoreHandle_t semaphore, TickType_t ticks) {
   std::unique_lock<std::mutex> lock(semaphore->mutex);
   if (ticks == portMAX_DELAY)

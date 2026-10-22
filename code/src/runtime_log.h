@@ -8,6 +8,9 @@
 class RuntimeLog {
 public:
   static constexpr size_t kCapacity = 8192;
+  bool begin();
+  void flushSerial();
+  uint32_t serialLostBytes() const { return serialLostBytes_.load(); }
   size_t printf(const char *format, ...) __attribute__((format(printf, 2, 3)));
   size_t println(const char *text);
   void setRaw(bool enabled) { rawEnabled_.store(enabled); }
@@ -21,6 +24,10 @@ public:
 private:
   void record(const char *text, size_t length);
   LogBuffer<kCapacity> buffer_;
+  LogBuffer<2048> serialBuffer_;
+  uint64_t serialCursor_ = 0;
+  bool outputStarted_ = false;
+  std::atomic<uint32_t> serialLostBytes_{0};
   portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;
   std::atomic<bool> rawEnabled_{false};
   std::atomic<uint32_t> packetSequence_{0};

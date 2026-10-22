@@ -149,10 +149,10 @@ static void downloadTests() {
     SdDownloadResponse response("/record.csv", sdContents.size());
     uint8_t bytes[64];
     *failure = true;
-    const auto messages = Serial.messages.load();
+    const auto logEnd = AppLog.end();
     assert(response._fillBuffer(bytes, sizeof(bytes)) == RESPONSE_TRY_AGAIN);
     assert(!response._sourceValid() && !sdLocked);
-    assert(Serial.messages > messages);
+    assert(AppLog.end() > logEnd);
     *failure = false;
   }
   assert(SdDownloadResponse::tryAcquire());

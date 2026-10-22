@@ -1,5 +1,7 @@
 #include "ble_diagnostics.h"
 #include "runtime_log.h"
+#include "ble_manager.h"
+#include "ble_inbox.h"
 #include <NimBLEDevice.h>
 #include <cassert>
 #include <iostream>
@@ -7,6 +9,7 @@
 
 std::atomic<uint32_t> clockOffset{0};
 HostSerial Serial;
+bool failTaskCreation = false;
 bool NimBLEDevice::initialized = false;
 std::unique_ptr<NimBLEServer> NimBLEDevice::server;
 NimBLEAdvertising NimBLEDevice::advertising;
@@ -14,6 +17,10 @@ NimBLEAdvertising NimBLEDevice::advertising;
 static void advance(unsigned ms = 20) {
   clockOffset += ms;
   bleDiagnostics.tick();
+}
+
+static void command(NimBLECharacteristic *rx, const std::string &text) {
+  rx->command(text);
 }
 
 static std::string drain(NimBLECharacteristic *tx, unsigned iterations = 1000) {
@@ -39,6 +46,12 @@ static void bufferTests() {
   assert(ring.read(cursor, output, 32, lost) == 0 && !lost);
   const auto serialBefore = Serial.messages.load();
   AppLog.println("boot replay marker");
+  assert(Serial.messages == serialBefore);
+  Serial.writable = 0;
+  AppLog.flushSerial();
+  assert(Serial.messages == serialBefore);
+  Serial.writable = 128;
+  AppLog.flushSerial();
   assert(Serial.messages > serialBefore);
   uint8_t packet[] = {0x00, 0xFF, 0x12, 0xAB};
   const auto before = AppLog.end();
@@ -64,6 +77,8 @@ static void bufferTests() {
   std::thread b([] { for (int i = 0; i < 100; ++i) AppLog.println("producer B"); });
   a.join(); b.join();
   assert(AppLog.end() > 0);
+  AppLog.flushSerial();
+  assert(AppLog.serialLostBytes() > 0);
   AppLog.setRaw(true);
   cursor = AppLog.end();
   std::vector<uint8_t> largePacket(513, 0xAB);
@@ -81,8 +96,215 @@ static void bufferTests() {
   AppLog.setRaw(false);
 }
 
+static void scannerTests() {
+  auto &scan = NimBLEDevice::scan;
+  assert(!bleScanner.run(1, true));
+  assert(bleScanner.state() == BleScanState::Failed);
+  NimBLEDevice::initialized = true;
+  scan.failStart = true;
+  assert(!bleScanner.run(1, true));
+  assert(std::string(bleScanner.error()).find("start rejected") != std::string::npos);
+  scan.failStart = false;
+  bleScanner.setConnected(false);
+  assert(bleScanner.run(1, true));
+  assert(bleScanner.state() == BleScanState::Complete && scan.results.getCount() == 0);
+  assert(scan.activeScan && scan.window == 60 && scan.interval == 100);
+  bleScanner.setConnected(true);
+  assert(bleScanner.run(1, false));
+  assert(!scan.activeScan && scan.window == 30);
+  bleScanner.setConnected(false);
+  assert(bleScanner.run(1, false));
+  assert(scan.window == 20);
+  scan.manualCompletion = true;
+  scan.startHook = [&] { scan.complete(6); };
+  assert(!bleScanner.run(1, true));
+  assert(std::string(bleScanner.error()).find("error 6") != std::string::npos);
+  scan.startHook = [] { clockOffset += 2100; };
+  assert(!bleScanner.run(1, true));
+  assert(std::string(bleScanner.error()).find("timed out") != std::string::npos);
+  assert(!scan.isScanning());
+  std::atomic<uint32_t> generation{0};
+  BleCancellation cancellation(generation, 0);
+  scan.startHook = [&] { ++generation; };
+  assert(!bleScanner.run(1, true, &cancellation));
+  assert(bleScanner.state() == BleScanState::Cancelled && !scan.isScanning());
+  const auto starts = scan.starts.load();
+  assert(!bleScanner.run(1, true, &cancellation));
+  assert(scan.starts == starts);
+  BleCancellation nextCancellation(generation, generation.load());
+  scan.failStop = true;
+  assert(!bleScanner.run(1, true, &nextCancellation));
+  assert(bleScanner.state() == BleScanState::Failed && scan.isScanning());
+  assert(!bleScanner.run(1, true));
+  scan.failStop = false;
+  scan.stop();
+  const auto offset = clockOffset.load();
+  clockOffset += UINT32_MAX - millis() - 10;
+  scan.startHook = [&] { clockOffset += 50; scan.complete(BLE_HS_EDONE); };
+  assert(bleScanner.run(100, true));
+  assert(bleScanner.elapsedMs() >= 50 && bleScanner.elapsedMs() < 1000);
+  clockOffset = offset;
+  scan.startHook = {};
+  scan.manualCompletion = false;
+  NimBLEDevice::initialized = false;
+  std::cout << "PASS BLE scanner: start failure, empty success, end error, deadline, cancellation, stop failure, timer wrap, adaptive windows\n";
+}
+
+static void inboxTests() {
+  BleInbox<2, 4> inbox;
+  uint8_t bytes[] = {1, 2, 3, 4, 5};
+  assert(!inbox.push(0, nullptr, 1));
+  assert(!inbox.push(0, bytes, 5));
+  assert(inbox.push(1, bytes, 4));
+  bytes[0] = 9;
+  assert(inbox.push(2, bytes, 1));
+  assert(!inbox.push(3, bytes, 1));
+  BleInbox<2, 4>::Packet packet;
+  assert(inbox.pop(packet) && packet.kind == 1 && packet.data[0] == 1);
+  assert(inbox.pop(packet) && packet.kind == 2 && packet.data[0] == 9);
+  assert(!inbox.pop(packet));
+  assert(inbox.push(0, bytes, 1));
+  inbox.reset();
+  assert(!inbox.pop(packet) && inbox.generation() == 1 && inbox.dropped() == 3);
+  std::atomic<bool> finished{false};
+  std::thread producer([&] {
+    for (unsigned index = 0; index < 10000; ++index) inbox.push(1, bytes, 4);
+    finished = true;
+  });
+  unsigned received = 0;
+  while (!finished.load()) {
+    if (inbox.pop(packet)) { assert(packet.data[0] == 9); ++received; }
+    else std::this_thread::yield();
+  }
+  producer.join();
+  while (inbox.pop(packet)) ++received;
+  assert(received + inbox.dropped() - 3 == 10000);
+  std::cout << "PASS BLE inbox: owned copies, FIFO, bounds, overflow, generation reset, concurrent producer/consumer\n";
+}
+
+static BleOutcome outcome(BleManager &manager) {
+  BleOutcome result;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (!manager.takeOutcome(result)) {
+    assert(std::chrono::steady_clock::now() < deadline);
+    std::this_thread::yield();
+  }
+  return result;
+}
+
+static void controlTests() {
+  BlePowerMeter power;
+  BlePosture posture;
+  BleManager manager(power, posture);
+  assert(!manager.enqueue(BleOpKind::Scan));
+  failTaskCreation = true;
+  assert(!manager.begin());
+  failTaskCreation = false;
+  assert(manager.begin() && manager.available());
+  NimBLEDevice::scan.failStart = true;
+  assert(manager.enqueue(BleOpKind::Scan));
+  assert(!manager.enqueue(BleOpKind::Posture));
+  const auto failed = outcome(manager);
+  assert(!failed.success && !failed.cancelled && failed.error[0]);
+  NimBLEDevice::scan.failStart = false;
+  assert(manager.enqueue(BleOpKind::Scan));
+  const auto empty = outcome(manager);
+  assert(empty.success && empty.deviceCount == 0 && !manager.busy());
+  assert(manager.enqueue(BleOpKind::Connect, "11:22:33:44:55:66", 1));
+  assert(outcome(manager).success && power.connected());
+  manager.tick();
+  auto *measurement = &NimBLEDevice::clients.front()->service.measurement;
+  const auto notifications = power.notificationCount();
+  AppLog.setRaw(true);
+  const auto logEnd = AppLog.end();
+  measurement->emit({0, 0, 250, 0});
+  assert(power.notificationCount() == notifications && AppLog.end() == logEnd);
+  assert(bleDiagnostics.setSensorBusy(true));
+  manager.tick();
+  assert(power.power() == 250 && power.notificationCount() == notifications + 1);
+  assert(AppLog.end() > logEnd);
+  assert(bleDiagnostics.setSensorBusy(false));
+  AppLog.setRaw(false);
+  for (unsigned index = 0; index < 20; ++index) measurement->emit({0, 0, 200, 0});
+  assert(power.droppedPackets() == 8);
+  manager.tick();
+  measurement->emit({0, 0, 111, 0});
+  NimBLEDevice::clients.front()->disconnect();
+  manager.tick();
+  assert(!power.connected() && power.power() == 0 && power.notificationCount() == 0);
+  NimBLEDevice::nextService = "0x1826";
+  NimBLEDevice::nextCharacteristic = "0x2ad2";
+  assert(manager.enqueue(BleOpKind::Connect, "22:33:44:55:66:77", 0));
+  assert(outcome(manager).success);
+  manager.tick();
+  NimBLEDevice::clients.front()->service.measurement.emit({0x44, 0, 0x10, 0x0e, 180, 0, 0x2c, 1});
+  manager.tick();
+  assert(power.power() == 300 && power.cadence() == 90 && power.speed() == 10);
+  NimBLEDevice::nextService = "0x1816";
+  NimBLEDevice::nextCharacteristic = "0x2a5b";
+  assert(manager.enqueue(BleOpKind::Connect, "22:33:44:55:66:78", 0));
+  assert(outcome(manager).success);
+  manager.tick();
+  measurement = &NimBLEDevice::clients.front()->service.measurement;
+  measurement->emit({2, 1, 0, 0, 4});
+  measurement->emit({2, 2, 0, 0, 8});
+  manager.tick();
+  assert(power.cadence() == 60 && power.power() == 0);
+  NimBLEDevice::nextService = "0xFFE0";
+  NimBLEDevice::nextCharacteristic = "0xFFE1";
+  NimBLEAdvertisedDevice sensor;
+  sensor.name = "WT901";
+  sensor.services = {"0xFFE0"};
+  sensor.address = NimBLEAddress("33:44:55:66:77:88", 1);
+  NimBLEDevice::scan.results.devices = {sensor};
+  assert(manager.enqueue(BleOpKind::Posture));
+  assert(outcome(manager).success && posture.connected());
+  auto *postureClient = NimBLEDevice::clients.back();
+  assert(postureClient->peer.getType() == 1);
+  std::vector<uint8_t> angle{0x55, 0x53, 0, 0, 0x2e, 0xfb, 0, 0, 0, 0, 0};
+  for (size_t index = 0; index < 10; ++index) angle[10] += angle[index];
+  postureClient->service.measurement.emit(angle);
+  const auto postureCount = posture.notificationCount();
+  manager.tick();
+  assert(posture.notificationCount() == postureCount + 1 && std::abs(posture.pitchDeg() + 12.34f) < 0.001f);
+  postureClient->disconnect();
+  assert(!posture.connected());
+  NimBLEDevice::scan.manualCompletion = true;
+  NimBLEDevice::scan.startHook = {};
+  assert(manager.enqueue(BleOpKind::Scan));
+  assert(manager.enqueue(BleOpKind::Scan));
+  assert(manager.enqueue(BleOpKind::Scan));
+  assert(manager.enqueue(BleOpKind::Scan));
+  assert(!manager.enqueue(BleOpKind::Scan));
+  assert(!manager.suspend());
+  manager.cancel();
+  for (unsigned index = 0; index < 4; ++index) assert(outcome(manager).cancelled);
+  assert(!manager.busy());
+  NimBLEDevice::scan.manualCompletion = false;
+  NimBLEDevice::scan.results.devices.clear();
+  const auto started = std::chrono::steady_clock::now();
+  assert(manager.enqueue(BleOpKind::Scan));
+  assert(outcome(manager).success);
+  assert(manager.enqueue(BleOpKind::Scan));
+  assert(outcome(manager).success);
+  assert(std::chrono::steady_clock::now() - started < std::chrono::milliseconds(1000));
+  assert(manager.enqueue(BleOpKind::Posture));
+  assert(!outcome(manager).success);
+  assert(!manager.enqueue(BleOpKind::Posture));
+  assert(manager.enqueue(BleOpKind::Scan));
+  assert(outcome(manager).success);
+  assert(manager.suspend() && !manager.available() && !NimBLEDevice::isInitialized());
+  assert(manager.begin());
+  assert(manager.suspend());
+  NimBLEDevice::nextService = "0x1818";
+  NimBLEDevice::nextCharacteristic = "0x2a63";
+  std::cout << "PASS BLE manager/data: initialization recovery, queued cancel, queue bounds, sensor data during diagnostics pause, CPS/FTMS/CSC/posture parsing, random address, disconnect, backoff, suspend/restart, no fixed gap\n";
+}
+
 int main() {
   bufferTests();
+  inboxTests();
+  scannerTests();
   AppLog.println("history before BLE init");
   assert(!bleDiagnostics.begin());
   NimBLEDevice::initialized = true;
@@ -142,33 +364,36 @@ int main() {
   tx->failNotify = false;
   assert(drain(tx).find("retry marker") != std::string::npos);
   assert(tx->read().find("notify_fail=1") != std::string::npos);
-  rx->command("RAW ON\r\n");
+  command(rx, "RAW ON\r\n");
+  bleDiagnostics.tick();
   assert(AppLog.rawEnabled());
-  rx->command("RAW OFF");
+  command(rx, "RAW OFF");
+  bleDiagnostics.tick();
   assert(!AppLog.rawEnabled());
-  rx->command("INVALID");
+  command(rx, "INVALID");
   assert(drain(tx).find("ERROR unknown command") != std::string::npos);
-  rx->command(std::string("RAW ON\0BAD", 10));
+  command(rx, std::string("RAW ON\0BAD", 10));
   assert(!AppLog.rawEnabled());
   assert(drain(tx).find("printable ASCII") != std::string::npos);
-  rx->command(std::string(33, 'A'));
+  command(rx, std::string(33, 'A'));
   assert(drain(tx).find("1..32 ASCII") != std::string::npos);
-  rx->command("PAUSE");
+  command(rx, "PAUSE");
   const auto paused = tx->notifications.size();
   for (unsigned i = 0; i < 300; ++i) AppLog.printf("overflow line %u %050u\n", i, i);
   advance(1000);
   assert(tx->notifications.size() == paused);
-  rx->command("RESUME");
+  command(rx, "RESUME");
   assert(drain(tx).find("!GAP\n") != std::string::npos);
   assert(tx->read().find("lost_bytes=0") == std::string::npos);
-  rx->command("LIVE");
+  command(rx, "LIVE");
   assert(drain(tx).find("overflow line") == std::string::npos);
-  rx->command("REPLAY");
+  command(rx, "REPLAY");
   assert(drain(tx).find("overflow line") != std::string::npos);
   server->connect(8);
   assert(server->disconnected.back() == 8);
   assert(tx->read().find("subscribed=1") != std::string::npos);
-  rx->command("RAW ON");
+  command(rx, "RAW ON");
+  bleDiagnostics.tick();
   assert(bleDiagnostics.setSensorBusy(true));
   server->disconnect(7);
   assert(!AppLog.rawEnabled());
@@ -187,6 +412,39 @@ int main() {
   assert(tx->notifications.size() == unsubscribed);
   tx->subscribe();
   assert(drain(tx).find("unsubscribed marker") != std::string::npos);
+  command(rx, "RAW ON");
+  assert(!AppLog.rawEnabled());
+  server->disconnect(7);
+  advance();
+  assert(!AppLog.rawEnabled());
+  server->connect();
+  tx->subscribe();
+  drain(tx);
+  for (unsigned index = 0; index < 10; ++index) command(rx, "STATUS");
+  assert(drain(tx).find("command queue full") != std::string::npos);
+  server->mtu = 185;
+  bleDiagnostics.setByteRate(500);
+  for (unsigned index = 0; index < 16; ++index) AppLog.println(std::string(480, 'B').c_str());
+  const auto budgetStart = tx->notifications.size();
+  for (unsigned index = 0; index < 50; ++index) advance(20);
+  size_t budgetBytes = 0;
+  for (size_t index = budgetStart; index < tx->notifications.size(); ++index)
+    budgetBytes += tx->notifications[index].size();
+  assert(budgetBytes > 400 && budgetBytes <= 800);
+  bleDiagnostics.setByteRate(1500);
+  drain(tx);
+  AppLog.println("congestion backoff marker");
+  tx->failNotify = true;
+  advance(20);
+  const auto retryAttempts = tx->attempts;
+  advance(20);
+  assert(tx->attempts == retryAttempts);
+  advance(20);
+  assert(tx->attempts == retryAttempts + 1);
+  advance(20);
+  assert(tx->attempts == retryAttempts + 1);
+  tx->failNotify = false;
+  assert(drain(tx).find("congestion backoff marker") != std::string::npos);
   bleDiagnostics.suspend();
   assert(!NimBLEDevice::advertising.active);
   // Failed stack teardown: reuse existing GATT service rather than duplicate it.
@@ -205,5 +463,6 @@ int main() {
   assert(drain(tx).find("phone disconnected") != std::string::npos);
   bleDiagnostics.suspend();
   NimBLEDevice::destroy();
-  std::cout << "PASS BLE diagnostics: bounded replay, raw HEX, MTU23/185, pacing, retry, commands, gaps, reconnect, stack restart\n";
+  controlTests();
+  std::cout << "PASS BLE diagnostics: bounded replay, raw HEX, MTU23/185, byte budget, congestion backoff, async commands, stale command discard, gaps, reconnect, stack restart\n";
 }

@@ -82,7 +82,6 @@
 #define BLE_OP_TASK_STACK    8192     // 工作线程栈（GATT 发现 + 日志缓冲）
 #define BLE_OP_SCAN_DURATION_MS   6000 // 手动扫描时长
 #define BLE_OP_POSTURE_SCAN_MS    1500 // 姿态传感器扫描时长
-#define BLE_OP_MIN_GAP_MS    1500     // 两次 BLE 操作之间的最小间隔，给协议栈喘口气
 #define BLE_UI_TOUCH_GUARD_MS 450     // BLE 相关按钮的触控缓冲（忽略连击/误触）
 //   GPS VCC -> 3V3（若模块带 LDO 可 5V，先确认模块耐压）
 //   GPS GND -> GND

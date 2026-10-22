@@ -2,8 +2,41 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#ifdef ARDUINO_ARCH_ESP32
+#include <freertos/task.h>
+#endif
 
 RuntimeLog AppLog;
+
+bool RuntimeLog::begin() {
+  if (outputStarted_) return true;
+#ifdef ARDUINO_ARCH_ESP32
+  if (xTaskCreate([](void *context) {
+        auto *log = static_cast<RuntimeLog *>(context);
+        for (;;) {
+          log->flushSerial();
+          vTaskDelay(pdMS_TO_TICKS(10));
+        }
+      }, "logOutput", 3072, this, 1, nullptr) != pdPASS) return false;
+#endif
+  outputStarted_ = true;
+  return true;
+}
+
+void RuntimeLog::flushSerial() {
+  const int available = Serial.availableForWrite();
+  if (available <= 0) return;
+  uint8_t text[128];
+  const size_t capacity = size_t(available) < sizeof(text) ? size_t(available) : sizeof(text);
+  uint64_t next = serialCursor_;
+  uint64_t lost = 0;
+  portENTER_CRITICAL(&mux_);
+  const size_t length = serialBuffer_.read(next, text, capacity, lost);
+  portEXIT_CRITICAL(&mux_);
+  serialCursor_ += lost;
+  serialLostBytes_.fetch_add(uint32_t(lost));
+  if (length) serialCursor_ += Serial.write(text, length);
+}
 
 size_t RuntimeLog::printf(const char *format, ...) {
   char text[1024];
@@ -23,7 +56,9 @@ size_t RuntimeLog::printf(const char *format, ...) {
     truncated_.fetch_add(1);
   }
   record(text, length);
-  Serial.write(reinterpret_cast<const uint8_t *>(text), length);
+  portENTER_CRITICAL(&mux_);
+  serialBuffer_.append(reinterpret_cast<const uint8_t *>(text), length);
+  portEXIT_CRITICAL(&mux_);
   return length;
 }
 

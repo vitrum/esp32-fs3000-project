@@ -2,8 +2,12 @@
 #include "config.h"
 #include "runtime_log.h"
 #include <NimBLEDevice.h>
+#include "ble_inbox.h"
+#include "ble_scan.h"
 
 namespace {
+BleInbox<12> powerInbox;
+uint32_t processedGeneration = 0;
 const NimBLEUUID kSvcCP("0x1818");
 const NimBLEUUID kSvcFTMS("0x1826");
 const NimBLEUUID kSvcCSC("0x1816");
@@ -50,18 +54,18 @@ const char *bleAddrTypeName(uint8_t type, char *buffer, size_t capacity) {
 }
 }
 
-bool BlePowerMeter::s_connected = false;
+std::atomic<bool> BlePowerMeter::s_connected{false};
 bool BlePowerMeter::s_hasCyclingPower = false;
 bool BlePowerMeter::s_hasFitnessMachine = false;
 bool BlePowerMeter::s_hasSpeedCadence = false;
-float BlePowerMeter::s_power = 0;
-float BlePowerMeter::s_cadence = 0;
-float BlePowerMeter::s_speed = 0;
+std::atomic<float> BlePowerMeter::s_power{0};
+std::atomic<float> BlePowerMeter::s_cadence{0};
+std::atomic<float> BlePowerMeter::s_speed{0};
 float BlePowerMeter::s_wheelCirc = BLE_WHEEL_CIRC_M;
 uint32_t BlePowerMeter::s_notificationCount = 0;
 uint32_t BlePowerMeter::s_fitnessMachineNotificationCount = 0;
 uint16_t BlePowerMeter::s_lastFitnessMachineFlags = 0;
-uint32_t BlePowerMeter::s_disconnectCount = 0;
+std::atomic<uint32_t> BlePowerMeter::s_disconnectCount{0};
 NimBLEClient *BlePowerMeter::s_client = nullptr;
 char BlePowerMeter::s_connectedAddress[18] = {};
 char BlePowerMeter::s_lastError[320] = {};
@@ -70,14 +74,7 @@ class BlePowerClientCallbacks : public NimBLEClientCallbacks {
   void onDisconnect(NimBLEClient *, int reason) override {
     AppLog.printf("[BLE] power link disconnected reason=%d\n", reason);
     BlePowerMeter::s_connected = false;
-    BlePowerMeter::s_connectedAddress[0] = '\0';
-    BlePowerMeter::s_hasCyclingPower = false;
-    BlePowerMeter::s_hasFitnessMachine = false;
-    BlePowerMeter::s_hasSpeedCadence = false;
-    BlePowerMeter::s_power = 0;
-    BlePowerMeter::s_cadence = 0;
-    BlePowerMeter::s_speed = 0;
-    BlePowerMeter::s_lastFitnessMachineFlags = 0;
+    powerInbox.reset();
     BlePowerMeter::s_disconnectCount++;
   }
 };
@@ -91,6 +88,41 @@ void BlePowerMeter::setError(const char *message) {
 
 void BlePowerMeter::cpmNotify(NimBLERemoteCharacteristic *, uint8_t *data,
                               size_t length, bool) {
+  powerInbox.push(0, data, length);
+}
+
+void BlePowerMeter::indoorBikeNotify(NimBLERemoteCharacteristic *, uint8_t *data,
+                                     size_t length, bool) {
+  powerInbox.push(1, data, length);
+}
+
+void BlePowerMeter::speedCadenceNotify(NimBLERemoteCharacteristic *, uint8_t *data,
+                                       size_t length, bool) {
+  powerInbox.push(2, data, length);
+}
+
+uint32_t BlePowerMeter::droppedPackets() const { return powerInbox.dropped(); }
+
+void BlePowerMeter::processData() {
+  const uint32_t generation = powerInbox.generation();
+  if (processedGeneration != generation) {
+    processedGeneration = generation;
+    s_hasWheel = s_hasCrank = false;
+    s_power = s_cadence = s_speed = 0;
+    s_lastFitnessMachineFlags = 0;
+    s_notificationCount = 0;
+    s_fitnessMachineNotificationCount = 0;
+  }
+  BleInbox<12>::Packet packet;
+  for (size_t processed = 0; processed < 12 && powerInbox.pop(packet); ++processed) {
+    if (packet.generation != processedGeneration) continue;
+    if (packet.kind == 0) parseCyclingPower(packet.data, packet.length);
+    else if (packet.kind == 1) parseIndoorBike(packet.data, packet.length);
+    else if (packet.kind == 2) parseSpeedCadence(packet.data, packet.length);
+  }
+}
+
+void BlePowerMeter::parseCyclingPower(uint8_t *data, size_t length) {
   AppLog.packet("CPS/2A63", data, length);
   if (!data || length < 4) return;
 
@@ -138,8 +170,7 @@ void BlePowerMeter::cpmNotify(NimBLERemoteCharacteristic *, uint8_t *data,
   }
 }
 
-void BlePowerMeter::indoorBikeNotify(NimBLERemoteCharacteristic *, uint8_t *data,
-                                     size_t length, bool) {
+void BlePowerMeter::parseIndoorBike(uint8_t *data, size_t length) {
   AppLog.packet("FTMS/2AD2", data, length);
   if (!data || length < 2) return;
 
@@ -210,8 +241,7 @@ void BlePowerMeter::indoorBikeNotify(NimBLERemoteCharacteristic *, uint8_t *data
   if (hasPower) s_notificationCount++;
 }
 
-void BlePowerMeter::speedCadenceNotify(NimBLERemoteCharacteristic *, uint8_t *data,
-                                       size_t length, bool) {
+void BlePowerMeter::parseSpeedCadence(uint8_t *data, size_t length) {
   AppLog.packet("CSC/2A5B", data, length);
   if (!data || length < 1) return;
 
@@ -266,7 +296,8 @@ void BlePowerMeter::clearScanResults() {
 }
 
 bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
-                                size_t &count, uint32_t durationMs) {
+                                size_t &count, uint32_t durationMs,
+                                const BleCancellation *cancel) {
   count = 0;
   if (!devices || capacity == 0) {
     setError("BLE scan failed: invalid output buffer");
@@ -282,12 +313,11 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     setError("BLE scan failed: NimBLE scan is unavailable");
     return false;
   }
-  scan->clearResults();
-  scan->setActiveScan(true);
-  scan->setInterval(100);
-  scan->setWindow(30);
-  NimBLEScanResults results =
-      scan->getResults(durationMs ? durationMs : 6000, false);
+  if (!bleScanner.run(durationMs ? durationMs : 6000, true, cancel)) {
+    setError(bleScanner.state() == BleScanState::Cancelled ? "Scan cancelled" : bleScanner.error());
+    return false;
+  }
+  NimBLEScanResults results = scan->getResults();
 
   // 注意：NimBLEScanResults 持有的是扫描缓存里的指针。这里先把需要的字段
   // 全部拷进本地结构，再与上一次的「用户选择列表」做去重，最后才
@@ -385,11 +415,7 @@ void BlePowerMeter::disconnect() {
   s_hasCyclingPower = false;
   s_hasFitnessMachine = false;
   s_hasSpeedCadence = false;
-  s_hasWheel = false;
-  s_hasCrank = false;
-  s_power = 0;
-  s_cadence = 0;
-  s_speed = 0;
+  powerInbox.reset();
 }
 
 void BlePowerMeter::cancelCurrentOperation() {
@@ -633,14 +659,6 @@ bool BlePowerMeter::connectDevice(const char *address, uint8_t addressType) {
 
   s_connected = true;
   snprintf(s_connectedAddress, sizeof(s_connectedAddress), "%s", address);
-  s_power = 0;
-  s_cadence = 0;
-  s_speed = 0;
-  s_hasWheel = false;
-  s_hasCrank = false;
-  s_notificationCount = 0;
-  s_fitnessMachineNotificationCount = 0;
-  s_lastFitnessMachineFlags = 0;
   s_lastError[0] = '\0';
   AppLog.printf("[BLE] connected: %s (%s), profiles:%s%s%s%s\n",
                 advertisedName[0] ? advertisedName : "unnamed", address,

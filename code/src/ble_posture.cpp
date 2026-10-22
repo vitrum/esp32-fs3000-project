@@ -2,17 +2,32 @@
 #include "config.h"
 #include "runtime_log.h"
 #include <NimBLEDevice.h>
+#include "ble_inbox.h"
+#include "ble_scan.h"
+
+namespace {
+BleInbox<8> postureInbox;
+uint32_t processedPostureGeneration = 0;
+}
 
 // ---- WitMotion WT9011DCL BLE 协议 ----
 static const NimBLEUUID kSvcWit ("0xFFE0");
 static const NimBLEUUID kChrData("0xFFE1");
 
-bool   BlePosture::s_connected = false;
+std::atomic<bool> BlePosture::s_connected{false};
 float  BlePosture::s_pitch = 0;
 uint32_t BlePosture::s_notificationCount = 0;
 NimBLEClient *BlePosture::s_client = nullptr;
 char   BlePosture::s_lastError[160] = {};
-volatile bool BlePosture::s_cancelRequested = false;
+
+class BlePostureClientCallbacks : public NimBLEClientCallbacks {
+  void onDisconnect(NimBLEClient *, int) override {
+    BlePosture::s_connected = false;
+    postureInbox.reset();
+  }
+};
+
+static BlePostureClientCallbacks postureCallbacks;
 
 // ---------------------------------------------------------------------------
 // 0x55 协议帧解析（角度包 0x53）：
@@ -21,8 +36,27 @@ volatile bool BlePosture::s_cancelRequested = false;
 // ---------------------------------------------------------------------------
 void BlePosture::witNotify(NimBLERemoteCharacteristic *chr, uint8_t *d, size_t n,
                            bool isNotify) {
-  AppLog.packet("POSTURE/FFE1", d, n);
   (void)chr; (void)isNotify;
+  postureInbox.push(0, d, n);
+}
+
+uint32_t BlePosture::droppedPackets() const { return postureInbox.dropped(); }
+
+void BlePosture::processData() {
+  const uint32_t generation = postureInbox.generation();
+  if (processedPostureGeneration != generation) {
+    processedPostureGeneration = generation;
+    s_pitch = 0;
+    s_notificationCount = 0;
+  }
+  BleInbox<8>::Packet packet;
+  for (size_t processed = 0; processed < 8 && postureInbox.pop(packet); ++processed) {
+    if (packet.generation == postureInbox.generation()) parsePacket(packet.data, packet.length);
+  }
+}
+
+void BlePosture::parsePacket(uint8_t *d, size_t n) {
+  AppLog.packet("POSTURE/FFE1", d, n);
   if (n < 11) return;
 
   for (size_t i = 0; i + 11 <= n; i++) {
@@ -52,18 +86,17 @@ void BlePosture::disconnect() {
     s_client = nullptr;
   }
   s_connected = false;
+  postureInbox.reset();
 }
 
 void BlePosture::cancelConnect() {
-  s_cancelRequested = true;
   if (s_client && !s_client->isConnected()) s_client->cancelConnect();
 }
 
-bool BlePosture::tryConnect(uint32_t scanMs, const volatile bool *cancelFlag) {
+bool BlePosture::tryConnect(uint32_t scanMs, const BleCancellation *cancelFlag) {
   if (s_connected) return true;
 
   s_lastError[0] = '\0';
-  s_cancelRequested = false;
 
   if (!NimBLEDevice::isInitialized()) {
     snprintf(s_lastError, sizeof(s_lastError), "BLE stack is not initialized");
@@ -75,12 +108,12 @@ bool BlePosture::tryConnect(uint32_t scanMs, const volatile bool *cancelFlag) {
     snprintf(s_lastError, sizeof(s_lastError), "BLE scan is unavailable");
     return false;
   }
-  scan->clearResults();
-  scan->setActiveScan(true);
-  scan->setInterval(100);
-  scan->setWindow(30);
-  NimBLEScanResults results =
-      scan->getResults(scanMs ? scanMs : 1500, false);
+  if (!bleScanner.run(scanMs ? scanMs : 1500, false, cancelFlag)) {
+    snprintf(s_lastError, sizeof(s_lastError), "%s",
+             bleScanner.state() == BleScanState::Cancelled ? "cancelled" : bleScanner.error());
+    return false;
+  }
+  NimBLEScanResults results = scan->getResults();
 
   // 先把地址/名称拷出来再 clearResults()：扫描结果对象持有的是扫描缓存里的
   // 指针，一旦 clearResults() 调用（或缓存被回收），原来取到的
@@ -88,8 +121,10 @@ bool BlePosture::tryConnect(uint32_t scanMs, const volatile bool *cancelFlag) {
   // 解引用已释放内存而崩溃。
   char address[18] = {};
   char name[40] = {};
+  uint8_t addressType = BLE_ADDR_PUBLIC;
   for (int i = 0; i < results.getCount(); i++) {
     const NimBLEAdvertisedDevice *ad = results.getDevice(i);
+    if (!ad || !ad->isConnectable()) continue;
 
     // 过滤：广播服务 0xFFE0 或设备名以 BLE_POSTURE_NAME_PREFIX 开头
     const std::string candidateName = ad->getName();
@@ -101,6 +136,7 @@ bool BlePosture::tryConnect(uint32_t scanMs, const volatile bool *cancelFlag) {
     snprintf(address, sizeof(address), "%s",
              ad->getAddress().toString().c_str());
     snprintf(name, sizeof(name), "%s", candidateName.c_str());
+    addressType = ad->getAddress().getType();
     break;
   }
   scan->clearResults();
@@ -113,7 +149,7 @@ bool BlePosture::tryConnect(uint32_t scanMs, const volatile bool *cancelFlag) {
   AppLog.printf("[BLE-POSTURE] candidate %s (%s)\n",
                 name[0] ? name : "unnamed", address);
 
-  if (s_cancelRequested || (cancelFlag && *cancelFlag)) {
+  if (cancelFlag && cancelFlag->cancelled()) {
     snprintf(s_lastError, sizeof(s_lastError), "cancelled");
     return false;
   }
@@ -127,10 +163,12 @@ bool BlePosture::tryConnect(uint32_t scanMs, const volatile bool *cancelFlag) {
     return false;
   }
   s_client = cli;
+  cli->setClientCallbacks(&postureCallbacks, false);
+  cli->setConnectTimeout(8000);
 
   // 用地址连接（不依赖已清空的扫描缓存），地址类型由 NimBLE 自动解析。
   // 工作线程串行执行，这里阻塞的时间不会与手动扫描/连接重叠。
-  if (!cli->connect(NimBLEAddress(std::string(address), BLE_ADDR_PUBLIC))) {
+  if (!cli->connect(NimBLEAddress(std::string(address), addressType))) {
     const int code = cli->getLastError();
     snprintf(s_lastError, sizeof(s_lastError),
              "connect to %s failed (BLE error %d: %s)", address, code,

@@ -2,6 +2,9 @@
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include <atomic>
+
+class BleCancellation;
 
 // BLE 客户端：维特智能（WitMotion）WT9011DCL-BT50 蓝牙姿态传感器
 //
@@ -21,22 +24,25 @@ public:
   // 扫描并连接姿态传感器。scanMs 由调用方（BLE 工作线程）指定。
   // cancelFlag 指向工作线程的取消标志：为 true 时尽快放弃本次扫描/连接。
   bool tryConnect(uint32_t scanMs = 1500,
-                  const volatile bool *cancelFlag = nullptr);
+                  const BleCancellation *cancelFlag = nullptr);
+  void processData();
+  uint32_t droppedPackets() const;
   void disconnect();               // 断开并释放客户端
   void cancelConnect();            // 取消未完成的连接/扫描
-  void resetAfterStackShutdown() { s_connected = false; s_client = nullptr; }
+  void resetAfterStackShutdown() { disconnect(); }
   bool connected() const { return s_connected; }
   const char *lastError() const { return s_lastError; }
-  float pitchDeg() const { return s_pitch; }   // 俯仰角（度）
+  float pitchDeg() const { return s_connected ? s_pitch : 0; }   // 俯仰角（度）
   uint32_t notificationCount() const { return s_notificationCount; }
 
 private:
   static void witNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, bool isNotify);
-  static bool   s_connected;
+  friend class BlePostureClientCallbacks;
+  static void parsePacket(uint8_t *data, size_t length);
+  static std::atomic<bool> s_connected;
   static float  s_pitch;
   static uint32_t s_notificationCount;
   static NimBLEClient *s_client;
   static char   s_lastError[160];
-  static volatile bool s_cancelRequested;
 };
 

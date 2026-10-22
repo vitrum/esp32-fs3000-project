@@ -1,0 +1,6 @@
+pytest==8.3.5
+pytest-embedded==1.14.0
+pytest-embedded-idf==1.14.0
+pytest-embedded-serial==1.14.0
+pytest-embedded-serial-esp==1.14.0
+pytest-embedded-qemu==1.14.0

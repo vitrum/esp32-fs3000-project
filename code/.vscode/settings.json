@@ -11,6 +11,10 @@
     "/^~/\\.platformio/packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-size -A \\.pio/build/esp32s3/firmware\\.elf \\| grep -E '\\^\\\\\\.dram\\|\\^\\\\\\.bss\\|\\^\\\\\\.data\\|\\^\\\\\\.noinit\\|\\^\\\\\\.iram'$/": {
       "approve": true,
       "matchCommandLine": true
+    },
+    "/^c\\+\\+ -std=c\\+\\+17 -pthread -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Itest/host/mocks -Isrc test/host/ble_diagnostics_test\\.cpp src/runtime_log\\.cpp src/ble_diagnostics\\.cpp src/ble_scan\\.cpp src/ble_power\\.cpp src/ble_posture\\.cpp src/ble_manager\\.cpp -o /tmp/aeroprobe-ble-sanitized && /tmp/aeroprobe-ble-sanitized$/": {
+      "approve": true,
+      "matchCommandLine": true
     }
   }
 }

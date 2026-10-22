@@ -4,6 +4,7 @@
 > 给出 SD 卡选型建议、CSV 日志改进方案，以及 FIT 文件导出方案。
 
 > **相关文档**
+> - [BLE runtime architecture and verification](./ble-runtime.md)
 > - [手机端 APP 与「ESP32 记录 × 码表 FIT」时间对齐合并方案](./app-merge.md)
 >   —— BLE 对时 + 功率互相关，React Native APP。
 > - [Wi-Fi 网页实时数据服务方案](./wifi-web.md)

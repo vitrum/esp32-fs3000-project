@@ -22,6 +22,7 @@
 #include "wind_probe.h"
 #include "ble_power.h"
 #include "ble_posture.h"
+#include "ble_manager.h"
 #include "bme280_env.h"
 #include "csv_logger.h"
 #include "display_lcd.h"
@@ -35,6 +36,7 @@
 FS3000       windSensor;
 BlePowerMeter powerMeter;
 BlePosture   posture;
+BleManager   bleManager(powerMeter, posture);
 EnvSensor    env;
 CsvLogger    logger;
 DisplayLcd   lcd;
@@ -75,179 +77,32 @@ static bool     wirelessSuspendedForAudio = false;
 static int      powerMode = 0;      // 0=AUTO 1=BLE 3=VIRTUAL; 2 is reserved.
 static WindVector wv;            // 最近一次探针读数（供显示）
 
-// ============================================================================
-// BLE 串行工作线程
-// ----------------------------------------------------------------------------
-// 之前的实现每来一个请求就 xTaskCreate 一个任务，两个任务（手动扫描/连接、
-// 姿态发现）会同时操作 NimBLE 的全局扫描器，还会争写共享的结果结构，导致
-// 「状态卡在 Running / 结果被覆盖 / 姿态发现饿死 / 界面莫名刷新」。
-//
-// 现在改为：一个常驻工作线程 + 一条命令队列。主循环（生产者）只负责入队和
-// 取结果，工作线程（唯一消费者）独占所有 NimBLE 调用，天然串行。
-//   主循环 --xQueueSend--> [cmd queue] --> bleWorkerTask --> [result queue] --> 主循环
-// 取消通过一个 volatile 标志传递，工作线程在每次长操作前后检查。
-// ============================================================================
-enum class BleOpKind : uint8_t { Scan, Connect, Posture };
-
-struct BleCommand {
-  BleOpKind kind = BleOpKind::Scan;
-  char address[18] = {};
-  // 扫描阶段记录的真实地址类型，连接时原样透传给 connectDevice()。
-  uint8_t addressType = 0xFF;   // 0xFF = 未知，按 PUBLIC 处理
-};
-
-struct BleOutcome {
-  BleOpKind kind = BleOpKind::Scan;
-  bool success = false;
-  bool cancelled = false;
-  size_t deviceCount = 0;
-  BlePowerDevice devices[4] = {};
-  char error[320] = {};
-};
-
-static QueueHandle_t bleCmdQueue = nullptr;
-static QueueHandle_t bleResultQueue = nullptr;
-static TaskHandle_t  bleWorkerHandle = nullptr;
-static size_t pendingBleOperations = 0;
-static volatile bool bleOpBusy = false;         // 工作线程正在执行命令
-static volatile bool bleOpCancelRequested = false;
-
-static void bleWorkerTask(void *) {
-  for (;;) {
-    BleCommand cmd;
-    if (xQueueReceive(bleCmdQueue, &cmd, portMAX_DELAY) != pdTRUE) continue;
-
-    bleOpCancelRequested = false;
-    bleOpBusy = true;
-
-    BleOutcome out;
-    out.kind = cmd.kind;
-
-    // 注意：不要在这里清扫描缓存。
-    //   * scanDevices() 内部第一步就是 clearResults()，Scan 自己会重置；
-    //   * Connect 只用扫描阶段拿到的地址字符串（副本），connect() 走
-    //     NimBLEAddress，不读扫描缓存；
-    //   * 在 Scan 与 Connect 之间插一次 clearResults() 正是上一版
-    //     "device is no longer in scan results" 的根因。
-    switch (cmd.kind) {
-      case BleOpKind::Scan:
-        out.success = powerMeter.scanDevices(out.devices, 4, out.deviceCount,
-                                             BLE_OP_SCAN_DURATION_MS);
-        if (!out.success)
-          snprintf(out.error, sizeof(out.error), "%s", powerMeter.lastError());
-        break;
-
-      case BleOpKind::Connect:
-        out.success = powerMeter.connectDevice(cmd.address, cmd.addressType);
-        if (!out.success)
-          snprintf(out.error, sizeof(out.error), "%s", powerMeter.lastError());
-        break;
-
-      case BleOpKind::Posture:
-        out.success = posture.tryConnect(BLE_OP_POSTURE_SCAN_MS,
-                                         &bleOpCancelRequested);
-        if (!out.success)
-          snprintf(out.error, sizeof(out.error), "%s", posture.lastError());
-        break;
-    }
-
-    out.cancelled = bleOpCancelRequested;
-    if (out.cancelled && cmd.kind == BleOpKind::Connect) powerMeter.disconnect();
-
-    bleOpBusy = false;
-    xQueueSend(bleResultQueue, &out, portMAX_DELAY);
-
-    // 两次操作之间留一点空档，让协议栈处理断连/缓存回收等收尾工作。
-    vTaskDelay(pdMS_TO_TICKS(BLE_OP_MIN_GAP_MS));
-  }
-}
-
 static bool beginBleWorker() {
-  if (bleWorkerHandle) return true;
-  bleCmdQueue = xQueueCreate(BLE_OP_QUEUE_LEN, sizeof(BleCommand));
-  bleResultQueue = xQueueCreate(1, sizeof(BleOutcome));
-  if (!bleCmdQueue || !bleResultQueue) {
-    AppLog.println("[BLE] could not create operation queues");
-    return false;
-  }
-  if (xTaskCreatePinnedToCore(bleWorkerTask, "bleWorker", BLE_OP_TASK_STACK,
-                              nullptr, 2, &bleWorkerHandle, 0) != pdPASS) {
-    AppLog.println("[BLE] could not create BLE worker task");
-    bleWorkerHandle = nullptr;
-    return false;
-  }
-  AppLog.println("[BLE] serial worker started");
-  return true;
+  return bleManager.begin();
 }
 
-// 工作线程退出/重启（音频占用 BLE 协议栈时需要释放全部内存）。
-static void stopBleWorker() {
-  if (!bleWorkerHandle) return;
-  vTaskDelete(bleWorkerHandle);
-  bleWorkerHandle = nullptr;
-  if (bleCmdQueue) { vQueueDelete(bleCmdQueue); bleCmdQueue = nullptr; }
-  if (bleResultQueue) { vQueueDelete(bleResultQueue); bleResultQueue = nullptr; }
-  pendingBleOperations = 0;
-  bleOpBusy = false;
-  bleOpCancelRequested = false;
-}
-
-// 入队一条命令。队列满说明上一个操作还没结束，直接返回 false 由调用者提示。
 static bool enqueueBleCommand(BleOpKind kind, const char *address = nullptr,
                               uint8_t addressType = 0xFF) {
-  if (!bleCmdQueue) return false;
-  BleCommand cmd;
-  cmd.kind = kind;
-  cmd.addressType = addressType;
-  if (address)
-    snprintf(cmd.address, sizeof(cmd.address), "%s", address);
-  if (pendingBleOperations == 0 && !bleDiagnostics.setSensorBusy(true))
-    return false;
-  if (xQueueSend(bleCmdQueue, &cmd, 0) != pdTRUE) {
-    if (pendingBleOperations == 0) bleDiagnostics.setSensorBusy(false);
-    return false;
-  }
-  ++pendingBleOperations;
-  return true;
+  return bleManager.enqueue(kind, address, addressType);
 }
 
 static bool takeBleOutcome(BleOutcome &out) {
-  if (!bleResultQueue) return false;
-  if (xQueueReceive(bleResultQueue, &out, 0) != pdTRUE) return false;
-  if (pendingBleOperations > 0) --pendingBleOperations;
-  if (pendingBleOperations == 0) bleDiagnostics.setSensorBusy(false);
-  return true;
+  return bleManager.takeOutcome(out);
 }
 
 static void requestBleCancel() {
-  if (!bleOpBusy) return;
-  bleOpCancelRequested = true;
-  powerMeter.cancelCurrentOperation();
-  posture.cancelConnect();
+  bleManager.cancel();
 }
 
 #if AUDIO_ENABLE
 static bool suspendWirelessForAudio() {
   if (wirelessSuspendedForAudio) return true;
-  if (bleOpBusy) {
+  if (bleManager.busy()) {
     AppLog.println("[AUDIO] wait for BLE operation to finish before playback");
     return false;
   }
-  // 先释放工作线程和队列，再释放协议栈；否则线程会在 NimBLE 全局对象被
-  // deinit 后继续轮询命令并调用已失效的 API。
-  stopBleWorker();
-  AppLog.println("[BLE-LOG] suspending phone service for audio");
-  bleDiagnostics.suspend();
-  powerMeter.disconnect();
-  posture.resetAfterStackShutdown();
-  if (NimBLEDevice::isInitialized() && !NimBLEDevice::deinit(true)) {
+  if (!bleManager.suspend()) {
     AppLog.println("[AUDIO] could not release BLE stack for playback");
-    powerMeter.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
-    posture.begin(BLE_DEVICE_NAME);
-    if (!bleDiagnostics.begin())
-      AppLog.println("[BLE-LOG] service recovery failed after audio release failure");
-    if (!beginBleWorker())
-      AppLog.println("[BLE] worker could not be restarted after audio failure");
     return false;
   }
   powerConnected = false;
@@ -262,13 +117,11 @@ static bool suspendWirelessForAudio() {
 static void resumeWirelessAfterAudio() {
   if (!audio.releasePlayback()) return;
   if (!wirelessSuspendedForAudio) return;
-  powerMeter.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
-  posture.begin(BLE_DEVICE_NAME);
-  if (!bleDiagnostics.begin())
-    AppLog.println("[BLE-LOG] service could not resume after audio");
-  wirelessSuspendedForAudio = false;
-  if (!beginBleWorker())
+  if (!beginBleWorker()) {
     AppLog.println("[BLE] worker could not be restarted after audio");
+    return;
+  }
+  wirelessSuspendedForAudio = false;
   // 播放期间姿态重连被挂起，恢复后立刻补一次，不必再等 30s 周期。
   lastBlePostureAttemptMs = millis();
   postAudioBleCatchUpNeeded = true;
@@ -296,6 +149,7 @@ void setup() {
   powerKey.begin();
 
   Serial.begin(115200);
+  if (!AppLog.begin()) Serial.println("[LOG] output task unavailable");
   delay(200);
   AppLog.println("\n== Aero Probe (single FS3000 + touch UI + BLE PM) ==");
   AppLog.println("[PM] Use SELECT POWER METER to choose BLE, virtual, or automatic input.");
@@ -339,10 +193,6 @@ void setup() {
   audio.playStartupChime();          // 开机提示音（两短一长）
 
   // BLE 设备（NimBLE 单例，两个客户端共用；init 幂等）
-  powerMeter.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
-  posture.begin(BLE_DEVICE_NAME);
-  if (!bleDiagnostics.begin())
-    AppLog.println("[BLE-LOG] phone diagnostic service unavailable");
   // 单个串行工作线程负责所有扫描/连接；主循环只投递命令与取结果。
   if (!beginBleWorker())
     AppLog.println("[BLE] serial worker unavailable; BLE pairing disabled");
@@ -351,7 +201,7 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
-  bleDiagnostics.tick();
+  bleManager.tick();
 
   // 电源开关：长按 5 秒关机（非阻塞）
   powerKey.tick();
@@ -690,13 +540,13 @@ void loop() {
   // 注意：音频整体禁用（AUDIO_ENABLE=0）时 wirelessSuspendedForAudio 永远为
   // false，BLE 不受任何音频状态影响，这里再显式兜一层，杜绝误报。
 #if AUDIO_ENABLE
-  const bool bleAvailable = !wirelessSuspendedForAudio && bleWorkerHandle;
+  const bool bleAvailable = !wirelessSuspendedForAudio && bleManager.available();
 #else
-  const bool bleAvailable = bleWorkerHandle != nullptr;
+  const bool bleAvailable = bleManager.available();
 #endif
 
   if (lcd.takeBleCancelRequest()) {
-    if (bleOpBusy) {
+    if (bleManager.busy()) {
       requestBleCancel();
       AppLog.println("[BLE] cancellation requested; waiting for the current operation");
     } else {
@@ -814,15 +664,15 @@ void loop() {
     lastBlePostureNotification = blePostureNotifications;
     AppLog.printf("[BLE-POSTURE] pitch=%+.2f deg\n", posture.pitchDeg());
   }
-  if (!wirelessSuspendedForAudio && bleWorkerHandle && !manualPairingActive &&
+  if (!wirelessSuspendedForAudio && bleManager.available() && !manualPairingActive &&
       !postureConnected) {
     const uint32_t elapsed = now - lastBlePostureAttemptMs;
     // 音频结束后补一次；其余情况按 BLE_POSTURE_RECONNECT_MS 限频。
     const bool due = postAudioBleCatchUpNeeded
-                         ? !bleOpBusy
+                         ? !bleManager.busy()
                          : elapsed >= BLE_POSTURE_RECONNECT_MS;
     // 队列满说明还有手动操作在排队/执行，姿态发现让位，下一轮再看。
-    if (due && !bleOpBusy && uxQueueMessagesWaiting(bleCmdQueue) == 0) {
+    if (due && !bleManager.busy()) {
       if (enqueueBleCommand(BleOpKind::Posture)) {
         lastBlePostureAttemptMs = now;
         postAudioBleCatchUpNeeded = false;

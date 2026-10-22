@@ -34,7 +34,12 @@ void CsvLogger::setLocalDate(const char *path) {
   if (_sessionFileCount == kSessionFiles) { _sessionOverflow = true; return; }
   snprintf(_sessionFiles[_sessionFileCount++], sizeof(_sessionFiles[0]), "%s", path);
 }
-void CsvLogger::setUtcReference(uint32_t utc, uint32_t ms) { _referenceUtc = utc; _referenceMs = ms; }
+void CsvLogger::setUtcReference(uint32_t utc, uint32_t ms) {
+  _referenceUtc = utc; _referenceMs = ms; _referenceFromGps = true;
+}
+void CsvLogger::useFallbackUtcReference(uint32_t utc, uint32_t ms) {
+  if (!_referenceFromGps) { _referenceUtc = utc; _referenceMs = ms; }
+}
 bool CsvLogger::utcReference(uint32_t &utc, uint32_t &ms) const {
   utc = _referenceUtc; ms = _referenceMs; return utc != 0;
 }
@@ -76,7 +81,9 @@ int main() {
   CsvLogger logger;
   init(logger, "/ride.csv");
   writeCsv("/ride.csv", "1000,250,90,10,11,0,-15,1.225,1\n2000,260,91,11,12,0,-16,1.225,1\n");
-  assert(!fitExport.start(logger,false)); result(false);
+  cardReady = false;
+  assert(!fitExport.start(logger,false));
+  assert(result(false).find("SD card") != std::string::npos);
   assert(logger.ok() && stops == 0);
   cardReady = false;
   assert(!fitExport.start(logger,true)); result(false);
