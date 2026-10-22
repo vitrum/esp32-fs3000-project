@@ -3,3 +3,11 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+/build/
+/.pytest_cache/
+__pycache__/
+/test/embedded/build/
+/test/embedded/sdkconfig
+/test/embedded/sdkconfig.old
+/test/results/
+/.venv-test/

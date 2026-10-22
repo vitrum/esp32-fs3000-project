@@ -15,6 +15,10 @@
     "/^c\\+\\+ -std=c\\+\\+17 -pthread -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Itest/host/mocks -Isrc test/host/ble_diagnostics_test\\.cpp src/runtime_log\\.cpp src/ble_diagnostics\\.cpp src/ble_scan\\.cpp src/ble_power\\.cpp src/ble_posture\\.cpp src/ble_manager\\.cpp -o /tmp/aeroprobe-ble-sanitized && /tmp/aeroprobe-ble-sanitized$/": {
       "approve": true,
       "matchCommandLine": true
+    },
+    "/^docker run --rm -v \"\\$PWD:/project\" -w /project espressif/idf:v4\\.4\\.6 idf\\.py -C /project/test/embedded -B /project/test/embedded/build/esp32s3 -DIDF_TARGET=esp32s3 -DSDKCONFIG=/project/test/embedded/build/esp32s3/sdkconfig build$/": {
+      "approve": true,
+      "matchCommandLine": true
     }
   }
 }
