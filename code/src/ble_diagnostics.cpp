@@ -154,6 +154,7 @@ bool BleDiagnostics::begin() {
 
 void BleDiagnostics::suspend() {
   running_ = false;
+  sensorBusy_ = false;
   if (server_ && NimBLEDevice::isInitialized()) {
     if (!server_->stopAdvertising()) AppLog.println("[BLE-LOG] could not stop advertising");
     const uint16_t peer = peer_.load();
@@ -170,8 +171,22 @@ void BleDiagnostics::suspend() {
   tx_ = nullptr;
 }
 
+bool BleDiagnostics::setSensorBusy(bool busy) {
+  if (sensorBusy_ == busy) return true;
+  if (busy && running_ && NimBLEDevice::isInitialized()) {
+    auto *advertising = NimBLEDevice::getAdvertising();
+    if (advertising->isAdvertising() && !server_->stopAdvertising()) {
+      AppLog.println("[BLE-LOG] could not pause advertising for sensor operation");
+      return false;
+    }
+  }
+  sensorBusy_ = busy;
+  if (!busy) lastAdvertiseMs_ = millis() - 3000;
+  return true;
+}
+
 void BleDiagnostics::tick() {
-  if (!running_) return;
+  if (!running_ || sensorBusy_) return;
   const uint32_t now = millis();
   if (peer_.load() == UINT16_MAX) {
     pendingLength_ = 0;

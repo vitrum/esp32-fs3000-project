@@ -108,6 +108,7 @@ struct BleOutcome {
 static QueueHandle_t bleCmdQueue = nullptr;
 static QueueHandle_t bleResultQueue = nullptr;
 static TaskHandle_t  bleWorkerHandle = nullptr;
+static size_t pendingBleOperations = 0;
 static volatile bool bleOpBusy = false;         // 工作线程正在执行命令
 static volatile bool bleOpCancelRequested = false;
 
@@ -186,6 +187,7 @@ static void stopBleWorker() {
   bleWorkerHandle = nullptr;
   if (bleCmdQueue) { vQueueDelete(bleCmdQueue); bleCmdQueue = nullptr; }
   if (bleResultQueue) { vQueueDelete(bleResultQueue); bleResultQueue = nullptr; }
+  pendingBleOperations = 0;
   bleOpBusy = false;
   bleOpCancelRequested = false;
 }
@@ -199,13 +201,22 @@ static bool enqueueBleCommand(BleOpKind kind, const char *address = nullptr,
   cmd.addressType = addressType;
   if (address)
     snprintf(cmd.address, sizeof(cmd.address), "%s", address);
-  if (xQueueSend(bleCmdQueue, &cmd, 0) != pdTRUE) return false;
+  if (pendingBleOperations == 0 && !bleDiagnostics.setSensorBusy(true))
+    return false;
+  if (xQueueSend(bleCmdQueue, &cmd, 0) != pdTRUE) {
+    if (pendingBleOperations == 0) bleDiagnostics.setSensorBusy(false);
+    return false;
+  }
+  ++pendingBleOperations;
   return true;
 }
 
 static bool takeBleOutcome(BleOutcome &out) {
   if (!bleResultQueue) return false;
-  return xQueueReceive(bleResultQueue, &out, 0) == pdTRUE;
+  if (xQueueReceive(bleResultQueue, &out, 0) != pdTRUE) return false;
+  if (pendingBleOperations > 0) --pendingBleOperations;
+  if (pendingBleOperations == 0) bleDiagnostics.setSensorBusy(false);
+  return true;
 }
 
 static void requestBleCancel() {

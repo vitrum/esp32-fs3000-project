@@ -90,6 +90,7 @@ public:
   bool isAdvertising() const { return active; }
   bool start() { ++attempts; active = !fail; return active; }
   bool active = false, fail = false;
+  bool failStop = false;
   unsigned attempts = 0;
 };
 class NimBLEServer {
@@ -133,6 +134,7 @@ public:
   static NimBLEAdvertising advertising;
 };
 inline bool NimBLEServer::stopAdvertising() {
+  if (NimBLEDevice::advertising.failStop) return false;
   NimBLEDevice::advertising.active = false;
   return true;
 }

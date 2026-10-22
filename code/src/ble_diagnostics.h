@@ -11,6 +11,7 @@ public:
   bool begin();
   // Must be called on the main loop before destroying the shared NimBLE stack.
   void suspend();
+  bool setSensorBusy(bool busy);
   void tick();
 
 private:
@@ -35,6 +36,7 @@ private:
   uint64_t pendingCursor_ = 0;
   uint8_t pending_[180] = {};
   size_t pendingLength_ = 0;
+  bool sensorBusy_ = false;
   bool running_ = false;
 };
 
