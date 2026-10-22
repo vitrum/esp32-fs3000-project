@@ -1,7 +1,7 @@
 #pragma once
 #include "ESPAsyncWebServer.h"
 
-class AsyncAbstractResponse {
+class AsyncAbstractResponse : public AsyncWebServerResponse {
 public:
   virtual ~AsyncAbstractResponse() = default;
   virtual bool _sourceValid() const = 0;

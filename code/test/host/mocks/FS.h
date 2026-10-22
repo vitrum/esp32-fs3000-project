@@ -1,4 +1,7 @@
 #pragma once
+#ifdef HOST_POSIX_SD
+#include "posix_fs.h"
+#else
 #include "Arduino.h"
 #include <algorithm>
 
@@ -11,6 +14,7 @@ public:
   explicit File(bool valid = false) : _valid(valid) {}
   explicit operator bool() const { return _valid; }
   bool isDirectory() const { return false; }
+  size_t size() const { return sdContents.size(); }
   bool seek(size_t offset) {
     _offset = offset;
     return !sdSeekFails && offset <= sdContents.size();
@@ -33,3 +37,4 @@ public:
   File open(const String &, int) { return File(!sdOpenFails); }
 };
 }
+#endif

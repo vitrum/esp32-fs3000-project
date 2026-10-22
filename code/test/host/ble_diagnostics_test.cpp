@@ -225,6 +225,18 @@ static void controlTests() {
   assert(AppLog.end() > logEnd);
   assert(bleDiagnostics.setSensorBusy(false));
   AppLog.setRaw(false);
+  for (int16_t watts : {int16_t(0), int16_t(1), int16_t(255), int16_t(256),
+                        int16_t(2000), int16_t(32767), int16_t(-25), int16_t(-32768)}) {
+    const auto before = power.notificationCount();
+    measurement->emit({0, 0, uint8_t(watts), uint8_t(uint16_t(watts) >> 8)});
+    manager.tick();
+    assert(power.power() == watts && power.notificationCount() == before + 1);
+    for (size_t length = 1; length < 4; ++length) {
+      measurement->emit(std::vector<uint8_t>(length, 0xFF));
+      manager.tick();
+      assert(power.power() == watts && power.notificationCount() == before + 1);
+    }
+  }
   for (unsigned index = 0; index < 20; ++index) measurement->emit({0, 0, 200, 0});
   assert(power.droppedPackets() == 8);
   manager.tick();
@@ -240,6 +252,16 @@ static void controlTests() {
   NimBLEDevice::clients.front()->service.measurement.emit({0x44, 0, 0x10, 0x0e, 180, 0, 0x2c, 1});
   manager.tick();
   assert(power.power() == 300 && power.cadence() == 90 && power.speed() == 10);
+  measurement = &NimBLEDevice::clients.front()->service.measurement;
+  for (int16_t watts : {int16_t(0), int16_t(256), int16_t(2000), int16_t(-25)}) {
+    const auto before = power.notificationCount();
+    measurement->emit({0x41, 0, uint8_t(watts), uint8_t(uint16_t(watts) >> 8)});
+    manager.tick();
+    assert(power.power() == watts && power.notificationCount() == before + 1);
+    measurement->emit({0x41, 0, 0xFF});
+    manager.tick();
+    assert(power.power() == watts && power.notificationCount() == before + 1);
+  }
   NimBLEDevice::nextService = "0x1816";
   NimBLEDevice::nextCharacteristic = "0x2a5b";
   assert(manager.enqueue(BleOpKind::Connect, "22:33:44:55:66:78", 0));

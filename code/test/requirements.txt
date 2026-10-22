@@ -5,3 +5,4 @@ pytest-embedded-serial==1.14.0
 pytest-embedded-serial-esp==1.14.0
 pytest-embedded-qemu==1.14.0
 esptool==4.8.1
+fitdecode==0.11.0

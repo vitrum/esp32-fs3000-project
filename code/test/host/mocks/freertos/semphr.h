@@ -2,6 +2,11 @@
 #include "FreeRTOS.h"
 
 inline SemaphoreHandle_t xSemaphoreCreateBinary() { return new HostSemaphore; }
+inline SemaphoreHandle_t xSemaphoreCreateMutex() {
+  auto *semaphore = new HostSemaphore;
+  semaphore->available = true;
+  return semaphore;
+}
 inline void vSemaphoreDelete(SemaphoreHandle_t semaphore) { delete semaphore; }
 inline int xSemaphoreTake(SemaphoreHandle_t semaphore, TickType_t ticks) {
   std::unique_lock<std::mutex> lock(semaphore->mutex);

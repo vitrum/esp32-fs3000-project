@@ -8,9 +8,36 @@
 #include <cstring>
 #include <string>
 #include <thread>
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 
-using String = std::string;
+class String : public std::string {
+public:
+  using std::string::string;
+  using std::string::operator=;
+  String() = default;
+  String(const std::string &value) : std::string(value) {}
+  explicit String(unsigned long value) : std::string(std::to_string(value)) {}
+  bool isEmpty() const { return empty(); }
+  bool startsWith(const char *prefix) const { return rfind(prefix, 0) == 0; }
+  bool endsWith(const char *suffix) const {
+    const size_t length = strlen(suffix);
+    return size() >= length && compare(size() - length, length, suffix) == 0;
+  }
+  int indexOf(char value) const { const auto at = find(value); return at == npos ? -1 : int(at); }
+  int indexOf(const char *value) const { const auto at = find(value); return at == npos ? -1 : int(at); }
+  void remove(size_t at, size_t count) { erase(at, count); }
+  long toInt() const { return strtol(c_str(), nullptr, 10); }
+};
+#define PROGMEM
 using byte = uint8_t;
+constexpr int LOW = 0, HIGH = 1, OUTPUT = 1, INPUT_PULLUP = 2;
+constexpr float PI = 3.14159265358979323846f;
+inline int hostPins[64] = {};
+inline void pinMode(int, int) {}
+inline void digitalWrite(int pin, int value) { hostPins[pin] = value; }
+inline int digitalRead(int pin) { return hostPins[pin]; }
+inline void delay(unsigned ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
 extern std::atomic<uint32_t> clockOffset;
 inline uint32_t millis() {
   static const auto start = std::chrono::steady_clock::now();

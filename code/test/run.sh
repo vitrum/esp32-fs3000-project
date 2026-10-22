@@ -7,8 +7,8 @@ image=aeroprobe-idf-test:4.4.6
 test_path=/opt/pytest-venv/bin:/opt/esp-qemu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 case "$action" in
-  all|host|build|qemu|hardware|image) ;;
-  *) printf '%s\n' 'Usage: sh test/run.sh [all|host|build|qemu|hardware|image]' >&2; exit 2 ;;
+  all|host|measurements|build|qemu|hardware|image) ;;
+  *) printf '%s\n' 'Usage: sh test/run.sh [all|host|measurements|build|qemu|hardware|image]' >&2; exit 2 ;;
 esac
 
 if [ "$action" = hardware ]; then
@@ -23,14 +23,20 @@ docker build -f test/Dockerfile -t "$image" .
 if [ "$action" = image ]; then exit 0; fi
 mkdir -p test/results
 
-if [ "$action" = all ] || [ "$action" = host ]; then
+if [ "$action" = all ] || [ "$action" = host ] || [ "$action" = measurements ]; then
+  set --
+  report=host
+  if [ "$action" = measurements ]; then
+    set -- -k 'sensors_power or ble_runtime or system_wind_power_fit'
+    report=measurements
+  fi
   docker run --rm -v "$PWD:/project" "$image" env PATH="$test_path" \
-    python -m pytest -q test/host/test_regression.py \
+    python -m pytest -q test/host/test_regression.py "$@" \
     --root-logdir=/project/test/results/host-logs \
-    --junitxml=/project/test/results/host.xml
+    --junitxml="/project/test/results/$report.xml"
 fi
 
-if [ "$action" != host ]; then
+if [ "$action" != host ] && [ "$action" != measurements ]; then
   docker run --rm -v "$PWD:/project" "$image" \
     idf.py -C /project/test/embedded -B /project/test/embedded/build/esp32s3 \
     -DIDF_TARGET=esp32s3 -DSDKCONFIG=/project/test/embedded/build/esp32s3/sdkconfig build
