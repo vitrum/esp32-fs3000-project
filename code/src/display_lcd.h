@@ -269,6 +269,7 @@ private:
   char sdCurrentDirectory_[128] = "/";
   SdFileEntry sdFiles_[12] = {};
   size_t sdFileCount_ = 0;
+  char sdListStatus_[64] = {};
   bool audioPlaying_ = false;
   char audioTitle_[96] = {};
 

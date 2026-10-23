@@ -210,6 +210,10 @@ static void wifiTests() {
 
 static void storageTests() {
   assert(beginSdCardMutex());
+  SdFileEntry unavailableEntries[1];
+  int unavailableError = 0;
+  assert(listSdFiles("/", unavailableEntries, 1, &unavailableError) == 0);
+  assert(unavailableError == ENODEV);
   static CsvLogger logger;
   hostSpiResult = -1;
   assert(!logger.begin());
@@ -241,6 +245,15 @@ static void storageTests() {
   assert(!logger.start());
   failTaskCreation = false;
   assert(logger.begin() && !logger.ok());
+  const std::string logDirectory = std::string(sdMountPoint()) + "/LOG";
+  std::filesystem::create_directories(logDirectory);
+  const std::string conflictPath = logDirectory + "/conflict";
+  std::ofstream(conflictPath) << "not a directory";
+  logger.setLocalDate("conflict");
+  assert(!logger.start() && !logger.ok());
+  assert(readFile(conflictPath) == "not a directory");
+  std::filesystem::remove(conflictPath);
+  logger.setLocalDate("");
   failTaskCreation = true;
   assert(logger.start());
   assert(logger.stop());
@@ -307,6 +320,39 @@ static void storageTests() {
   assert(listSdFiles("/../", entries, 3) == 0);
   assert(listSdFiles("/browse", entries, 3) == 3);
   assert(entries[0].isDirectory && entries[1].isAudio && !entries[2].isAudio);
+  int readError = -1;
+  assert(listSdFiles("/../", entries, 3, &readError) == 0 && readError == EINVAL);
+  assert(listSdFiles("/browse", nullptr, 3, &readError) == 0 && readError == EINVAL);
+  assert(listSdFiles("/browse", entries, 0, &readError) == 0 && readError == EINVAL);
+  assert(lockSdCard(0));
+  assert(listSdFiles("/browse", entries, 3, &readError) == 0 && readError == EBUSY);
+  unlockSdCard();
+  for (unsigned repeat = 0; repeat < 3; ++repeat) {
+    assert(listSdFiles("/browse/folder", entries, 3, &readError) == 0 && readError == 0);
+    assert(listSdFiles("/browse", entries, 3, &readError) == 3 && readError == 0);
+    assert(std::string(entries[0].name) == "folder");
+    assert(std::string(entries[1].name) == "song.MP3");
+    assert(std::string(entries[2].name) == "plain.txt");
+  }
+  std::filesystem::create_symlink("missing-target", std::string(sdMountPoint()) + "/browse/broken");
+  assert(listSdFiles("/browse", entries, 3, &readError) == 3 && readError == ENOENT);
+  std::filesystem::remove(std::string(sdMountPoint()) + "/browse/broken");
+  assert(listSdFiles("/browse", entries, 3, &readError) == 3 && readError == 0);
+  assert(listSdFiles("/missing", entries, 3, &readError) == 0 && readError == ENOENT);
+  const std::string largeDirectory = std::string(sdMountPoint()) + "/large-list";
+  std::filesystem::create_directory(largeDirectory);
+  for (unsigned index = 0; index < 4; ++index)
+    std::ofstream(largeDirectory + "/file" + std::to_string(index)) << "data";
+  assert(listSdFiles("/large-list", entries, 3, &readError) == 3 && readError == EOVERFLOW);
+  std::filesystem::create_symlink("missing-target", largeDirectory + "/broken");
+  assert(listSdFiles("/large-list", entries, 3, &readError) == 3 && readError == ENOENT);
+  const std::string limitedDirectory = std::string(sdMountPoint()) + "/scan-limit";
+  std::filesystem::create_directory(limitedDirectory);
+  for (unsigned index = 0; index < 398; ++index)
+    std::ofstream(limitedDirectory + "/.hidden" + std::to_string(index)) << "data";
+  assert(listSdFiles("/scan-limit", entries, 3, &readError) == 0 && readError == 0);
+  std::ofstream(limitedDirectory + "/.overflow") << "data";
+  assert(listSdFiles("/scan-limit", entries, 3, &readError) == 0 && readError == EOVERFLOW);
   std::cout << "PASS CSV storage: mount/task failures, UTC precedence, pause/overflow, rollover, unique files, writer backlog, short write/fsync recovery, session limits, file browsing\n";
 }
 
@@ -461,7 +507,9 @@ static void coexistenceTests() {
   std::cout << "PASS coexistence: GPS+BLE+WiFi+SD, scanning, telemetry, recording, download lock contention, reconnect, cancellation\n" << std::flush;
 }
 
-static void recordingFitTests(bool measurements = false) {
+static void recordingFitTests(bool measurements = false, bool gpsInput = false,
+                              bool fallbackTime = false) {
+  const bool staged = gpsInput || fallbackTime;
   const char *artifactRoot = getenv("FIT_ARTIFACT_DIR");
   assert(artifactRoot && artifactRoot[0]);
   const std::filesystem::path artifacts(artifactRoot);
@@ -471,23 +519,55 @@ static void recordingFitTests(bool measurements = false) {
   assert(logger.begin());
   logger.log(0, 999, 99, 9, 10, 0, -15, 1.2, 1);
   assert(logger.sampleCount() == 0);
-  Preferences::values = {{"ssid", "recording-test"}, {"pass", "password"}};
-  assert(wifiWeb.begin(false));
-  auto *http = AsyncWebServer::instances.front();
-  AsyncWebServerRequest request;
-  request.arguments["cmd"] = "start";
-  http->dispatch("/api/control", HTTP_POST, request);
-  bool start = false;
-  assert(request.status == 202 && wifiWeb.takeRecordingRequest(start) && start);
-  logger.setLocalDate("2026-10-22");
+  if (!staged) {
+    Preferences::values = {{"ssid", "recording-test"}, {"pass", "password"}};
+    assert(wifiWeb.begin(false));
+    auto *http = AsyncWebServer::instances.front();
+    AsyncWebServerRequest request;
+    request.arguments["cmd"] = "start";
+    http->dispatch("/api/control", HTTP_POST, request);
+    bool start = false;
+    assert(request.status == 202 && wifiWeb.takeRecordingRequest(start) && start);
+  } else {
+    assert(!wifiWeb.enabled());
+  }
+  if (!staged) logger.setLocalDate("2026-10-22");
   std::tm reference = {};
   reference.tm_year = 126;
   reference.tm_mon = 9;
   reference.tm_mday = 22;
   reference.tm_hour = 23;
   reference.tm_min = 59;
-  logger.setUtcReference(uint32_t(timegm(&reference)), 10000);
+  GpsTime gps;
+  std::ofstream gpsInputs;
+  if (gpsInput) {
+    assert(gps.begin());
+    gpsInputs.open(artifacts / "gps-input.nmea");
+    const auto initial = nmea("GPRMC,235900,A,4807.038,N,01131.000,E,022.4,084.4,221026,003.1,W");
+    gpsInputs << initial;
+    feedGps(initial);
+    await([&] { gps.tick(); return gps.hasFix(); });
+    assert(gps.unixSec() == uint32_t(timegm(&reference)));
+    logger.setUtcReference(gps.unixSec(), 10000);
+    char local[24];
+    gps.formatLocalDateTime(local, sizeof(local), 8 * 60);
+    char date[12];
+    snprintf(date, sizeof(date), "%.10s", local);
+    logger.setLocalDate(date);
+  } else if (!fallbackTime) {
+    logger.setUtcReference(uint32_t(timegm(&reference)), 10000);
+  }
   assert(logger.start() && logger.ok());
+  if (fallbackTime) {
+    assert(!gps.enabled());
+    logger.useFallbackUtcReference(FIT_DEFAULT_UTC, 10000);
+    assert(!logger.utcReferenceFromGps());
+    assert(std::string(logger.fileName()).find("/LOG/fs_") == 0);
+  }
+  if (gpsInput) {
+    assert(logger.utcReferenceFromGps());
+    assert(std::string(logger.fileName()).find("/LOG/2026-10-23/") == 0);
+  }
   assert(logger.start() && logger.sessionFileCount() == 1);
   TwoWire windBus;
   FS3000 wind;
@@ -509,7 +589,32 @@ static void recordingFitTests(bool measurements = false) {
   const uint16_t rawCounts[] = {0, 409, 806, 1203, 1597, 1908, 2400, 2629, 3686, 4095};
   const int16_t packetPower[] = {0, 1, 255, 256, 2000, 32767, -25, 1000};
   for (unsigned index = 0; index < 65; ++index) {
-    if (index == 60) logger.setLocalDate("2026-10-23");
+    if (index == 60 && !staged) logger.setLocalDate("2026-10-23");
+    if (gpsInput) {
+      if (index > 0) clockOffset += 1000;
+      if (index > 0 && (index < 20 || index >= 25)) {
+        if (index == 12) {
+          const std::string broken = "$GPRMC,broken*00\r\n";
+          gpsInputs << broken;
+          feedGps(broken);
+        }
+        char body[128];
+        snprintf(body, sizeof(body),
+                 "GPRMC,%02u%02u%02u,A,4807.038,N,01131.000,E,022.4,084.4,%s,003.1,W",
+                 index < 60 ? 23u : 0u, index < 60 ? 59u : 0u,
+                 index % 60, index < 60 ? "221026" : "231026");
+        const auto sentence = nmea(body);
+        gpsInputs << sentence;
+        const auto previous = gps.sentencesSeen();
+        feedGps(sentence);
+        await([&] { gps.tick(); return gps.sentencesSeen() > previous; });
+        assert(gps.unixSec() == uint32_t(timegm(&reference)) + index);
+      }
+      gps.tick();
+      gps.pollPresence();
+      assert(gps.hasFix() == !(index >= 22 && index <= 24));
+      assert(gps.modulePresent() == gps.hasFix());
+    }
     float windMps = 10 + index * 0.05f;
     float watts = 200 + index;
     float cadence = 80 + index % 10;
@@ -553,14 +658,22 @@ static void recordingFitTests(bool measurements = false) {
       assert(watts == (source ? packet : 0));
       inputs << index << ',' << raw << ',' << packet << ',' << (index < 32 ? "CPS" : "FTMS") << '\n';
     }
+    float groundSpeed = staged ? power.speed() : 8 + index * 0.1f;
+    if (gpsInput && gps.hasFix()) groundSpeed = gps.speedMps();
     logger.log(10000 + index * 1000, watts, cadence,
-               8 + index * 0.1f, windMps,
+           groundSpeed, windMps,
                measurements ? 0 : -12 + index * 0.2f, -20 + index * 0.1f,
                1.2f + index * 0.0001f, source);
   }
   if (measurements) { inputs.close(); assert(power.droppedPackets() == 0); }
   assert(logger.sampleCount() == 65 && logger.droppedCount() == 0);
-  assert(logger.sessionFileCount() == 2);
+  assert(logger.sessionFileCount() == (staged ? 1 : 2));
+  if (gpsInput) {
+    assert(gps.sentencesSeen() == 60 && gps.failedChecksum() == 1);
+    assert(gps.overflowCount() == 0);
+    gpsInputs.close();
+    gps.stop();
+  }
   FitExport exporter;
   assert(exporter.start(logger, true));
   assert(!exporter.start(logger, true));
@@ -594,8 +707,12 @@ static void recordingFitTests(bool measurements = false) {
   assert(!success && std::filesystem::exists(invalidCsv));
   assert(!std::filesystem::exists(invalidFit) && !std::filesystem::exists(invalidFit.string() + ".tmp"));
   if (measurements) assert(manager.suspend());
-  assert(wifiWeb.setEnabled(false));
-  std::cout << "PASS recording FIT: HTTP start, real CSV writer, midnight rollover, async export, retained artifacts, overwrite protection, malformed CSV rejection\n";
+  if (!staged) assert(wifiWeb.setEnabled(false));
+  else assert(!wifiWeb.enabled());
+  std::cout << "PASS recording FIT: "
+            << (gpsInput ? "stage2 NMEA+BLE+wind, GPS loss/recovery, " :
+                fallbackTime ? "stage1 BLE+wind, fallback UTC, " : "HTTP start, midnight rollover, ")
+            << "real CSV writer, async export, retained artifacts, overwrite protection, malformed CSV rejection\n";
 }
 
 int main(int argc, char **argv) {
@@ -604,5 +721,7 @@ int main(int argc, char **argv) {
   else if (mode == "storage") storageTests();
   else if (mode == "fit") recordingFitTests();
   else if (mode == "wind_power_fit") recordingFitTests(true);
+  else if (mode == "stage1_ble_wind_fit") recordingFitTests(true, false, true);
+  else if (mode == "stage2_gps_ble_wind_fit") recordingFitTests(true, true);
   else coexistenceTests();
 }

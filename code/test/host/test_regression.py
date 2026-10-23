@@ -57,12 +57,16 @@ SUITES = {
     ),
 }
 for scenario, marker in {"wifi": "PASS WiFi:", "storage": "PASS CSV storage:",
-                         "fit": "PASS recording FIT:", "wind_power_fit": "PASS recording FIT:"}.items():
+                         "fit": "PASS recording FIT:", "wind_power_fit": "PASS recording FIT:",
+                         "stage1_ble_wind_fit": "PASS recording FIT:",
+                         "stage2_gps_ble_wind_fit": "PASS recording FIT:"}.items():
     SUITES["system_" + scenario] = (SUITES["system_coexistence"][0],
                                   SUITES["system_coexistence"][1], [marker])
 
 
-def validate_recording_fit(artifacts: Path, measurements: bool = False) -> None:
+def validate_recording_fit(artifacts: Path, measurements: bool = False,
+                           gps: bool = False, fallback: bool = False) -> None:
+    staged = gps or fallback
     path = artifacts / "recording.fit"
     data = path.read_bytes()
     assert data[0] == 14 and data[1] == 0x20 and data[8:12] == b".FIT"
@@ -77,12 +81,13 @@ def validate_recording_fit(artifacts: Path, measurements: bool = False) -> None:
     assert counts == {"file_id": 1, "developer_data_id": 1, "field_description": 5,
                       "record": 65, "event": 2, "lap": 1, "session": 1, "activity": 1}
     segments = []
-    for index, expected_count in enumerate((60, 5)):
+    for index, expected_count in enumerate((65,) if staged else (60, 5)):
         with (artifacts / f"segment-{index}.csv").open(newline="") as stream:
             rows = list(csv.DictReader(stream))
         assert len(rows) == expected_count
         segments.extend(rows)
-    start = datetime(2026, 10, 22, 23, 59, tzinfo=timezone.utc)
+    start = (datetime(2024, 1, 1, tzinfo=timezone.utc) if fallback else
+             datetime(2026, 10, 22, 23, 59, tzinfo=timezone.utc))
     records = [message for message in messages if message.name == "record"]
     wind_reference = (0, 0, 1, 2, 3, 4, 6, 7, 15, 15)
     raw_reference = (0, 409, 806, 1203, 1597, 1908, 2400, 2629, 3686, 4095)
@@ -112,7 +117,9 @@ def validate_recording_fit(artifacts: Path, measurements: bool = False) -> None:
         assert float(row["powerW"]) == expected_power
         assert float(row["cadenceRpm"]) == expected_cadence
         assert int(row["powerSrc"]) == source
-        assert speed == pytest.approx(8 + index * 0.1, abs=0.0005)
+        expected_speed = (0 if fallback or (gps and 22 <= index <= 24) else
+                  11.524 if gps else 8 + index * 0.1)
+        assert speed == pytest.approx(expected_speed, abs=0.0005)
         assert float(row["vAirMps"]) == pytest.approx(expected_wind, abs=0.0005)
         if index:
             distance += (previous_speed + speed) * 0.5
@@ -129,7 +136,12 @@ def validate_recording_fit(artifacts: Path, measurements: bool = False) -> None:
         ):
             assert record.get_value(field) == pytest.approx(float(row[column]), abs=0.00001)
             assert record.get_field(field).units == units
-    assert distance == pytest.approx(716.8)
+    expected_distance = 0 if fallback else 702.964 if gps else 716.8
+    assert distance == pytest.approx(expected_distance)
+    if gps:
+        sentences = (artifacts / "gps-input.nmea").read_text().splitlines()
+        assert len(sentences) == 61
+        assert sum(sentence == "$GPRMC,broken*00" for sentence in sentences) == 1
     descriptions = [message.get_value("field_name") for message in messages
                     if message.name == "field_description"]
     assert set(descriptions) == {"airspeed", "yaw", "posture", "air_density", "power_source"}
@@ -143,7 +155,7 @@ def validate_recording_fit(artifacts: Path, measurements: bool = False) -> None:
         assert summary.get_value("timestamp") == start + timedelta(seconds=64)
         assert summary.get_value("total_elapsed_time") == 64
         assert summary.get_value("total_timer_time") == 64
-        assert summary.get_value("total_distance") == pytest.approx(716.8)
+        assert summary.get_value("total_distance") == pytest.approx(expected_distance, abs=0.0051)
     session = next(message for message in messages if message.name == "session")
     assert session.get_value("num_laps") == 1
     activity = next(message for message in messages if message.name == "activity")
@@ -167,12 +179,15 @@ def validate_recording_fit(artifacts: Path, measurements: bool = False) -> None:
     (artifacts / "decoded.json").write_text(json.dumps(decoded, default=str, indent=2) + "\n")
     report = {"decoder": "fitdecode 0.11.0", "file": "recording.fit",
               "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
-              "records": len(records), "csv_segments": 2, "start_utc": start.isoformat(),
+              "records": len(records), "csv_segments": 1 if staged else 2, "start_utc": start.isoformat(),
               "elapsed_seconds": 64, "distance_meters": distance,
               "header_crc": "passed", "file_crc": "passed", "content": "passed",
               "corruption_rejected": True, "truncation_rejected": True,
               "measurement_chain": "FS3000 raw + CPS/FTMS packets -> CSV -> FIT" if measurements else "fixed samples -> CSV -> FIT",
               "wind_power_content": "passed" if measurements else "fixed samples verified",
+              "stage": "GPS + BLE + wind + CSV/FIT" if gps else
+                       "BLE + wind + CSV/FIT, no GPS" if fallback else "baseline",
+              "time_source": "fallback UTC" if fallback else "NMEA UTC" if gps else "fixed UTC fixture",
               "messages": dict(counts)}
     (artifacts / "validation.json").write_text(json.dumps(report, indent=2) + "\n")
 
@@ -202,7 +217,9 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
     if suite.startswith("system_"):
         arguments.append(suite[len("system_"):])
     environment = os.environ.copy()
-    if suite in {"system_fit", "system_wind_power_fit"}:
+    recording_suites = {"system_fit", "system_wind_power_fit",
+                        "system_stage1_ble_wind_fit", "system_stage2_gps_ble_wind_fit"}
+    if suite in recording_suites:
         artifact_root = ROOT / "test/results/fit"
         artifact_root.mkdir(parents=True, exist_ok=True)
         artifacts = Path(tempfile.mkdtemp(prefix="recording-", dir=artifact_root))
@@ -212,5 +229,7 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
     msg_queue.put(output)
     assert result.returncode == 0, output.decode(errors="replace")
     dut.expect_exact(markers, expect_all=True, timeout=10)
-    if suite in {"system_fit", "system_wind_power_fit"}:
-        validate_recording_fit(artifacts, measurements=suite == "system_wind_power_fit")
+    if suite in recording_suites:
+        validate_recording_fit(artifacts, measurements=suite != "system_fit",
+                               gps=suite == "system_stage2_gps_ble_wind_fit",
+                               fallback=suite == "system_stage1_ble_wind_fit")

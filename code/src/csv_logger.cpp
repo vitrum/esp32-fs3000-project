@@ -146,9 +146,31 @@ bool sdCardReady() { return g_sdMounted; }
 
 // 确保目录存在（不存在则创建；已存在直接返回 true）。
 bool CsvLogger::ensureDir(const char *path) {
-  if (!path || !path[0]) return false;
-  if (sdFs().exists(path)) return true;
-  return sdFs().mkdir(path);
+  if (!path || path[0] != '/') return false;
+  char fullPath[sizeof(kSdMountPoint) + sizeof(_dir)];
+  const int length = snprintf(fullPath, sizeof(fullPath), "%s%s", kSdMountPoint, path);
+  if (length < 0 || (size_t)length >= sizeof(fullPath)) return false;
+  struct stat status;
+  if (::stat(fullPath, &status) == 0) {
+    if (S_ISDIR(status.st_mode)) return true;
+    AppLog.printf("[SD] recording path is not a directory: %s\n", fullPath);
+    return false;
+  }
+  if (errno != ENOENT) {
+    AppLog.printf("[SD] directory lookup failed: %s (errno=%d)\n", fullPath, errno);
+    return false;
+  }
+  if (::mkdir(fullPath, 0777) != 0 && errno != EEXIST) {
+    AppLog.printf("[SD] mkdir failed: %s (errno=%d)\n", fullPath, errno);
+    return false;
+  }
+  const int lookupResult = ::stat(fullPath, &status);
+  if (lookupResult != 0 || !S_ISDIR(status.st_mode)) {
+    const int error = lookupResult != 0 ? errno : ENOTDIR;
+    AppLog.printf("[SD] directory verification failed: %s (errno=%d)\n", fullPath, error);
+    return false;
+  }
+  return true;
 }
 
 // 新文件及表头都成功后才替换当前文件。调用方需已持有 SD 锁。
@@ -525,21 +547,33 @@ static bool isAudioName(const char *n) {
          !strcasecmp(dot, ".aac") || !strcasecmp(dot, ".ogg");
 }
 
-size_t listSdFiles(const char *directory, SdFileEntry *out, size_t maxCount) {
+size_t listSdFiles(const char *directory, SdFileEntry *out, size_t maxCount,
+                   int *readError) {
+  if (readError) *readError = 0;
   if (!directory || directory[0] != '/' || strstr(directory, "..") ||
       strchr(directory, '\\') || strlen(directory) >= 128 ||
-      !out || maxCount == 0)
+      !out || maxCount == 0) {
+    if (readError) *readError = EINVAL;
     return 0;
-  if (!g_sdMounted) return 0;   // 未挂载：立即返回，避免在空挂载点上卡住
+  }
+  if (!g_sdMounted) {
+    if (readError) *readError = ENODEV;
+    return 0;
+  }
 
-  if (!lockSdCard(pdMS_TO_TICKS(500))) return 0;
+  if (!lockSdCard(pdMS_TO_TICKS(500))) {
+    if (readError) *readError = EBUSY;
+    return 0;
+  }
 
   char fullDirectory[sizeof(kSdMountPoint) + 128];
   snprintf(fullDirectory, sizeof(fullDirectory), "%s%s",
            kSdMountPoint, directory[1] ? directory : "");
   DIR *dir = opendir(fullDirectory);
   if (!dir) {
-    AppLog.printf("[SD] opendir(%s) failed\n", fullDirectory);
+    const int error = errno;
+    if (readError) *readError = error;
+    AppLog.printf("[SD] opendir(%s) failed (errno=%d)\n", fullDirectory, error);
     unlockSdCard();
     return 0;
   }
@@ -551,16 +585,30 @@ size_t listSdFiles(const char *directory, SdFileEntry *out, size_t maxCount) {
   size_t count = 0;
   static const int kMaxEntries = 400;   // 防御性上限
   int guard = 0;
+  int error = 0;
   struct dirent *de;
-  while ((de = readdir(dir)) != nullptr && guard++ < kMaxEntries) {
-    const char *name = de->d_name;
-    if (!name || name[0] == '.') continue;   // 跳过 . .. 及隐藏文件
+  while (guard <= kMaxEntries) {
+    errno = 0;
+    de = readdir(dir);
+    if (!de) {
+      if (errno != 0) error = errno;
+      break;
+    }
+    if (guard++ == kMaxEntries) {
+      if (error == 0) error = EOVERFLOW;
+      break;
+    }
+    char name[sizeof(de->d_name)];
+    snprintf(name, sizeof(name), "%s", de->d_name);
+    if (name[0] == '.') continue;
 
     char full[sizeof(fullDirectory) + 1 + 256];
     snprintf(full, sizeof(full), "%s/%s", fullDirectory, name);
     struct stat st;
     if (stat(full, &st) != 0) {
-      AppLog.printf("[SD] stat(%s) failed (errno=%d)\n", full, errno);
+      const int lookupError = errno;
+      if (error == 0 || error == EOVERFLOW) error = lookupError;
+      AppLog.printf("[SD] stat(%s) failed (errno=%d)\n", full, lookupError);
       continue;
     }
     const bool isDirectory = S_ISDIR(st.st_mode);
@@ -579,15 +627,22 @@ size_t listSdFiles(const char *directory, SdFileEntry *out, size_t maxCount) {
     size_t insertAt = count;
     while (insertAt > 0 && rank(out[insertAt - 1]) < rank(entry))
       --insertAt;
+    if (count == maxCount && error == 0) error = EOVERFLOW;
     if (count == maxCount && insertAt == count) continue;
     if (count < maxCount) ++count;
     for (size_t i = count - 1; i > insertAt; --i)
       out[i] = out[i - 1];
     out[insertAt] = entry;
   }
-  closedir(dir);
+  if (closedir(dir) != 0 && (error == 0 || error == EOVERFLOW)) error = errno;
 
   unlockSdCard();
+  if (readError) *readError = error;
+  if (error != 0) {
+    AppLog.printf("[SD] incomplete directory listing: %s (errno=%d)\n",
+                  fullDirectory, error);
+    return count;
+  }
   AppLog.printf("[SD] listed %u item(s) under %s\n",
                 (unsigned)count, fullDirectory);
   return count;

@@ -926,7 +926,8 @@ void DisplayLcd::buildNoticePanel() {
 
 void DisplayLcd::setSdFiles(const SdFileEntry *files, size_t count,
                             const char *status) {
-  sdFileCount_ = min(count, (size_t)12);
+  sdFileCount_ = files ? min(count, (size_t)12) : 0;
+  snprintf(sdListStatus_, sizeof(sdListStatus_), "%s", status ? status : "");
   if (files)
     for (size_t i = 0; i < sdFileCount_; ++i) sdFiles_[i] = files[i];
   if (sdCurrentPathLabel_)
@@ -937,7 +938,6 @@ void DisplayLcd::setSdFiles(const SdFileEntry *files, size_t count,
     else
       lv_obj_clear_flag(sdUpButton_, LV_OBJ_FLAG_HIDDEN);
   }
-  (void)status;
   refreshSdList();
 }
 
@@ -964,7 +964,9 @@ void DisplayLcd::refreshSdList() {
   if (!sdList_) return;
 
   char status[64];
-  if (sdFileCount_ == 0)
+  if (sdListStatus_[0])
+    snprintf(status, sizeof(status), "%s", sdListStatus_);
+  else if (sdFileCount_ == 0)
     snprintf(status, sizeof(status), "%s",
              localized("No files on SD card", "SD 卡内没有文件"));
   else

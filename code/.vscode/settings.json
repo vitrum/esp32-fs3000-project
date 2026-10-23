@@ -27,6 +27,10 @@
     "/^sh test/run\\.sh all$/": {
       "approve": true,
       "matchCommandLine": true
+    },
+    "/^docker run --rm -v \"\\$PWD:/project\" aeroprobe-idf-test:4\\.4\\.6 /opt/pytest-venv/bin/python -m pytest -q test/host/test_regression\\.py -k system_storage --junitxml=test/results/sd-directory\\.xml$/": {
+      "approve": true,
+      "matchCommandLine": true
     }
   }
 }

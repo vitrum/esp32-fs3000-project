@@ -13,6 +13,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <cstring>
+#include <errno.h>
 #include <esp_heap_caps.h>
 
 #include "config.h"
@@ -315,8 +316,14 @@ void loop() {
   char sdDirectory[128];
   if (lcd.takeSdListRequest(sdDirectory, sizeof(sdDirectory))) {
     static SdFileEntry files[12];
-    size_t count = listSdFiles(sdDirectory, files, 12);
-    lcd.setSdFiles(files, count, nullptr);
+    int readError = 0;
+    size_t count = listSdFiles(sdDirectory, files, 12, &readError);
+    char status[64] = {};
+    if (readError == EOVERFLOW)
+      snprintf(status, sizeof(status), "Partial list: %u item(s)", (unsigned)count);
+    else if (readError != 0)
+      snprintf(status, sizeof(status), "SD read error (errno=%d)", readError);
+    lcd.setSdFiles(files, count, readError != 0 ? status : nullptr);
   }
   char sdPlayPath[256] = {};
   if (lcd.takeSdPlayRequest(sdPlayPath, sizeof(sdPlayPath))) {

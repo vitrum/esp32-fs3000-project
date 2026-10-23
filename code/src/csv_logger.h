@@ -28,8 +28,9 @@ struct SdFileEntry {
 };
 
 // 列出指定目录的直接子项（不递归），目录优先、音频文件次之。
-// directory 使用以 "/" 开始的卡内路径；失败或无卡返回 0。
-size_t listSdFiles(const char *directory, SdFileEntry *out, size_t maxCount);
+// directory 使用以 "/" 开始的卡内路径；readError 区分空目录和读取失败/不完整。
+size_t listSdFiles(const char *directory, SdFileEntry *out, size_t maxCount,
+                   int *readError = nullptr);
 
 // SD card CSV log (SDSPI mode)
 // 列：t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc
