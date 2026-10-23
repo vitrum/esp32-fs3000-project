@@ -89,6 +89,8 @@ void GpsTime::stop() {
     AppLog.println("[GPS] receiver stopped");
   }
   _enabled = false;
+  _modulePresent = false;
+  _presenceChecked = true;
 }
 
 bool GpsTime::restart() {
@@ -149,6 +151,7 @@ void GpsTime::receiverTask() {
       }
       if (parser.encode(c)) {
         ++state.sentences;
+        state.lastNmeaMs = millis();
         if (parser.location.isUpdated() && parser.location.isValid()) {
           state.lastFixMs = millis();
           parser.location.lat(); // Clear isUpdated so time-only sentences do not refresh a fix.
@@ -185,8 +188,9 @@ void GpsTime::tick() {
   _failedChecksum = _gps.checksumFailures;
   _overflowCount = _gps.overflows;
   memcpy(_lastSentence, _gps.sentence, sizeof(_lastSentence));
-  if (_rxBytesTotal > 0) _modulePresent = true;
   const uint32_t now = millis();
+  _modulePresent = _gps.sentences > 0 &&
+                   now - _gps.lastNmeaMs < kPresenceTimeoutMs;
   if ((_overflowCount != _reportedOverflows ||
        _failedChecksum != _reportedChecksumFailures) &&
       now - _lastDiagnosticsMs >= 5000) {
@@ -256,14 +260,14 @@ void GpsTime::formatLocalDateTime(char *buf, size_t len, int tzOffsetMinutes) {
 }
 
 bool GpsTime::hasFix() const {
-  if (!_enabled) return false;
+  if (!_enabled || !_modulePresent) return false;
   if (!_gps.location.isValid()) return false;
   if (_lastFixMs == 0) return false;
   return (millis() - _lastFixMs) <= kFixFreshMs;
 }
 
 bool GpsTime::timeValid() {
-  if (!_enabled) return false;
+  if (!_enabled || !_modulePresent) return false;
   if (!_gps.date.isValid() || !_gps.time.isValid()) return false;
   const int year = _gps.date.year();
   if (year < 2020 || year > 2099) return false;   // 排除未定位时的默认/乱值

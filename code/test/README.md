@@ -64,11 +64,11 @@ claim of 100% line/branch or end-to-end hardware coverage.
 | --- | --- |
 | `system_coexistence` | GPS UART receiver and BLE scan/notifications stay active while an HTTP callback thread submits 64 control requests, 64 WebSocket telemetry frames are produced and 64 CSV samples are written; continued recording during paced HTTP download; SD lock contention, competing/missing downloads, Wi-Fi loss/reconnect, scan cancellation and clean GPS/BLE shutdown |
 | `system_wifi` | No credentials, preferences failure, STA initialization/start failure, retry cooldown, low contiguous heap, mDNS failure, reconnect fallback, SmartConfig timeout/retry/save failure, enable/disable, credential clearing, invalid commands/source IDs/paths, escaped status JSON and nonfinite telemetry |
-| `system_storage` | SPI/mount/task failure, no automatic formatting, GPS-over-fallback UTC priority, paused buffer overflow, date rollover, unique filenames, blocked writer recovery, short write plus failed retry, fsync failure without duplicated CSV rows, session file limits and bounded sorted directory listing |
+| `system_storage` | SPI/mount/task failure and startup worker retry/reuse, bounded CMD13 timeout recovery (no write-command or non-timeout retries), no automatic formatting, GPS-over-fallback UTC priority, paused buffer overflow, date rollover, unique filenames, blocked writer recovery, short write plus failed retry, fsync failure without duplicated CSV rows, session file limits and bounded sorted directory listing |
 | `system_fit` | HTTP start request, real CSV recording and writer, 65 fixed samples split at UTC midnight, asynchronous FIT export, automatic stop/flush, overwrite protection, malformed CSV rejection, retained output and independent strict FIT decoding |
 | `system_wind_power_fit` | Real FS3000 frames and CPS/FTMS notification parsing feed CSV and FIT; every wind/power value is checked independently; power boundaries, quiet/full-scale wind, checksum/short packet protection, disconnect/reconnect and protocol switch |
 | `sensors_power` | FS3000 calibration knots/interpolation/clamping, invalid frames/checksum/offline/reprobe; wind magnitude and yaw sign; BME280 fallback/formula/refresh/invalid samples; boot latch, short/long press and shutdown GPIOs; disabled audio rejects playback without I2S allocation |
-| `concurrency` | GPS background reception, freshness/presence/checksum/UART overflow/restart; HTTP download pacing, lock timeout, short read/open/seek errors; navigation release/bounce/timer wrap |
+| `concurrency` | GPS background reception, valid-NMEA presence, offline timeout, noise rejection, automatic reconnect after disconnect or initial absence, freshness/checksum/UART overflow/restart; HTTP download pacing, lock timeout, short read/open/seek errors; navigation release/bounce/timer wrap |
 | `ble_runtime` | Scan start/end/deadline/cancel/stop errors, adaptive scan windows, bounded packet inbox and generations, controller queue/cancellation/restart, CPS/FTMS/CSC/posture decoding, log replay/MTU/byte budget/backoff/commands/disconnect |
 | `fit_export` | UTC handling, task/stop/SD failure, multiple CSV files, no overwrite, malformed/empty data and timer wrap |
 | `fit_activity` | CSV validation, FIT lengths/timestamps/header/file CRC, sink failures and incomplete records |
@@ -86,6 +86,14 @@ use `/sdcard` as the production mount path and GNU link-time write/fsync fault
 injection. They must not be run directly on a real mounted SD card. The legacy
 native shell runner retains its original portable subset; the Docker entry point
 is authoritative for the expanded suite.
+
+Production uses the Waveshare board's 8MB OPI PSRAM for the 128KB LVGL pool
+(internal RAM fallback), leaving internal RAM available for BLE, task stacks
+and SD DMA. Compile with `pio run -e esp32s3`; mocks/QEMU do not validate PSRAM
+electrical operation or LCD animations. On hardware, check startup `[MEM]`
+PSRAM size, `[SD] recording worker ready`, directory browsing, CSV/FIT recording
+and GPS disconnect/reconnect. CMD13 timeout retries remain bounded and do not
+hide persistent card failures; never automatically format a failing card.
 
 ## Recorded FIT Validation
 

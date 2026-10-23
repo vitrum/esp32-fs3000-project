@@ -9,10 +9,12 @@
 #include <sys/stat.h>
 #include <vfs_api.h>
 #include <driver/sdspi_host.h>
+#include <driver/sdmmc_defs.h>
 #include <driver/spi_common.h>
 #include <sdmmc_cmd.h>
 #include <esp_vfs_fat.h>
 #include <esp_err.h>
+#include <esp_heap_caps.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -35,6 +37,16 @@ public:
 VfsFs  g_sdFs;
 sdmmc_card_t *g_sdCard = nullptr;
 bool    g_sdMounted = false;
+
+esp_err_t sdTransaction(int slot, sdmmc_command_t *command) {
+  esp_err_t result;
+  for (unsigned attempt = 0; attempt < 3; ++attempt) {
+    result = sdspi_host_do_transaction(slot, command);
+    if (result != ESP_ERR_TIMEOUT || command->opcode != MMC_SEND_STATUS)
+      return result;
+  }
+  return result;
+}
 
 bool writeAll(int fd, const char *data, size_t size) {
   size_t offset = 0;
@@ -97,6 +109,7 @@ static bool mountSdCard() {
   host.max_freq_khz = SD_SPI_FREQ_HZ / 1000;
   // 大容量 SDXC 卡 SPI 下写后偶发状态查询慢；给足超时避免 ESP_ERR_TIMEOUT(0x107)。
   host.command_timeout_ms = 2000;
+  host.do_transaction = sdTransaction;
 
   sdspi_device_config_t slotCfg = SDSPI_DEVICE_CONFIG_DEFAULT();
   slotCfg.gpio_cs = (gpio_num_t)PIN_SD_CS;
@@ -292,6 +305,9 @@ bool CsvLogger::ensureWriterTask() {
   if (xTaskCreate(writerTaskEntry, "sdWriter", 6144, this, 1,
                   &_writerTaskHandle) != pdPASS) {
     _writerTaskHandle = nullptr;
+    AppLog.printf("[SD] writer allocation failed: internal free=%u largest=%u\n",
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     return false;
   }
   return true;
@@ -390,6 +406,11 @@ bool CsvLogger::begin() {
   _sdReady = true;
   // 记录功能默认不开启；仅准备好 SD 与 /LOG 目录。
   unlockSdCard();
+  if (!ensureWriterTask()) {
+    AppLog.println("[SD] card mounted but recording worker unavailable");
+    return false;
+  }
+  AppLog.println("[SD] recording worker ready");
   return true;
 }
 

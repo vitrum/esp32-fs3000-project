@@ -19,6 +19,14 @@
     "/^docker run --rm -v \"\\$PWD:/project\" -w /project espressif/idf:v4\\.4\\.6 idf\\.py -C /project/test/embedded -B /project/test/embedded/build/esp32s3 -DIDF_TARGET=esp32s3 -DSDKCONFIG=/project/test/embedded/build/esp32s3/sdkconfig build$/": {
       "approve": true,
       "matchCommandLine": true
+    },
+    "/^/Users/vitrum/\\.platformio/penv/bin/pio run -e esp32s3$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^sh test/run\\.sh all$/": {
+      "approve": true,
+      "matchCommandLine": true
     }
   }
 }

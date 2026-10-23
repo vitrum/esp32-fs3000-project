@@ -83,9 +83,24 @@ static void gpsTests() {
   gps.formatLocalDateTime(text, sizeof(text), 8 * 60);
   assert(std::string(text) == "2026-10-19 20:35:19");
 
+  gps.pollPresence();
+  gps.pollPresence();
+  assert(gps.presenceChecked());
+  clockOffset += 3000;
+  gps.tick();
+  gps.pollPresence();
+  assert(!gps.modulePresent() && !gps.hasFix() && !gps.timeValid());
+  const auto receivedBeforeNoise = gps.charsProcessed();
+  feed("noise\r\n$GPRMC,broken*00\r\n");
+  await([&] { gps.tick(); return gps.charsProcessed() > receivedBeforeNoise; });
+  assert(!gps.modulePresent());
+  feed(fix);
+  await([&] { gps.tick(); return gps.sentencesSeen() == 101; });
+  assert(gps.modulePresent() && gps.hasFix());
+
   clockOffset += 4000;
   feed(nmea("GPVTG,084.4,T,,M,022.4,N,041.5,K"));
-  await([&] { gps.tick(); return gps.sentencesSeen() == 101; });
+  await([&] { gps.tick(); return gps.sentencesSeen() == 102; });
   assert(!gps.hasFix() && gps.fixAgeMs() >= 4000);
   feed("$GPRMC,broken*00\r\n");
   {
@@ -93,7 +108,7 @@ static void gpsTests() {
     uartEvents.push_back({UART_FIFO_OVF});
     uartEvents.push_back({UART_BUFFER_FULL});
   }
-  await([&] { gps.tick(); return gps.failedChecksum() == 1 && gps.overflowCount() == 2; });
+  await([&] { gps.tick(); return gps.failedChecksum() == 2 && gps.overflowCount() == 2; });
   assert(gps.restart() && gps.enabled());
   gps.tick();
   assert(!gps.hasFix() && !gps.modulePresent() && gps.charsProcessed() == 0);
@@ -101,8 +116,11 @@ static void gpsTests() {
   clockOffset += 3001;
   gps.pollPresence();
   assert(gps.presenceChecked() && !gps.modulePresent());
+  feed(fix);
+  await([&] { gps.tick(); return gps.modulePresent(); });
+  assert(gps.presenceChecked() && gps.hasFix());
   gps.stop();
-  assert(!gps.enabled() && !uartInstalled);
+  assert(!gps.enabled() && !gps.modulePresent() && !uartInstalled);
   assert(gps.restart() && gps.enabled());
   feed(fix);
   await([&] { gps.tick(); return gps.hasFix(); });

@@ -28,7 +28,7 @@ public:
   // 打开 UART 并开始非阻塞模块探测；不等待定位。返回是否打开成功。
   bool begin();
 
-  // 探测超时未发现模块时关闭 UART，但保留探测结果供界面显示。
+  // 停止接收任务并关闭 UART。
   void stop();
 
   // 将后台任务发布的状态复制到主循环快照；所有访问器读取该快照。
@@ -44,7 +44,7 @@ public:
   // 在 loop() 中周期性调用；统计 UART 上是否持续有 NMEA 字节流入，
   // 以此判断"GPS 模块是否存在"。非阻塞。
   void pollPresence();
-  // 模块检测结果：true=确认存在（曾收到过 NMEA 数据）。
+  // 模块检测结果：true=近期收到有效 NMEA 语句。
   bool modulePresent() const { return _modulePresent; }
   // 是否已完成一次存在性判定（超时仍未收到数据即判为不存在）。
   bool presenceChecked() const { return _presenceChecked; }
@@ -104,6 +104,7 @@ private:
     TinyGPSHDOP hdop;
     uint32_t lastFixMs = 0;
     uint32_t lastRxMs = 0;
+    uint32_t lastNmeaMs = 0;
     uint32_t rxBytes = 0;
     uint32_t sentences = 0;
     uint32_t checksumFailures = 0;
@@ -131,7 +132,7 @@ private:
   char     _lastSentence[96] = {};
 
   // ---- 模块存在性检测 ----
-  bool     _modulePresent = false;    // 是否确认收到过 NMEA 字节
+  bool     _modulePresent = false;    // 是否持续收到有效 NMEA 语句
   bool     _presenceChecked = false;  // 是否已下结论（存在或超时不存在）
   bool     _presenceStarted = false;  // 探测轮询计时是否已启动
   uint32_t _presenceStartMs = 0;      // 检测起始时间

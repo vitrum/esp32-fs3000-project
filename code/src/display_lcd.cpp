@@ -743,7 +743,7 @@ void DisplayLcd::updateGpsStatus(bool enabled, bool fix, uint8_t sat, uint32_t h
   const char *fixText;
   lv_color_t fixColor;
   if (!enabled) {
-    fixText = localized("GPS disabled", "GPS 已关闭");
+    fixText = localized("GPS offline", "GPS 离线");
     fixColor = lv_color_make(148, 163, 184);
   } else if (fix) {
     fixText = localized("FIX ACQUIRED", "已定位");

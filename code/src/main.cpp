@@ -13,6 +13,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <cstring>
+#include <esp_heap_caps.h>
 
 #include "config.h"
 #include "runtime_log.h"
@@ -154,6 +155,10 @@ void setup() {
   AppLog.println("\n== Aero Probe (single FS3000 + touch UI + BLE PM) ==");
   AppLog.println("[PM] Use SELECT POWER METER to choose BLE, virtual, or automatic input.");
   AppLog.println("[PM] BLE measurements are streamed to this monitor.");
+  AppLog.printf("[MEM] PSRAM=%u internal free=%u largest=%u\n",
+                (unsigned)ESP.getPsramSize(),
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
   // GPS UART 先启动并进行限时、非阻塞探测；不等待定位。
   // 放在可能耗时的 SD 初始化之前，避免错过模块输出的 NMEA 数据。
@@ -230,12 +235,10 @@ void loop() {
   audio.tick();
   lcd.updateAudioStatus(audio.playing(), audio.currentTitle());
 
-  // GPS 探测期间也必须读取 UART，才能判断模块是否存在。
-  // 读到 NMEA 后继续后台解析；超时未收到数据则关闭 UART。
+  // 保持接收任务运行，以便离线模块重新接入后自动恢复。
   if (gps.enabled()) {
     gps.tick();
     gps.pollPresence();
-    if (gps.presenceChecked() && !gps.modulePresent()) gps.stop();
   }
   // 回填检测结果，供 GPS 页面显示或提示未找到模块。
   lcd.setGpsModulePresent(gps.modulePresent(), gps.presenceChecked());
@@ -449,7 +452,8 @@ void loop() {
                   (unsigned long)windSensor.checksumErrors(),
                   windSensor.lastBytesReceived(), frame[0], frame[1], frame[2],
                   frame[3], frame[4], logger.ok() ? "OK" : "OFF",
-                  gps.hasFix() ? "FIX" : (gps.enabled() ? "NOFIX" : "OFF"),
+                  gps.hasFix() ? "FIX" : (gps.modulePresent() ? "NOFIX" : "OFF"),
+                  (unsigned)gps.hasFix(),
                   (unsigned)gps.satellites(), (unsigned)gps.hdop(),
                   gps.latitude(), gps.longitude(), gps.speedMps(),
                   (unsigned long)gps.unixSec());
@@ -514,12 +518,14 @@ void loop() {
         snprintf(ymd, sizeof(ymd), "%.10s", localStr);
         logger.setLocalDate(ymd);
       }
-      lcd.updateGpsStatus(gps.enabled(), gps.hasFix(), gps.satellites(),
+      const bool gpsOnline = gps.enabled() &&
+                 (!gps.presenceChecked() || gps.modulePresent());
+      lcd.updateGpsStatus(gpsOnline, gps.hasFix(), gps.satellites(),
                           gps.hdop(), gps.latitude(), gps.longitude(),
                           gps.altitudeM(), gps.speedMps(), utcStr, localStr,
                           gps.fixAgeMs());
       // 主界面顶部 GPS 状态图标：探测期间显示搜星中，未找到后显示关闭态。
-      lcd.updateGpsIndicator(gps.enabled(),
+      lcd.updateGpsIndicator(gpsOnline,
                              gps.hasFix(), gps.satellites());
     }
   }
