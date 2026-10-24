@@ -2,6 +2,7 @@
 #include "ble_diagnostics.h"
 #include "config.h"
 #include "runtime_log.h"
+#include "saved_connections.h"
 #include <freertos/task.h>
 
 void BleManager::releaseQueues() {
@@ -36,7 +37,8 @@ bool BleManager::enqueue(BleOpKind kind, const char *address, uint8_t type) {
   if (!worker_ || stopping_ || pending_.load() >= BLE_OP_QUEUE_LEN || kind == BleOpKind::Stop) return false;
   if (kind == BleOpKind::Posture) {
     const uint32_t backoff = postureFailures_ ? (1000u << (postureFailures_ > 5 ? 5 : postureFailures_)) : 0;
-    if (busy() || (backoff && millis() - lastPostureFailureMs_ < backoff)) return false;
+    if (busy() || ((!address || !address[0]) && backoff &&
+             millis() - lastPostureFailureMs_ < backoff)) return false;
   }
   BleCommand command;
   command.kind = kind;
@@ -62,6 +64,13 @@ bool BleManager::takeOutcome(BleOutcome &out) {
     }
   }
   if (pending_.fetch_sub(1) == 1) bleDiagnostics.setSensorBusy(false);
+  if (out.success && !out.cancelled && out.address[0] &&
+      (out.kind == BleOpKind::Connect || out.kind == BleOpKind::Posture)) {
+    SavedConnections saved;
+    if (!saved.load() || !saved.rememberBle(out.address, out.addressType,
+        out.kind == BleOpKind::Connect ? SavedConnections::Role::Power : SavedConnections::Role::Posture))
+      AppLog.println("[BLE] connected, but the device profile could not be saved");
+  }
   return true;
 }
 
@@ -81,6 +90,8 @@ void BleManager::work() {
     const BleCancellation cancellation(generation_, command.generation);
     BleOutcome out;
     out.kind = command.kind;
+    snprintf(out.address, sizeof(out.address), "%s", command.address);
+    out.addressType = command.addressType == 0xFF ? 0 : command.addressType;
     bleScanner.setConnected(power_.connected() || posture_.connected() || bleDiagnostics.connected());
     if (!cancellation.cancelled()) {
       switch (command.kind) {
@@ -97,7 +108,13 @@ void BleManager::work() {
           break;
         case BleOpKind::Posture:
           state_.store(BleManagerState::Posture);
-          out.success = posture_.tryConnect(BLE_OP_POSTURE_SCAN_MS, &cancellation);
+          out.success = command.address[0]
+              ? posture_.connectDevice(command.address, command.addressType, &cancellation)
+              : posture_.tryConnect(BLE_OP_POSTURE_SCAN_MS, &cancellation);
+          if (out.success) {
+            snprintf(out.address, sizeof(out.address), "%s", posture_.address());
+            out.addressType = posture_.addressType();
+          }
           if (!out.success) snprintf(out.error, sizeof(out.error), "%s", posture_.lastError());
           break;
         case BleOpKind::Stop: break;

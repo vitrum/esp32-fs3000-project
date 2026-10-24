@@ -55,6 +55,15 @@ bool WifiWeb::takeSourceRequest(int &mode) {
 // 凭据持久化
 // ============================================================================
 void WifiWeb::loadCredentials() {
+  SavedConnections saved;
+  _candidateCount = _candidateIndex = 0;
+  if (saved.load() && saved.wifiCount()) {
+    _candidateCount = saved.wifiCount();
+    for (uint8_t index = 0; index < _candidateCount; ++index) _candidates[index] = *saved.wifi(index);
+    _ssid = _candidates[0].ssid;
+    _pass = _candidates[0].password;
+    return;
+  }
   if (!_prefs.begin("aero-wifi", true)) {
     AppLog.println("[WiFi] Could not open preferences to load Wi-Fi credentials");
     return;
@@ -62,9 +71,19 @@ void WifiWeb::loadCredentials() {
   _ssid = _prefs.getString("ssid", "");
   _pass = _prefs.getString("pass", "");
   _prefs.end();
+  if (!_ssid.isEmpty() && _ssid.length() <= 32 && _pass.length() <= 64) {
+    snprintf(_candidates[0].ssid, sizeof(_candidates[0].ssid), "%s", _ssid.c_str());
+    snprintf(_candidates[0].password, sizeof(_candidates[0].password), "%s", _pass.c_str());
+    _candidateCount = 1;
+  }
 }
 
 bool WifiWeb::saveCredentials(const String &ssid, const String &pass) {
+  SavedConnections saved;
+  if (!saved.load() || !saved.rememberWifi(ssid.c_str(), pass.c_str())) {
+    AppLog.println("[WiFi] Could not persist the successful connection profile");
+    return false;
+  }
   if (!_prefs.begin("aero-wifi", false)) {
     AppLog.println("[WiFi] Could not open preferences to save Wi-Fi credentials");
     return false;
@@ -80,6 +99,11 @@ bool WifiWeb::saveCredentials(const String &ssid, const String &pass) {
 }
 
 void WifiWeb::clearCredentials() {
+  SavedConnections saved;
+  if (!saved.load() || !saved.clearWifi()) {
+    AppLog.println("[WiFi] Could not clear saved network profiles");
+    return;
+  }
   if (!_prefs.begin("aero-wifi", false)) {
     AppLog.println("[WiFi] Could not open preferences to clear credentials");
     return;
@@ -91,6 +115,7 @@ void WifiWeb::clearCredentials() {
     AppLog.println("[WiFi] No saved Wi-Fi credentials to clear");
   _ssid = "";
   _pass = "";
+  _candidateCount = _candidateIndex = 0;
   AppLog.println("[WiFi] credentials cleared");
 }
 
@@ -122,7 +147,12 @@ void WifiWeb::beginSmartConfig() {
 }
 
 void WifiWeb::startSmartConfig() {
+  _startRetryNotBeforeMs = 0;
+  if (!_started && !begin(true)) return;
+  _enabled = true;
   _connected = false;
+  _connecting = false;
+  _candidateCount = _candidateIndex = 0;
   _disconnectedSinceMs = millis();
   if (_mdnsStarted) {
     MDNS.end();
@@ -131,6 +161,7 @@ void WifiWeb::startSmartConfig() {
   if (_wifiModeReady) WiFi.disconnect();
   _reconnectAttempts = 0;
   beginSmartConfig();
+  _enabled = _smartConfigRunning;
 }
 
 void WifiWeb::pollSmartConfig() {
@@ -141,7 +172,7 @@ void WifiWeb::pollSmartConfig() {
     AppLog.println("[WiFi] SmartConfig timed out; stopping.");
     WiFi.stopSmartConfig();
     _smartConfigRunning = false;
-    if (_ssid.isEmpty()) _smartConfigRetryAtMs = millis() + 5000;
+    setEnabled(false);
     return;
   }
 
@@ -150,11 +181,12 @@ void WifiWeb::pollSmartConfig() {
     String pass = WiFi.psk();
     AppLog.printf("[WiFi] SmartConfig received credentials for SSID=%s\n",
                   ssid.c_str());
-    if (!saveCredentials(ssid, pass))
-      AppLog.println("[WiFi] Credentials work for this session but were not persisted");
     _ssid = ssid;
     _pass = pass;
     _smartConfigRunning = false;
+    WiFi.stopSmartConfig();
+    _connecting = true;
+    _attemptStartedMs = millis();
     _reconnectAttempts = 0;
     _lastReconnectMs = millis();
     _disconnectedSinceMs = millis();
@@ -184,15 +216,18 @@ bool WifiWeb::connectStation() {
       return false;
     }
     _wifiModeReady = true;
-    WiFi.setAutoReconnect(true);
+    WiFi.setAutoReconnect(false);
   }
   AppLog.printf("[WiFi] connecting to saved SSID=%s ...\n", _ssid.c_str());
+  WiFi.disconnect();
   const wl_status_t status = WiFi.begin(_ssid.c_str(), _pass.c_str());
   if (status == WL_CONNECT_FAILED) {
     AppLog.println("[WiFi] station start failed; waiting before retry");
     _lastReconnectMs = millis();
     return false;
   }
+  _connecting = true;
+  _attemptStartedMs = millis();
   return true;
 }
 
@@ -204,6 +239,16 @@ void WifiWeb::startMdns() {
     AppLog.printf("[WiFi] mDNS ready: http://%s.local/\n", WIFI_MDNS_HOST);
   } else {
     AppLog.println("[WiFi] mDNS start failed");
+  }
+}
+
+bool WifiWeb::connectSavedStation() {
+  for (;;) {
+    if (connectStation()) return true;
+    if (_candidateIndex + 1 >= _candidateCount) return false;
+    ++_candidateIndex;
+    _ssid = _candidates[_candidateIndex].ssid;
+    _pass = _candidates[_candidateIndex].password;
   }
 }
 
@@ -228,7 +273,7 @@ bool WifiWeb::begin(bool autoSmartConfig) {
       return false;
     }
   } else {
-    radioStarted = connectStation();
+    radioStarted = connectSavedStation();
     _disconnectedSinceMs = millis();
   }
   if (!radioStarted) {
@@ -269,7 +314,9 @@ bool WifiWeb::begin(bool autoSmartConfig) {
 bool WifiWeb::setEnabled(bool enabled) {
   if (enabled == _enabled) return true;
   if (enabled) {
+    _startRetryNotBeforeMs = 0;
     if (!_started) return begin(true);
+    loadCredentials();
     _reconnectAttempts = 0;
     _lastReconnectMs = millis();
     _disconnectedSinceMs = millis();
@@ -278,7 +325,7 @@ bool WifiWeb::setEnabled(bool enabled) {
       beginSmartConfig();
       radioStarted = _smartConfigRunning;
     } else {
-      radioStarted = connectStation();
+      radioStarted = connectSavedStation();
     }
     if (!radioStarted && _wifiModeReady) {
       WiFi.disconnect(true);
@@ -296,6 +343,7 @@ bool WifiWeb::setEnabled(bool enabled) {
   _smartConfigRetryAtMs = 0;
   _startRetryNotBeforeMs = 0;
   _connected = false;
+  _connecting = false;
   _enabled = false;
   if (_mdnsStarted) {
     MDNS.end();
@@ -315,17 +363,14 @@ void WifiWeb::tick() {
 
   pollSmartConfig();
 
-  if (!_smartConfigRunning && _ssid.isEmpty() &&
-      _smartConfigRetryAtMs != 0 &&
-      (int32_t)(millis() - _smartConfigRetryAtMs) >= 0) {
-    beginSmartConfig();
-  }
-
   if (!_smartConfigRunning) {
     wl_status_t st = WiFi.status();
     bool nowConnected = (st == WL_CONNECTED);
     if (nowConnected && !_connected) {
       _connected = true;
+      _connecting = false;
+      if (!saveCredentials(_ssid, _pass))
+        AppLog.println("[WiFi] Connected, but profile was not saved");
       configTime(0, 0, "ntp.aliyun.com", "time.cloudflare.com", "pool.ntp.org");
       AppLog.println("[TIME] network connected; requesting NTP UTC asynchronously");
       startMdns();
@@ -339,21 +384,19 @@ void WifiWeb::tick() {
         _mdnsStarted = false;
       }
       AppLog.println("[WiFi] disconnected");
+      setEnabled(false);
+      AppLog.println("[WiFi] waiting for manual reconnection");
     }
-    if (!nowConnected && !_ssid.isEmpty() &&
-        millis() - _lastReconnectMs >= WIFI_RECONNECT_MS) {
-      _lastReconnectMs = millis();
-      if (_reconnectAttempts < UINT8_MAX) ++_reconnectAttempts;
-      if (_wifiModeReady && _reconnectAttempts >= 6 &&
-          millis() - _disconnectedSinceMs >= 60000) {
-        AppLog.println("[WiFi] saved network unavailable; entering SmartConfig");
-        startSmartConfig();
+    if (!nowConnected && _connecting && millis() - _attemptStartedMs >= 15000) {
+      _connecting = false;
+      if (_candidateIndex + 1 < _candidateCount) {
+        ++_candidateIndex;
+        _ssid = _candidates[_candidateIndex].ssid;
+        _pass = _candidates[_candidateIndex].password;
+        if (!connectSavedStation()) setEnabled(false);
       } else {
-        if (_wifiModeReady) {
-          WiFi.reconnect();
-        } else {
-          connectStation();
-        }
+        setEnabled(false);
+        AppLog.println("[WiFi] saved network list exhausted; waiting for manual setup");
       }
     }
   }

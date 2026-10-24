@@ -28,6 +28,7 @@
 #include "ble_power.h"
 #include "ble_posture.h"
 #include "ble_manager.h"
+#include "startup_connections.h"
 #include "bme280_env.h"
 #include "csv_logger.h"
 #include "display_lcd.h"
@@ -42,6 +43,7 @@ FS3000       windSensor;
 BlePowerMeter powerMeter;
 BlePosture   posture;
 BleManager   bleManager(powerMeter, posture);
+StartupConnections startupConnections;
 EnvSensor    env;
 CsvLogger    logger;
 RecordingJournal recordingJournal;
@@ -159,6 +161,16 @@ static void armRecording() {
   lastLogMs = lastSampleMs = millis();
 }
 
+static void cancelStartupConnections(bool stopWifiAttempt = false) {
+  if (startupConnections.waiting()) bleManager.cancel();
+  startupConnections.cancel();
+#if WIFI_WEB_ENABLE
+  if (stopWifiAttempt && wifiWeb.connecting()) wifiWeb.setEnabled(false);
+#else
+  (void)stopWifiAttempt;
+#endif
+}
+
 void setup() {
   // 电源开关管理：尽早初始化以锁定供电（开机需按电池开关）
   powerKey.begin();
@@ -216,7 +228,12 @@ void setup() {
   // 单个串行工作线程负责所有扫描/连接；主循环只投递命令与取结果。
   if (!beginBleWorker())
     AppLog.println("[BLE] serial worker unavailable; BLE pairing disabled");
-  AppLog.println("Scanning for BLE power meter & posture sensor...");
+  if (!startupConnections.begin())
+    AppLog.println("[STARTUP] saved connection profiles unavailable; manual setup required");
+#if WIFI_WEB_ENABLE
+  wifiWeb.begin(false);
+#endif
+  AppLog.println("[STARTUP] saved Wi-Fi first, then saved BLE devices; one bounded attempt each");
 }
 
 void loop() {
@@ -370,12 +387,18 @@ void loop() {
 #if WIFI_WEB_ENABLE
   bool wifiEnabled = false;
   if (lcd.takeWifiEnableRequest(wifiEnabled)) {
+    cancelStartupConnections();
     if (!wifiWeb.setEnabled(wifiEnabled))
       AppLog.println("[WiFi] Could not change Wi-Fi state");
+  }
+  if (lcd.takeWifiSetupRequest()) {
+    cancelStartupConnections();
+    wifiWeb.startSmartConfig();
   }
 
   // Wi-Fi / SmartConfig / Web 服务器事件泵（非阻塞）
   wifiWeb.tick();
+  if (wifiWeb.provisioning()) cancelStartupConnections();
   const String wifiSsid = wifiWeb.ssid();
   const String wifiIp = wifiWeb.ip().toString();
   lcd.updateWifiStatus(wifiWeb.enabled(), wifiWeb.connected(),
@@ -557,6 +580,7 @@ void loop() {
 
   int requestedMode = -1;
   if (lcd.takePowerSourceRequest(requestedMode)) {
+    cancelStartupConnections();
     powerMode = requestedMode;
     AppLog.printf("[PM] selected mode: %s\n",
                   powerMode == 3 ? "VIRTUAL" :
@@ -590,6 +614,7 @@ void loop() {
   }
 
   if (lcd.takeBleScanRequest()) {
+    cancelStartupConnections(true);
     manualPairingActive = true;
     powerMode = 1;
     if (!bleAvailable) {
@@ -608,15 +633,17 @@ void loop() {
 
   char selectedAddress[18] = {};
   uint8_t selectedAddressType = 0xFF;
+  bool selectedPosture = false;
   if (lcd.takeBleConnectRequest(selectedAddress, sizeof(selectedAddress),
-                                &selectedAddressType)) {
+                                &selectedAddressType, &selectedPosture)) {
+                  cancelStartupConnections(true);
     AppLog.printf("[BLE] user confirmed connection to %s (addressType=%u)\n",
                   selectedAddress, (unsigned)selectedAddressType);
     if (!bleAvailable) {
       manualPairingActive = false;
       lcd.showBleConnectFailure(
           "BLE is not ready. Wait a moment and try again.");
-    } else if (!enqueueBleCommand(BleOpKind::Connect, selectedAddress,
+    } else if (!enqueueBleCommand(selectedPosture ? BleOpKind::Posture : BleOpKind::Connect, selectedAddress,
                                   selectedAddressType)) {
       manualPairingActive = false;
       lcd.showBleConnectFailure(
@@ -629,8 +656,18 @@ void loop() {
 
   BleOutcome outcome;
   if (takeBleOutcome(outcome)) {
-    if (outcome.kind == BleOpKind::Posture) {
+    if (startupConnections.waiting()) {
+      startupConnections.complete();
+      powerConnected = powerMeter.connected();
+      postureConnected = posture.connected();
+      AppLog.printf("[STARTUP] BLE %s: %s\n", outcome.address,
+                    outcome.success ? "connected and saved" : "not available; continuing list");
+    } else if (outcome.kind == BleOpKind::Posture) {
+      manualPairingActive = false;
       postureConnected = outcome.success;
+      if (outcome.success) lcd.closePowerMeterPanels();
+      else if (outcome.cancelled) lcd.finishBleCancelled();
+      else lcd.showBleConnectFailure(outcome.error);
       AppLog.printf("[BLE] posture discovery %s\n",
                     postureConnected ? "connected"
                                      : (outcome.cancelled
@@ -695,18 +732,21 @@ void loop() {
     lastBlePostureNotification = blePostureNotifications;
     AppLog.printf("[BLE-POSTURE] pitch=%+.2f deg\n", posture.pitchDeg());
   }
-  if (!wirelessSuspendedForAudio && bleManager.available() && !manualPairingActive &&
-      !postureConnected) {
-    const uint32_t elapsed = now - lastBlePostureAttemptMs;
-    // 音频结束后补一次；其余情况按 BLE_POSTURE_RECONNECT_MS 限频。
-    const bool due = postAudioBleCatchUpNeeded
-                         ? !bleManager.busy()
-                         : elapsed >= BLE_POSTURE_RECONNECT_MS;
-    // 队列满说明还有手动操作在排队/执行，姿态发现让位，下一轮再看。
-    if (due && !bleManager.busy()) {
-      if (enqueueBleCommand(BleOpKind::Posture)) {
-        lastBlePostureAttemptMs = now;
-        postAudioBleCatchUpNeeded = false;
+  bool wifiBusy = false;
+#if WIFI_WEB_ENABLE
+  wifiBusy = wifiWeb.connecting() || wifiWeb.provisioning();
+#endif
+  if (bleAvailable && !manualPairingActive && !recorder.busy()) {
+    SavedConnections::Ble entry;
+    if (startupConnections.takeNext(wifiBusy, bleManager.busy(), powerMeter.connected(),
+                                     posture.connected(), entry)) {
+      AppLog.printf("[STARTUP] BLE %u/%u: %s\n", startupConnections.attemptedIndex(),
+                    startupConnections.count(), entry.address);
+      if (!enqueueBleCommand(entry.role == SavedConnections::Role::Power
+                                ? BleOpKind::Connect : BleOpKind::Posture,
+                             entry.address, entry.addressType)) {
+        startupConnections.complete();
+        AppLog.println("[STARTUP] BLE attempt unavailable; waiting for next saved entry/manual setup");
       }
     }
   }

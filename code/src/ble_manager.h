@@ -20,6 +20,8 @@ struct BleOutcome {
   BleOpKind kind = BleOpKind::Scan;
   bool success = false;
   bool cancelled = false;
+  char address[18] = {};
+  uint8_t addressType = 0xFF;
   size_t deviceCount = 0;
   BlePowerDevice devices[4] = {};
   char error[320] = {};

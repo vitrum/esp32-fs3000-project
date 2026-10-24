@@ -27,7 +27,7 @@ public:
   // 取出用户确认连接的地址，并带回该设备在扫描时记录的真实地址类型
   // （addressType 可为 nullptr）。
   bool takeBleConnectRequest(char *address, size_t capacity,
-                             uint8_t *addressType = nullptr);
+                             uint8_t *addressType = nullptr, bool *postureDevice = nullptr);
   bool takeBleCancelRequest();
   // 主循环处理完一次 BLE 操作后调用，允许 UI 再次接受 BLE 请求。
   void clearBleRequestInFlight() { bleRequestInFlight_ = false; }
@@ -37,6 +37,7 @@ public:
   void setBleDevices(const BlePowerDevice *devices, size_t count, const char *status);
   void closePowerMeterPanels();
   bool takeWifiEnableRequest(bool &enabled);
+  bool takeWifiSetupRequest() { const bool requested = wifiSetupRequested_; wifiSetupRequested_ = false; return requested; }
   void updateWifiStatus(bool enabled, bool connected, bool provisioning,
                         const char *ssid, const char *ip);
 
@@ -110,6 +111,7 @@ private:
   // 主界面顶部 GPS 状态指示（图标 + 卫星数 + 搜星动画）
   lv_obj_t *gpsIndicatorSpinner_ = nullptr;
   lv_obj_t *gpsIndicatorLabel_ = nullptr;
+  lv_obj_t *gpsSatelliteLabel_ = nullptr;
   bool      gpsIndicatorFixed_ = false;   // 当前是否显示为已定位（避免重复刷新）
   lv_obj_t *powerSourceButton_ = nullptr;
   lv_obj_t *powerSourceLabel_ = nullptr;
@@ -247,6 +249,8 @@ private:
   // 扫描阶段记录的被选设备真实地址类型，随连接请求一起回传给主循环。
   uint8_t requestedBleAddressType_ = 0xFF;
   bool requestedBleCancel_ = false;
+  bool requestedBlePosture_ = false;
+  bool wifiSetupRequested_ = false;
   bool bleOperationActive_ = false;
   char requestedBleAddress_[18] = {};
   BlePowerDevice bleDevices_[4] = {};
@@ -297,6 +301,7 @@ private:
   static void onLanguageBack(lv_event_t *event);
   static void onWifiButton(lv_event_t *event);
   static void onWifiBack(lv_event_t *event);
+  static void onWifiSetup(lv_event_t *event);
   static void onWifiSelected(lv_event_t *event);
   static void onBleSelected(lv_event_t *event);
   static void onBleScanAgain(lv_event_t *event);

@@ -41,9 +41,11 @@ Subsequent builds use Docker layers and the pip download cache.
 
 The 240x320 dashboard uses unframed metric rows, horizontal separators and a
 common right edge for the large Zone/wind/power readings. Zone uses 40px type;
-the secondary CdA value, label and unit use 14px at the lower right of that row,
-beside an ellipsized posture caption. Wind/power units remain small on the left.
-Settings is a gear on the cadence row. The live Web page keeps CdA as its primary
+the secondary CdA number uses 14px at the lower right, with its label/unit at the
+lower left and an ellipsized posture caption above. Wind/power units remain
+small on the left. Settings is a gear in the top status row. GPS hugs the left
+edge; the spinner and satellite count alternate in one slot to the icon's right.
+The live Web page keeps CdA as its primary
 aero value with the same unframed visual structure: one column on
 phones, instrument plus supporting controls/records on desktop. It has no
 external font/icon/CDN dependency. Web airspeed and ground speed display km/h;
@@ -58,7 +60,7 @@ data timeout, while command errors remain independent from incoming telemetry.
 With the workspace served over local HTTP:
 
 - `simulator/index.html?test=1`: device UI regression, including alignment,
-  separate units, unframed rows and the cadence/settings row.
+  separate units, unframed rows, top settings and the shared GPS status slot.
 - `simulator/web-preview.html?test=1`: loads the actual HTML from
   `src/web_assets.h`, installs simulated WebSocket/HTTP boundaries and runs Web
   regression. Without `?test=1` it is an interactive preview, not a device client.
@@ -97,7 +99,7 @@ claim of 100% line/branch or end-to-end hardware coverage.
 | Group | Scenarios |
 | --- | --- |
 | `system_coexistence` | GPS UART receiver and BLE scan/notifications stay active while an HTTP callback thread submits 64 control requests, 64 WebSocket telemetry frames are produced and 64 CSV samples are written; continued recording during paced HTTP download; SD lock contention, competing/missing downloads, Wi-Fi loss/reconnect, scan cancellation and clean GPS/BLE shutdown |
-| `system_wifi` | No credentials, preferences failure, STA initialization/start failure, retry cooldown, low contiguous heap, mDNS failure, reconnect fallback, SmartConfig timeout/retry/save failure, enable/disable, credential clearing, invalid commands/source IDs/paths, escaped status JSON and nonfinite telemetry |
+| `system_wifi` | No credentials, preferences failure, STA initialization/start failure, low contiguous heap, mDNS failure, saved-network ordering, immediate failure/timeout progression, stop-after-list, manual reconnect, successful-connection persistence, SmartConfig timeout/manual retry/save failure, enable/disable, credential clearing, invalid controls/paths, escaped JSON and nonfinite telemetry |
 | `system_storage` | SPI/mount/task failure and startup worker retry/reuse, bounded CMD13 timeout recovery (no write-command or non-timeout retries), no automatic formatting, recording-directory file conflicts, GPS-over-fallback UTC priority, paused buffer overflow, date rollover, unique filenames, blocked writer recovery, short write/fsync recovery, session limits, repeated parent/child directory reads, empty versus missing directories, partial-list errors and recovery |
 | `system_recording_lifecycle` | Production RideRecorder and raw Flash journal: validity-gated start, valid zero samples, duplicate START, skipped windows/duration, torn session/sample/ack writes, CRC corruption, full cache, SD recovery retry, four-sample and 65-sample reboot replay, shutdown FIT and delayed cache acknowledgement; three retained CSV/FIT pairs independently decoded |
 | `system_fit` | HTTP start request, real CSV recording and writer, 65 fixed samples split at UTC midnight, asynchronous FIT export, automatic stop/flush, overwrite protection, malformed CSV rejection, retained output and independent strict FIT decoding |
@@ -147,6 +149,46 @@ up and checking the card on a computer, then comparing against board-side reads.
 Native POSIX tests do not establish that the physical FAT or SPI link is healthy.
 
 ## Recorded FIT Validation
+
+### Saved Connections And Startup Queue
+
+Successful Wi-Fi and BLE power/posture connections are stored in NVS namespace
+`aero-links` as a versioned CRC-checked blob. Each list holds at most four entries,
+most-recent-success first; SSID and BLE address/type/role are deduplicated. BLE
+address type is preserved. Failed connections and failed writes do not replace
+the in-memory or saved list. The first load may create the NVS namespace. Saved
+credentials use the board's existing NVS security configuration; this is not a
+new encryption/bonding layer, and passwords are never printed in logs.
+
+On boot, legacy `aero-wifi` credentials remain readable for migration. The
+firmware tries the saved Wi-Fi list once, at most 15 seconds per pending station
+attempt; immediate failures advance to the next entry. A successful station
+connection is persisted and starts NTP. The BLE startup list begins only when
+Wi-Fi is no longer connecting/provisioning and the BLE worker is idle. It uses
+saved addresses directly, one queued command at a time. Once power or posture
+has connected, further entries for that role are skipped. Failures advance once;
+there is no periodic background power/posture scan or automatic Wi-Fi reconnect.
+If a connected network drops, Wi-Fi stops and waits for explicit manual action.
+
+Manual controls take over the remaining startup list. ON retries saved Wi-Fi;
+SET UP WI-FI explicitly starts SmartConfig, including when already OFF. A
+SmartConfig receipt is not enough to save new credentials: actual station
+connection must succeed. Failed/exhausted attempts do not automatically enter
+SmartConfig, and SmartConfig timeout does not restart itself. BLE scanning still
+runs on explicit request; devices advertising 0xFFE0 or named WT* can be selected
+as posture sensors. Successful manual connections update the saved list. Public
+and static-random addresses can be reused, but an unbonded peripheral rotating
+its private address may require manual rediscovery; saving an address is not
+Bluetooth bonding. Each boot necessarily establishes new physical radio links.
+
+`system_storage` tests list bounds/order, reboot load, corruption and write failure,
+startup serialization/role skipping/exhaustion/manual cancellation. `ble_runtime`
+checks successful persistence and posture direct connection without scanning,
+including after discovery backoff. `system_wifi` checks multi-network attempts,
+success-only saves and no unattended retries; `system_coexistence` exercises an
+explicit manual Wi-Fi reconnect while other production modules keep running.
+Real AP availability, RF coexistence and pairing of the actual devices remain
+hardware gates. Main-loop orchestration is compiled but not run by native mocks.
 
 ### Recording And Power-Loss Recovery
 

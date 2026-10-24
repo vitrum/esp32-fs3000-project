@@ -25,6 +25,10 @@ public:
   // cancelFlag 指向工作线程的取消标志：为 true 时尽快放弃本次扫描/连接。
   bool tryConnect(uint32_t scanMs = 1500,
                   const BleCancellation *cancelFlag = nullptr);
+  bool connectDevice(const char *address, uint8_t addressType,
+                     const BleCancellation *cancelFlag = nullptr);
+  const char *address() const { return s_connectedAddress; }
+  uint8_t addressType() const { return s_connectedAddressType; }
   void processData();
   uint32_t droppedPackets() const;
   void disconnect();               // 断开并释放客户端
@@ -44,5 +48,7 @@ private:
   static uint32_t s_notificationCount;
   static NimBLEClient *s_client;
   static char   s_lastError[160];
+  static char s_connectedAddress[18];
+  static uint8_t s_connectedAddressType;
 };
 

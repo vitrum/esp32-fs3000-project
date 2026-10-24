@@ -1,4 +1,7 @@
 #include "ble_posture.h"
+char BlePosture::s_connectedAddress[18] = {};
+uint8_t BlePosture::s_connectedAddressType = 0;
+
 #include "config.h"
 #include "runtime_log.h"
 #include <NimBLEDevice.h>
@@ -86,6 +89,7 @@ void BlePosture::disconnect() {
     s_client = nullptr;
   }
   s_connected = false;
+  s_connectedAddress[0] = '\0';
   postureInbox.reset();
 }
 
@@ -148,6 +152,15 @@ bool BlePosture::tryConnect(uint32_t scanMs, const BleCancellation *cancelFlag) 
   }
   AppLog.printf("[BLE-POSTURE] candidate %s (%s)\n",
                 name[0] ? name : "unnamed", address);
+  return connectDevice(address, addressType, cancelFlag);
+}
+
+bool BlePosture::connectDevice(const char *address, uint8_t addressType,
+                               const BleCancellation *cancelFlag) {
+  if (!address || strlen(address) != 17 || addressType > 3 || !NimBLEDevice::isInitialized()) {
+    snprintf(s_lastError, sizeof(s_lastError), "Invalid saved posture device or BLE unavailable");
+    return false;
+  }
 
   if (cancelFlag && cancelFlag->cancelled()) {
     snprintf(s_lastError, sizeof(s_lastError), "cancelled");
@@ -202,6 +215,8 @@ bool BlePosture::tryConnect(uint32_t scanMs, const BleCancellation *cancelFlag) 
   }
 
   s_connected = true;
+  snprintf(s_connectedAddress, sizeof(s_connectedAddress), "%s", address);
+  s_connectedAddressType = addressType;
   AppLog.printf("[BLE-POSTURE] connected: %s\n", address);
   return true;
 }

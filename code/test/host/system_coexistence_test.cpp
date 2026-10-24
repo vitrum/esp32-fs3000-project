@@ -4,6 +4,8 @@
 #include "fit_export.h"
 #include "recording_journal.h"
 #include "ride_recorder.h"
+#include "saved_connections.h"
+#include "startup_connections.h"
 #include "fs3000.h"
 #include "gps_time.h"
 #include "sd_download.h"
@@ -73,6 +75,7 @@ static std::string readFile(const std::string &path) {
 
 static void wifiTests() {
   Preferences::values.clear();
+  Preferences::bytes.clear();
   {
     WifiWeb web;
     assert(!web.begin(false) && !web.enabled());
@@ -190,20 +193,32 @@ static void wifiTests() {
     assert(web.unixSec() >= 1577836800);
     WiFi.state = WL_CONNECTED;
     web.tick();
+    assert(hostNtpRequests == requestsBeforeConnect + 1 && !web.enabled());
+    assert(web.setEnabled(true));
+    WiFi.state = WL_CONNECTED;
+    web.tick();
     assert(hostNtpRequests == requestsBeforeConnect + 2);
     assert(web.unixSec() >= 1577836800);
     WiFi.state = WL_DISCONNECTED;
     web.tick();
     web.broadcastTelemetry(1, 1, 1, 1, 1, true, 1, 1, 1, 1, true);
     assert(socket->frames.size() == frames);
+    const auto reconnects = WiFi.reconnectCalls;
+    const auto provisions = WiFi.provisionCalls;
     for (unsigned attempt = 0; attempt < 6; ++attempt) {
       clockOffset += 60001;
       web.tick();
     }
+    assert(!web.provisioning() && !web.enabled());
+    assert(WiFi.reconnectCalls == reconnects && WiFi.provisionCalls == provisions);
+    web.startSmartConfig();
     assert(web.provisioning());
     WiFi.network = "new-network";
     WiFi.password = "new-password";
     WiFi.provisionDone = true;
+    web.tick();
+    assert(Preferences::values["ssid"] != "new-network");
+    WiFi.state = WL_CONNECTED;
     web.tick();
     assert(!web.provisioning() && Preferences::values["ssid"] == "new-network");
     WiFi.provisionDone = false;
@@ -221,17 +236,55 @@ static void wifiTests() {
     assert(!web.provisioning());
     clockOffset += 5001;
     web.tick();
-    assert(web.provisioning());
+    assert(!web.provisioning() && !web.enabled());
+    assert(web.setEnabled(true) && web.provisioning());
     WiFi.network = "ephemeral";
     WiFi.password = "password";
     WiFi.provisionDone = true;
     Preferences::failWrite = true;
+    web.tick();
+    WiFi.state = WL_CONNECTED;
     web.tick();
     assert(web.ssid() == "ephemeral" && !web.provisioning());
     Preferences::failWrite = false;
     WiFi.provisionDone = false;
     assert(web.setEnabled(false));
   }
+  Preferences::bytes.clear();
+  Preferences::values.clear();
+  {
+    SavedConnections profiles;
+    assert(profiles.load());
+    assert(profiles.rememberWifi("available", "good-password"));
+    assert(profiles.rememberWifi("missing", "old-password"));
+    {
+      WifiWeb immediate;
+      WiFi.failNextStarts = 1;
+      assert(immediate.begin(false) && immediate.connecting() && immediate.ssid() == "available");
+      assert(immediate.setEnabled(false));
+    }
+    WifiWeb web;
+    assert(web.begin(false) && web.connecting() && web.ssid() == "missing");
+    const auto calls = WiFi.beginCalls;
+    clockOffset += 15001;
+    web.tick();
+    assert(web.connecting() && web.ssid() == "available" && WiFi.beginCalls == calls + 1);
+    WiFi.state = WL_CONNECTED;
+    web.tick();
+    SavedConnections reboot;
+    assert(reboot.load() && !strcmp(reboot.wifi(0)->ssid, "available"));
+    assert(web.setEnabled(false));
+    WifiWeb unavailable;
+    assert(unavailable.begin(false));
+    clockOffset += 15001; unavailable.tick();
+    clockOffset += 15001; unavailable.tick();
+    assert(!unavailable.enabled() && !unavailable.connecting());
+    const auto exhausted = WiFi.beginCalls;
+    clockOffset += 120000; unavailable.tick();
+    assert(WiFi.beginCalls == exhausted && !unavailable.provisioning());
+  }
+  Preferences::bytes.clear();
+  Preferences::values.clear();
   std::cout << "PASS WiFi: lifecycle, startup cooldown, low heap, SmartConfig timeout/retry/persistence, reconnect, mDNS, HTTP validation, telemetry\n";
 }
 
@@ -329,7 +382,55 @@ static void journalTests() {
   std::cout << "PASS journal: CRC, reboot replay, torn records, interrupted acknowledgement, session reuse\n";
 }
 
+static void savedConnectionTests() {
+  Preferences::bytes.clear();
+  SavedConnections profiles;
+  assert(profiles.load() && profiles.wifiCount() == 0 && profiles.bleCount() == 0);
+  assert(!Preferences::lastReadOnly);
+  assert(!profiles.rememberWifi("", "password"));
+  assert(!profiles.rememberBle("invalid", 0, SavedConnections::Role::Power));
+  for (unsigned index = 0; index < 6; ++index)
+    assert(profiles.rememberWifi(("network" + std::to_string(index)).c_str(), "password"));
+  assert(profiles.wifiCount() == 4 && !strcmp(profiles.wifi(0)->ssid, "network5"));
+  assert(profiles.rememberWifi("network3", "updated"));
+  assert(profiles.wifiCount() == 4 && !strcmp(profiles.wifi(0)->password, "updated"));
+  assert(profiles.rememberBle("11:22:33:44:55:66", 1, SavedConnections::Role::Power));
+  assert(profiles.rememberBle("22:33:44:55:66:77", 0, SavedConnections::Role::Posture));
+  SavedConnections reboot;
+  assert(reboot.load() && reboot.wifiCount() == 4 && reboot.bleCount() == 2);
+  assert(reboot.ble(0)->role == SavedConnections::Role::Posture && reboot.ble(1)->addressType == 1);
+  StartupConnections startup;
+  assert(startup.begin());
+  SavedConnections::Ble entry;
+  assert(!startup.takeNext(true, false, false, false, entry));
+  assert(!startup.takeNext(false, true, false, false, entry));
+  assert(startup.takeNext(false, false, false, false, entry) && entry.role == SavedConnections::Role::Posture);
+  assert(!startup.takeNext(false, false, false, false, entry));
+  startup.complete();
+  assert(startup.takeNext(false, false, false, false, entry) && entry.role == SavedConnections::Role::Power);
+  startup.complete();
+  assert(!startup.takeNext(false, false, false, false, entry));
+  assert(!startup.takeNext(false, false, false, false, entry));
+  assert(startup.begin());
+  assert(!startup.takeNext(false, false, true, true, entry));
+  assert(startup.begin());
+  startup.cancel();
+  assert(!startup.takeNext(false, false, false, false, entry));
+  Preferences::failWrite = true;
+  assert(!reboot.rememberWifi("failed", "password"));
+  assert(!strcmp(reboot.wifi(0)->ssid, "network3"));
+  Preferences::failWrite = false;
+  assert(reboot.clearWifi() && reboot.wifiCount() == 0 && reboot.bleCount() == 2);
+  auto saved = Preferences::bytes;
+  Preferences::bytes["aero-links/profiles"][20] ^= 1;
+  SavedConnections corrupt;
+  assert(!corrupt.load());
+  Preferences::bytes = saved;
+  Preferences::bytes.clear();
+}
+
 static void storageTests() {
+  savedConnectionTests();
   journalTests();
   assert(beginSdCardMutex());
   SdFileEntry unavailableEntries[1];
@@ -634,11 +735,13 @@ static void coexistenceTests() {
   assert(competing.status == 503);
   again.response.reset();
   WiFi.state = WL_DISCONNECTED;
+  const auto reconnects = WiFi.reconnectCalls;
   wifiWeb.tick();
   assert(!wifiWeb.connected() && power.connected());
   clockOffset += WIFI_RECONNECT_MS;
   wifiWeb.tick();
-  assert(WiFi.reconnectCalls > 0);
+  assert(WiFi.reconnectCalls == reconnects && !wifiWeb.enabled());
+  assert(wifiWeb.setEnabled(true));
   WiFi.state = WL_CONNECTED;
   wifiWeb.tick();
   assert(wifiWeb.connected());

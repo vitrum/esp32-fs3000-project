@@ -341,6 +341,7 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     bool cyclingPower;
     bool fitnessMachine;
     bool speedCadence;
+    bool postureSensor;
     bool supported;
     uint8_t addressType;
   };
@@ -354,9 +355,10 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     const bool cyclingPower = ad->isAdvertisingService(kSvcCP);
     const bool fitnessMachine = ad->isAdvertisingService(kSvcFTMS);
     const bool speedCadence = ad->isAdvertisingService(kSvcCSC);
-    const bool supported = cyclingPower || fitnessMachine || speedCadence;
-
     const std::string name = ad->getName();
+    const bool postureSensor = ad->isAdvertisingService(NimBLEUUID("0xffe0")) ||
+      name.compare(0, strlen(BLE_POSTURE_NAME_PREFIX), BLE_POSTURE_NAME_PREFIX) == 0;
+    const bool supported = cyclingPower || fitnessMachine || speedCadence || postureSensor;
     if (name.empty() && !supported) continue;
 
     const std::string address = ad->getAddress().toString();
@@ -377,6 +379,7 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     c.cyclingPower = cyclingPower;
     c.fitnessMachine = fitnessMachine;
     c.speedCadence = speedCadence;
+    c.postureSensor = postureSensor;
     c.supported = supported;
     // 关键：记录真实地址类型，供后续 connect 使用（见 BlePowerDevice 注释）。
     c.addressType = (uint8_t)ad->getAddress().getType();
@@ -395,6 +398,7 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
       device.cyclingPower = c.cyclingPower;
       device.fitnessMachine = c.fitnessMachine;
       device.speedCadence = c.speedCadence;
+      device.postureSensor = c.postureSensor;
       device.addressType = c.addressType;
     }
   }

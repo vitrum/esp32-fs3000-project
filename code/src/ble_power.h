@@ -17,6 +17,7 @@ struct BlePowerDevice {
   // 3=RANDOM_PRIVATE_NON_RESOLVABLE，见 BLE_ADDR_*）。连接时必须用真实类型，
   // 否则「用 PUBLIC 去连 RANDOM 地址」会导致对端不应答、8s 后 ETIMEOUT(code 13)。
   uint8_t addressType;
+  bool postureSensor;
 };
 
 // BLE GATT Central supporting Cycling Power, FTMS trainers, and CSC sensors.

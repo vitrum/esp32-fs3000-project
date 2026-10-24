@@ -1,6 +1,7 @@
 #include "ble_diagnostics.h"
 #include "runtime_log.h"
 #include "ble_manager.h"
+#include "saved_connections.h"
 #include "ble_inbox.h"
 #include <NimBLEDevice.h>
 #include <cassert>
@@ -212,6 +213,9 @@ static void controlTests() {
   assert(empty.success && empty.deviceCount == 0 && !manager.busy());
   assert(manager.enqueue(BleOpKind::Connect, "11:22:33:44:55:66", 1));
   assert(outcome(manager).success && power.connected());
+  SavedConnections saved;
+  assert(saved.load() && saved.bleCount() == 1);
+  assert(!strcmp(saved.ble(0)->address, "11:22:33:44:55:66") && saved.ble(0)->addressType == 1);
   manager.tick();
   auto *measurement = &NimBLEDevice::clients.front()->service.measurement;
   assert(!power.measurementValid(millis()));
@@ -298,6 +302,12 @@ static void controlTests() {
   assert(posture.notificationCount() == postureCount + 1 && std::abs(posture.pitchDeg() + 12.34f) < 0.001f);
   postureClient->disconnect();
   assert(!posture.connected());
+  const auto scansBeforeDirect = NimBLEDevice::scan.starts.load();
+  assert(manager.enqueue(BleOpKind::Posture, "33:44:55:66:77:88", 1));
+  assert(outcome(manager).success && posture.connected());
+  assert(NimBLEDevice::scan.starts.load() == scansBeforeDirect);
+  assert(saved.load() && saved.ble(0)->role == SavedConnections::Role::Posture);
+  posture.disconnect();
   NimBLEDevice::scan.manualCompletion = true;
   NimBLEDevice::scan.startHook = {};
   assert(manager.enqueue(BleOpKind::Scan));
@@ -320,6 +330,8 @@ static void controlTests() {
   assert(manager.enqueue(BleOpKind::Posture));
   assert(!outcome(manager).success);
   assert(!manager.enqueue(BleOpKind::Posture));
+  assert(manager.enqueue(BleOpKind::Posture, "33:44:55:66:77:88", 1));
+  assert(outcome(manager).success && posture.connected());
   assert(manager.enqueue(BleOpKind::Scan));
   assert(outcome(manager).success);
   assert(manager.suspend() && !manager.available() && !NimBLEDevice::isInitialized());

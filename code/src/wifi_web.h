@@ -7,6 +7,7 @@
 #include <ESPAsyncWebServer.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
+#include "saved_connections.h"
 
 // ============================================================================
 // Wi-Fi 网页实时数据服务
@@ -51,6 +52,7 @@ public:
   bool connected() const { return _connected; }
   bool enabled() const { return _enabled; }
   bool provisioning() const { return _smartConfigRunning; }
+  bool connecting() const { return _connecting; }
   IPAddress ip() const { return WiFi.localIP(); }
   String ssid() const { return _ssid; }
   uint32_t clientCount() const;
@@ -73,6 +75,10 @@ private:
   bool _wifiModeReady = false;
   bool _wifiBuffersConfigured = false;
   bool _timeSynchronized = false;
+  bool _connecting = false;
+  uint32_t _attemptStartedMs = 0;
+  SavedConnections::Wifi _candidates[SavedConnections::kCapacity] = {};
+  uint8_t _candidateCount = 0, _candidateIndex = 0;
   uint32_t _lastReconnectMs = 0;
   uint32_t _smartConfigStartMs = 0;
   uint32_t _smartConfigRetryAtMs = 0;
@@ -92,6 +98,7 @@ private:
   void beginSmartConfig();
   void pollSmartConfig();
   bool connectStation();
+  bool connectSavedStation();
   void startMdns();
 
   void registerRoutes();

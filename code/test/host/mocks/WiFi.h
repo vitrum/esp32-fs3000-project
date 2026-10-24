@@ -13,7 +13,9 @@ public:
   bool mode(int value) { ++modeCalls; if (failMode) return false; modeValue = value; return true; }
   void setAutoReconnect(bool) {}
   wl_status_t begin(const char *ssid, const char *pass) {
-    ++beginCalls; network = ssid; password = pass; return beginResult;
+    ++beginCalls; network = ssid; password = pass;
+    if (failNextStarts) { --failNextStarts; return WL_CONNECT_FAILED; }
+    return beginResult;
   }
   bool beginSmartConfig() { ++provisionCalls; return true; }
   void stopSmartConfig() { ++stopProvisionCalls; }
@@ -29,6 +31,7 @@ public:
   int modeValue = WIFI_OFF;
   unsigned modeCalls = 0, beginCalls = 0, reconnectCalls = 0;
   unsigned provisionCalls = 0, stopProvisionCalls = 0;
+  unsigned failNextStarts = 0;
   String network, password;
 };
 inline HostWiFi WiFi;

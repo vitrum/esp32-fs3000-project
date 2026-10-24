@@ -308,6 +308,10 @@ void DisplayLcd::onWifiBack(lv_event_t *) {
   lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
+void DisplayLcd::onWifiSetup(lv_event_t *) {
+  if (g_display) g_display->wifiSetupRequested_ = true;
+}
+
 void DisplayLcd::onLanguageSelected(lv_event_t *event) {
   if (!g_display) return;
   const bool chinese = (uintptr_t)lv_event_get_user_data(event) == 1;
@@ -411,6 +415,11 @@ void DisplayLcd::onBleDeviceSelected(lv_event_t *event) {
                     g_display->bleDevices_[index].name);
   lv_label_set_text(g_display->bleConfirmAddressLabel_,
                     g_display->bleDevices_[index].address);
+  if (g_display->bleDevices_[index].postureSensor) {
+    char details[64];
+    snprintf(details, sizeof(details), "%s\nPosture sensor", g_display->bleDevices_[index].address);
+    lv_label_set_text(g_display->bleConfirmAddressLabel_, details);
+  }
   if (g_display->bleDevices_[index].cyclingPower ||
       g_display->bleDevices_[index].fitnessMachine) {
     const char *profile = g_display->bleDevices_[index].cyclingPower
@@ -437,6 +446,9 @@ void DisplayLcd::onBleConfirm(lv_event_t *) {
   if (g_display->bleRequestInFlight_) return;
   snprintf(g_display->requestedBleAddress_, sizeof(g_display->requestedBleAddress_),
            "%s", g_display->bleDevices_[g_display->selectedBleDevice_].address);
+  g_display->requestedBlePosture_ = g_display->bleDevices_[g_display->selectedBleDevice_].postureSensor &&
+      !g_display->bleDevices_[g_display->selectedBleDevice_].cyclingPower &&
+      !g_display->bleDevices_[g_display->selectedBleDevice_].fitnessMachine;
   // 连同扫描时记录的地址类型一起提交，主循环透传给 connectDevice()。
   g_display->requestedBleAddressType_ =
       g_display->bleDevices_[g_display->selectedBleDevice_].addressType;
@@ -816,32 +828,29 @@ void DisplayLcd::updateGpsStatus(bool enabled, bool fix, uint8_t sat, uint32_t h
 }
 
 void DisplayLcd::updateGpsIndicator(bool enabled, bool fix, uint8_t sat) {
-  if (!gpsIndicatorLabel_ || !gpsIndicatorSpinner_) return;
+  if (!gpsIndicatorLabel_ || !gpsIndicatorSpinner_ || !gpsSatelliteLabel_) return;
 
   char text[24];
   if (!enabled) {
     // GPS 关闭：灰色图标，无动画
-    snprintf(text, sizeof(text), LV_SYMBOL_GPS " --");
-    lv_label_set_text(gpsIndicatorLabel_, text);
+    lv_label_set_text(gpsSatelliteLabel_, "--");
+    lv_obj_clear_flag(gpsSatelliteLabel_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_make(148, 163, 184), 0);
     lv_obj_add_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_x(gpsIndicatorLabel_, 34);
     gpsIndicatorFixed_ = false;
   } else if (fix) {
     // 已定位：绿色图标 + 卫星数，无动画
-    snprintf(text, sizeof(text), LV_SYMBOL_GPS " %u", (unsigned)sat);
-    lv_label_set_text(gpsIndicatorLabel_, text);
+    snprintf(text, sizeof(text), "%u", (unsigned)sat);
+    lv_label_set_text(gpsSatelliteLabel_, text);
+    lv_obj_clear_flag(gpsSatelliteLabel_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_make(22, 163, 74), 0);
     lv_obj_add_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_x(gpsIndicatorLabel_, 34);
     gpsIndicatorFixed_ = true;
   } else {
     // 搜星中：橙色图标 + 旋转动画，无卫星数
-    snprintf(text, sizeof(text), LV_SYMBOL_GPS);
-    lv_label_set_text(gpsIndicatorLabel_, text);
+    lv_obj_add_flag(gpsSatelliteLabel_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_make(217, 119, 6), 0);
     lv_obj_clear_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_x(gpsIndicatorLabel_, 34);
     gpsIndicatorFixed_ = false;
   }
 }
@@ -1607,6 +1616,14 @@ void DisplayLcd::buildWifiPanel() {
   lv_obj_align(settingsWifiStatus_, LV_ALIGN_TOP_LEFT, 16, 156);
 
   refreshWifiStatus();
+  lv_obj_t *setup = lv_btn_create(wifiPanel_);
+  lv_obj_set_size(setup, 208, 36);
+  lv_obj_align(setup, LV_ALIGN_BOTTOM_MID, 0, -16);
+  lv_obj_add_event_cb(setup, onWifiSetup, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *setupLabel = lv_label_create(setup);
+  lv_label_set_text(setupLabel, "SET UP WI-FI");
+  lv_obj_set_style_text_font(setupLabel, &lv_font_montserrat_14, 0);
+  lv_obj_center(setupLabel);
   lv_obj_add_flag(wifiPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -2099,7 +2116,7 @@ void DisplayLcd::begin() {
   // 用一个小旋转动画表示"搜星中"，定位后用绿色图标 + 卫星数表示。
   gpsIndicatorSpinner_ = lv_spinner_create(screen_, 1000, 60);
   lv_obj_set_size(gpsIndicatorSpinner_, 16, 16);
-  lv_obj_align(gpsIndicatorSpinner_, LV_ALIGN_TOP_LEFT, 12, 8);
+  lv_obj_align(gpsIndicatorSpinner_, LV_ALIGN_TOP_LEFT, 22, 8);
   lv_obj_set_style_arc_color(gpsIndicatorSpinner_, lv_color_make(219, 227, 236),
                              LV_PART_MAIN);
   lv_obj_set_style_arc_width(gpsIndicatorSpinner_, 3, LV_PART_MAIN);
@@ -2109,10 +2126,16 @@ void DisplayLcd::begin() {
   lv_obj_add_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);  // 默认隐藏，查到状态后再显示
 
   gpsIndicatorLabel_ = lv_label_create(screen_);
-  lv_label_set_text(gpsIndicatorLabel_, LV_SYMBOL_GPS " --");
+  lv_label_set_text(gpsIndicatorLabel_, LV_SYMBOL_GPS);
   lv_obj_set_style_text_font(gpsIndicatorLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_make(148, 163, 184), 0);
-  lv_obj_align(gpsIndicatorLabel_, LV_ALIGN_TOP_LEFT, 34, 8);
+  lv_obj_align(gpsIndicatorLabel_, LV_ALIGN_TOP_LEFT, 4, 8);
+  gpsSatelliteLabel_ = lv_label_create(screen_);
+  lv_label_set_text(gpsSatelliteLabel_, "--");
+  lv_obj_set_size(gpsSatelliteLabel_, 28, 20);
+  lv_obj_align(gpsSatelliteLabel_, LV_ALIGN_TOP_LEFT, 22, 8);
+  lv_obj_set_style_text_font(gpsSatelliteLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(gpsSatelliteLabel_, lv_color_make(100, 116, 139), 0);
 
   lv_obj_t *headerLine = lv_obj_create(screen_);
   lv_obj_set_size(headerLine, 216, 2);
@@ -2139,9 +2162,14 @@ void DisplayLcd::begin() {
   lv_obj_align(cdaTitleLabel_, LV_ALIGN_TOP_LEFT, 0, 7);
   lv_obj_set_style_text_font(cdaTitleLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(cdaTitleLabel_, lv_color_make(100, 116, 139), 0);
+  lv_obj_t *cdaUnit = lv_label_create(cdaCard);
+  lv_label_set_text(cdaUnit, "CdA m2");
+  lv_obj_align(cdaUnit, LV_ALIGN_BOTTOM_LEFT, 0, -3);
+  lv_obj_set_style_text_font(cdaUnit, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(cdaUnit, lv_color_make(100, 116, 139), 0);
 
   cdaLabel_ = lv_label_create(cdaCard);
-  lv_label_set_text(cdaLabel_, "CdA -- m2");
+  lv_label_set_text(cdaLabel_, "--");
   lv_obj_set_width(cdaLabel_, 116);
   lv_label_set_long_mode(cdaLabel_, LV_LABEL_LONG_CLIP);
   lv_obj_align(cdaLabel_, LV_ALIGN_BOTTOM_RIGHT, 0, -3);
@@ -2151,9 +2179,9 @@ void DisplayLcd::begin() {
 
   postureLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(postureLabel_, "WAITING FOR DATA");
-  lv_obj_set_width(postureLabel_, 96);
+  lv_obj_set_width(postureLabel_, 84);
   lv_label_set_long_mode(postureLabel_, LV_LABEL_LONG_DOT);
-  lv_obj_align(postureLabel_, LV_ALIGN_BOTTOM_LEFT, 0, -3);
+  lv_obj_align(postureLabel_, LV_ALIGN_TOP_LEFT, 0, 32);
   lv_obj_set_style_text_font(postureLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(postureLabel_, lv_color_make(100, 116, 139), 0);
 
@@ -2271,15 +2299,15 @@ void DisplayLcd::begin() {
   lv_obj_set_size(statusLabel_, 28, 24);
   lv_obj_set_style_text_align(statusLabel_, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_pad_top(statusLabel_, 3, 0);
-  lv_obj_align(statusLabel_, LV_ALIGN_TOP_LEFT, 100, 5);
+  lv_obj_align(statusLabel_, LV_ALIGN_TOP_LEFT, 58, 5);
   lv_obj_add_flag(statusLabel_, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(statusLabel_, onRideLogButton, LV_EVENT_CLICKED, nullptr);
   lv_obj_set_style_text_font(statusLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(statusLabel_, lv_color_make(100, 116, 139), 0);
 
   powerSourceButton_ = lv_btn_create(screen_);
-  lv_obj_set_size(powerSourceButton_, 44, 32);
-  lv_obj_align(powerSourceButton_, LV_ALIGN_TOP_LEFT, 184, 284);
+  lv_obj_set_size(powerSourceButton_, 32, 28);
+  lv_obj_align(powerSourceButton_, LV_ALIGN_TOP_LEFT, 94, 3);
   lv_obj_set_style_radius(powerSourceButton_, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_color(powerSourceButton_, lv_color_make(37, 99, 235), 0);
   lv_obj_set_style_bg_opa(powerSourceButton_, LV_OPA_TRANSP, 0);
@@ -2320,12 +2348,13 @@ bool DisplayLcd::takeBleScanRequest() {
 }
 
 bool DisplayLcd::takeBleConnectRequest(char *address, size_t capacity,
-                                       uint8_t *addressType) {
+                                       uint8_t *addressType, bool *postureDevice) {
   if (!requestedBleConnect_) return false;
   requestedBleConnect_ = false;
   if (!address || capacity == 0) return false;
   snprintf(address, capacity, "%s", requestedBleAddress_);
   if (addressType) *addressType = requestedBleAddressType_;
+  if (postureDevice) *postureDevice = requestedBlePosture_;
   requestedBleAddress_[0] = '\0';
   requestedBleAddressType_ = 0xFF;
   return true;
@@ -2487,10 +2516,10 @@ void DisplayLcd::update(const WindVector &w, bool windValid, float powerW,
   else if (zone == 6) { posture = "RACE TT"; postureChinese = "竞赛 TT"; }
   else if (zone == 7) { posture = "ELITE TT"; postureChinese = "精英 TT"; }
   if (cda >= 0.0f) {
-    snprintf(buf, sizeof(buf), "CdA %.2f m2", cda);
+    snprintf(buf, sizeof(buf), "%.2f", cda);
     lv_label_set_text(cdaLabel_, buf);
   } else {
-    lv_label_set_text(cdaLabel_, "CdA -- m2");
+    lv_label_set_text(cdaLabel_, "--");
   }
   lv_label_set_text(postureLabel_, localized(posture, postureChinese));
   if (zone > 0) {
