@@ -19,6 +19,7 @@
   ]);
   const savedVolume = Number(localStorage.getItem("aero-volume") ?? 55);
   const state = {
+    language: localStorage.getItem('aero-language') === 'zh' ? 'zh' : 'en',
     mode: 0, bleConnected: false, bleName: "", power: 230, cadence: 88, bleSpeed: 0,
     virtualPower: 0, virtualCadence: 0, wind: 9.5, windValid: true,
     samples: [], seconds: 0, running: false, page: "dashboard",
@@ -66,7 +67,33 @@
     if (cda === null) return null;
     const bounds = [0.23, 0.27, 0.31, 0.36, 0.42, 0.50, Infinity];
     const index = bounds.findIndex((bound) => cda < bound);
-    return { zone: 7 - index, posture: ["ELITE TT", "RACE TT", "VERY AERO", "AGGRESSIVE", "AERO", "LOW / DROPS", "UPRIGHT"][index] };
+    return { zone: 7 - index, posture: (state.language === 'zh'
+      ? ["精英姿态", "竞赛姿态", "极致气动", "激进", "气动", "低位下把", "直立"]
+      : ["ELITE TT", "RACE TT", "VERY AERO", "AGGRESSIVE", "AERO", "DROPS", "UPRIGHT"])[index] };
+  }
+  function applyLanguage(){
+    const zh=state.language==='zh';
+    document.documentElement.lang=zh?'zh-CN':'en';
+    for(const [selector,en,cn] of [
+      ['.cda-title','AERO ZONE','气动区间'],['#wind-title','WIND','风速'],['.avg3','POWER','功率'],
+      ['#language-page p','Choose interface language','选择界面语言'],
+      ['#settings-log','☷ RIDE LOG','☷ 记录日志'],['#settings-meter','⏻ POWER','⏻ 功率'],
+      ['#settings-language','☷ LANG','☷ 语言'],['#settings-sound','♫ SOUND','♫ 声音'],
+      ['#settings-sd','▣ SD/MUSIC','▣ SD/音乐'],['#wifi-setup','SET UP WI-FI','配置网络']
+    ]){const element=document.querySelector(selector);if(element)element.textContent=zh?cn:en;}
+    for(const [id,en,cn] of [['settings-dialog','SETTINGS','设置'],['language-page','LANGUAGE','语言'],
+      ['sound-page','SOUND','声音'],['ride-log-page','LOG','日志'],['sd-page','SD CARD','SD 卡']]){
+      const header=document.querySelector('#'+id+' .page-header');
+      if(header?.lastChild?.nodeType===Node.TEXT_NODE)header.lastChild.textContent=zh?cn:en;
+    }
+    for(const button of document.querySelectorAll('[data-back],#settings-back'))button.textContent=zh?'‹ 返回':'‹ BACK';
+    $('screen-meter-button').title=zh?'设置':'Settings';
+    $('screen-meter-button').setAttribute('aria-label',zh?'设置':'Settings');
+    $('language-en').classList.toggle('selected',!zh);$('language-zh').classList.toggle('selected',zh);
+  }
+  function setLanguage(language){
+    if(!['en','zh'].includes(language))return;
+    state.language=language;localStorage.setItem('aero-language',language);applyLanguage();render();
   }
   function showPage(id = "dashboard") {
     state.page = id;
@@ -98,11 +125,12 @@
     const zone = zoneFor(cda);
     $("power-reading").textContent = String(Math.round(power()));
     $("power-reading").style.fontSize = Math.abs(power()) >= 10000 ? "28px" : "40px";
-    $("cadence-reading").textContent = `CADENCE ${Math.round(cadence())} rpm`;
+    $("cadence-label").textContent = state.language==='zh'?'踏频 / rpm':'CADENCE / rpm';
+    $("cadence-reading").textContent = String(Math.round(cadence()));
     $("wind-reading").textContent = state.windValid ? (state.wind * 3.6).toFixed(1) : "--";
     $("cda-reading").textContent = cda === null ? "--" : cda.toFixed(2);
     $("zone-reading").textContent = `Z${zone?.zone ?? "--"}`;
-    $("posture-reading").textContent = zone?.posture ?? "WAITING FOR DATA";
+    $("posture-reading").textContent = zone?.posture ?? (state.language==='zh'?'等待数据':'NO DATA');
     $("clock-reading").textContent = gpsFixed() || state.networkTime
       ? formattedDate(localDate()).slice(11) : "--:--:--";
     $("log-status").title = `${state.recording ? "Recording" : "Recording stopped"}; open ride log`;
@@ -147,9 +175,10 @@
       ? `Downloading ${state.download.offset}/${state.download.text.length} bytes (simulated)`
       : state.downloadMessage;
     $("fit-save").disabled = Boolean(state.fitSaving);
-    $("fit-save").textContent = state.fitSaving ? "SAVING" : "SAVE FIT";
+    $("fit-save").textContent = state.fitSaving ? (state.language==='zh'?'保存中':'SAVING') : (state.language==='zh'?'保存 FIT':'SAVE FIT');
     $("ride-start").disabled=state.recording||state.armed||Boolean(state.fitSaving);
-    $("ride-start").textContent=state.armed ? "WAITING" : "▶ START";
+    $("ride-start").textContent=state.armed ? (state.language==='zh'?'等待数据':'WAITING') : (state.language==='zh'?'▶ 开始':'▶ START');
+    $('ride-stop').textContent=state.language==='zh'?'■ 停止':'■ STOP';
     $("ride-stop").disabled=(!state.recording&&!state.armed)||Boolean(state.fitSaving);
     const duration=state.recording ? state.seconds-state.recordStarted : state.recordedDuration;
     $("ride-duration").textContent=`${state.armed ? "WAITING" : "TIME"} ${timeString(duration)}`;
@@ -478,8 +507,8 @@
   document.querySelectorAll("[data-back]").forEach((button) => {
     button.onclick = () => button.dataset.back === "touch-dialog" ? (state.manualPairing = false, openMeterDialog()) : showPage(button.dataset.back);
   });
-  $("language-en").onclick = () => { localStorage.setItem("aero-language", "en"); };
-  $("language-zh").onclick = () => notice("Chinese language temporarily disabled; staying English.");
+  $("language-en").onclick = () => setLanguage('en');
+  $("language-zh").onclick = () => setLanguage('zh');
   $("notice-dismiss").onclick = () => { $("notice-dialog").hidden = true; state.error = ""; };
   $("wifi-off").onclick = () => setWifi(false);
   $("wifi-on").onclick = () => { if (!state.wifiEnabled) setWifi(true); };
@@ -544,7 +573,7 @@
   }, 20);
 
   window.aeroProbeSim = {
-    connect, disconnect, openMeterDialog, step, showPage, browse, recording, download, saveFit,
+    connect, disconnect, openMeterDialog, step, showPage, browse, recording, download, saveFit, setLanguage,
     reset() { state.samples = []; render(); },
     setInput(values) {
       for (const field of ["power", "cadence", "virtualPower", "virtualCadence"])
@@ -560,7 +589,7 @@
         power: power(), cadence: cadence(), wind: state.wind * 3.6, windMps: state.wind, windValid: state.windValid,
         cda: estimateCda(), zone: zoneFor(estimateCda())?.zone ?? null,
         average3: average(state.samples.slice(-3)), average60: average(state.samples), sampleCount: state.samples.length,
-        seconds: state.seconds, page: state.page, language: "en", volume: state.volume,
+        seconds: state.seconds, page: state.page, language: state.language, volume: state.volume,
         wifi: state.wifi, gps: state.gps, gpsSpeedMps: state.gpsSpeed, audio: state.audio,
         networkTime: state.networkTime, trustedTime: state.trustedTime,
         bleConnected: state.bleConnected, postureConnected: state.postureConnected, operation: state.operation?.kind ?? null,
@@ -573,7 +602,7 @@
       };
     }
   };
-  document.documentElement.lang = "en";
+  applyLanguage();
   syncInputs();
   render();
 })();

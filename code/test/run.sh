@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 
 action=${1:-all}
 image=aeroprobe-idf-test:4.4.6
-test_path=/opt/pytest-venv/bin:/opt/esp-qemu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+test_path=/opt/pytest-venv/bin:/opt/esp-qemu/bin:/opt/esp/tools/cmake/3.23.1/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 case "$action" in
   all|host|measurements|stages|build|qemu|hardware|image) ;;

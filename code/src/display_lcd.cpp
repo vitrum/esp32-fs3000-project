@@ -201,10 +201,10 @@ void DisplayLcd::setFitSaving(bool saving) {
   fitSaving_ = saving;
   setRecording(recording_, recordingArmed_);
   if (!fitSaveButton_) return;
-  if (lv_obj_has_state(fitSaveButton_, LV_STATE_DISABLED) == saving) return;
   if (saving) lv_obj_add_state(fitSaveButton_, LV_STATE_DISABLED);
   else lv_obj_clear_state(fitSaveButton_, LV_STATE_DISABLED);
-  lv_label_set_text(fitSaveLabel_, saving ? "SAVING" : "SAVE FIT");
+  const char *text = saving ? localized("SAVING", "保存中") : localized("SAVE FIT", "保存 FIT");
+  if (strcmp(lv_label_get_text(fitSaveLabel_), text) != 0) lv_label_set_text(fitSaveLabel_, text);
 }
 
 void DisplayLcd::showFitResult(const char *message) { showNotice(message); }
@@ -242,25 +242,20 @@ void DisplayLcd::setRecording(bool recording, bool armed) {
       lv_obj_add_state(stopRecordButton_, LV_STATE_DISABLED);
     else lv_obj_clear_state(stopRecordButton_, LV_STATE_DISABLED);
   }
-  if (recordLabel_)
-    lv_label_set_text(recordLabel_,
-                      armed ? localized("WAITING", "等待数据")
-                            : localized(LV_SYMBOL_PLAY " START", LV_SYMBOL_PLAY " 开始"));
+  if (recordLabel_) {
+    const char *text = armed ? localized("WAITING", "等待数据")
+                            : localized(LV_SYMBOL_PLAY " START", LV_SYMBOL_PLAY " 开始");
+    if (strcmp(lv_label_get_text(recordLabel_), text) != 0) lv_label_set_text(recordLabel_, text);
+  }
 }
 
 void DisplayLcd::updateRideLog(const char *path, bool recording, uint32_t samples,
                               uint32_t dropped, float power, float cadence, float speed,
                               uint32_t durationMs, uint32_t skipped) {
   if (!rideLogText_) return;
-  if (rideDurationLabel_) {
-    const uint32_t seconds = durationMs / 1000;
-    char duration[40];
-    snprintf(duration, sizeof(duration), "%s  %02lu:%02lu:%02lu",
-             recordingArmed_ ? "WAITING" : "TIME",
-             (unsigned long)(seconds / 3600), (unsigned long)(seconds / 60 % 60),
-             (unsigned long)(seconds % 60));
-    lv_label_set_text(rideDurationLabel_, duration);
-  }
+  snprintf(ridePath_, sizeof(ridePath_), "%s", path ? path : "");
+  rideDurationMs_ = durationMs; rideSamples_ = samples; rideDropped_ = dropped; rideSkipped_ = skipped;
+  ridePower_ = power; rideCadence_ = cadence; rideSpeed_ = speed;
   if (samples < rideLastSample_) rideHistory_[0] = '\0';
   if (samples != rideLastSample_) {
     char row[64];
@@ -274,12 +269,27 @@ void DisplayLcd::updateRideLog(const char *path, bool recording, uint32_t sample
     strcat(rideHistory_, row);
     rideLastSample_ = samples;
   }
+  refreshRideLog();
+}
+
+void DisplayLcd::refreshRideLog() {
+  if (!rideLogText_) return;
+  const uint32_t seconds = rideDurationMs_ / 1000;
+  char duration[40];
+  snprintf(duration, sizeof(duration), "%s  %02lu:%02lu:%02lu",
+           recordingArmed_ ? localized("WAITING", "等待数据") : localized("TIME", "录制时长"),
+           (unsigned long)(seconds / 3600), (unsigned long)(seconds / 60 % 60),
+           (unsigned long)(seconds % 60));
+  lv_label_set_text(rideDurationLabel_, duration);
   char text[800];
   snprintf(text, sizeof(text),
-           "%s\n%s\n\nSamples: %lu\nDropped: %lu\nSkipped invalid: %lu\n\nPower: %.0f W\nCadence: %.0f rpm\nSpeed: %.1f km/h\n\nRecent samples:\n%s\nSTOP saves FIT automatically.\nOriginal CSV is retained.",
-           recording ? "RECORDING" : "STOPPED", path && path[0] ? path : "No recording yet",
-           (unsigned long)samples, (unsigned long)dropped, (unsigned long)skipped,
-           power, cadence, speed * 3.6f, rideHistory_);
+           localized("%s\n%s\n\nSamples: %lu\nDropped: %lu\nSkipped invalid: %lu\n\nPower: %.0f W\nCadence: %.0f rpm\nSpeed: %.1f km/h\n\nRecent samples:\n%s\nSTOP saves FIT automatically.\nOriginal CSV is retained.",
+                     "%s\n%s\n\n样本: %lu\n丢失: %lu\n跳过无效: %lu\n\n功率: %.0f W\n踏频: %.0f rpm\n速度: %.1f km/h\n\n最近样本:\n%s\n停止后自动保存 FIT。\n保留原始 CSV。"),
+           fitSaving_ ? localized("SAVING", "保存中") : recordingArmed_ ? localized("WAITING", "等待数据") :
+           recording_ ? localized("RECORDING", "记录中") : localized("STOPPED", "已停止"),
+           ridePath_[0] ? ridePath_ : localized("No recording yet", "尚未记录"),
+           (unsigned long)rideSamples_, (unsigned long)rideDropped_, (unsigned long)rideSkipped_,
+           ridePower_, rideCadence_, rideSpeed_ * 3.6f, rideHistory_);
   lv_label_set_text(rideLogText_, text);
 }
 
@@ -315,12 +325,7 @@ void DisplayLcd::onWifiSetup(lv_event_t *) {
 void DisplayLcd::onLanguageSelected(lv_event_t *event) {
   if (!g_display) return;
   const bool chinese = (uintptr_t)lv_event_get_user_data(event) == 1;
-  // 中文界面暂时禁用（渲染卡死待修复）：忽略选择，始终保持英文。
-  if (chinese) {
-    AppLog.println("[UI] Chinese language temporarily disabled; staying English.");
-    return;
-  }
-  g_display->setLanguage(false);
+  g_display->setLanguage(chinese);
 }
 
 void DisplayLcd::onWifiSelected(lv_event_t *event) {
@@ -1455,6 +1460,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_bg_color(logs, lv_color_make(51, 65, 85), 0);
   lv_obj_add_event_cb(logs, onRideLogButton, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *logsLabel = lv_label_create(logs);
+  rideLogEntryLabel_ = logsLabel;
   lv_label_set_text(logsLabel, LV_SYMBOL_LIST " RIDE LOG");
   lv_obj_set_style_text_color(logsLabel, lv_color_white(), 0);
   lv_obj_center(logsLabel);
@@ -1468,6 +1474,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_clear_flag(rideLogPanel_, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(rideLogPanel_, lv_color_make(248, 250, 252), 0);
   buildPanelHeader(rideLogPanel_, "LOG", onRideLogBack);
+  rideLogTitle_ = lv_obj_get_child(rideLogPanel_, 1);
   lv_obj_set_width(lv_obj_get_child(rideLogPanel_, 1), 50);
   fitSaveButton_ = lv_btn_create(rideLogPanel_);
   lv_obj_set_size(fitSaveButton_, 78, 30);
@@ -1498,6 +1505,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_bg_color(stopRecordButton_, lv_color_make(220, 38, 38), 0);
   lv_obj_add_event_cb(stopRecordButton_, onRecordToggle, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *stopLabel = lv_label_create(stopRecordButton_);
+  stopRecordLabel_ = stopLabel;
   lv_label_set_text(stopLabel, LV_SYMBOL_STOP " STOP");
   lv_obj_set_style_text_font(stopLabel, &lv_font_montserrat_14, 0);
   lv_obj_center(stopLabel);
@@ -1621,6 +1629,7 @@ void DisplayLcd::buildWifiPanel() {
   lv_obj_align(setup, LV_ALIGN_BOTTOM_MID, 0, -16);
   lv_obj_add_event_cb(setup, onWifiSetup, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *setupLabel = lv_label_create(setup);
+  wifiSetupLabel_ = setupLabel;
   lv_label_set_text(setupLabel, "SET UP WI-FI");
   lv_obj_set_style_text_font(setupLabel, &lv_font_montserrat_14, 0);
   lv_obj_center(setupLabel);
@@ -1768,6 +1777,7 @@ void DisplayLcd::buildSdPanel() {
 }
 
 void DisplayLcd::setLanguage(bool chinese) {
+  if (chinese_ == chinese) return;
   chinese_ = chinese;
   Preferences preferences;
   if (!preferences.begin("aero-ui", false)) {
@@ -1813,31 +1823,21 @@ void DisplayLcd::refreshLanguage() {
                                    : &lv_font_montserrat_14;
   const lv_font_t *titleFont = chinese_ ? &lv_font_noto_sans_sc_14
                                         : &lv_font_montserrat_16;
-  lv_obj_set_style_text_font(cdaTitleLabel_, font, 0);
-  lv_label_set_text(cdaTitleLabel_, localized("AERO ZONE", "气动区间"));
+  aeroZone_.setLanguage(chinese_);
   lv_label_set_text(windLabelTitle_, localized("WIND", "风速"));
   lv_obj_set_style_text_font(windLabelTitle_, font, 0);
   lv_label_set_text(avg3Label_, localized("POWER", "功率"));
   lv_obj_set_style_text_font(avg3Label_, font, 0);
 
-  const char *posture = "WAITING FOR DATA";
-  const char *postureChinese = "等待数据";
-  if (currentZone_ == 1) { posture = "UPRIGHT"; postureChinese = "直立"; }
-  else if (currentZone_ == 2) { posture = "LOW / DROPS"; postureChinese = "低位 / 下把"; }
-  else if (currentZone_ == 3) { posture = "AERO"; postureChinese = "气动"; }
-  else if (currentZone_ == 4) { posture = "AGGRESSIVE"; postureChinese = "激进"; }
-  else if (currentZone_ == 5) { posture = "VERY AERO"; postureChinese = "极致气动"; }
-  else if (currentZone_ == 6) { posture = "RACE TT"; postureChinese = "竞赛 TT"; }
-  else if (currentZone_ == 7) { posture = "ELITE TT"; postureChinese = "精英 TT"; }
-  lv_label_set_text(postureLabel_, localized(posture, postureChinese));
-  lv_obj_set_style_text_font(postureLabel_, font, 0);
 
   lv_label_set_text(powerSourceLabel_, localized("SET", "设置"));
   lv_obj_set_style_text_font(powerSourceLabel_, titleFont, 0);
 
   lv_label_set_text(statusLabel_, LV_SYMBOL_SAVE);
   lv_obj_set_style_text_font(statusLabel_, &lv_font_montserrat_14, 0);
+  lv_label_set_text(cadenceLabel_, localized("CADENCE / rpm", "踏频 / rpm"));
   lv_obj_set_style_text_font(cadenceLabel_, font, 0);
+  lv_obj_set_style_text_font(cadenceValueLabel_, &lv_font_montserrat_20, 0);
   AppLog.println("[LANG] 1 main done");
 
   lv_label_set_text(powerSourceTitle_, localized("POWER SOURCE", "功率来源"));
@@ -1961,14 +1961,21 @@ void DisplayLcd::refreshLanguage() {
   lv_label_set_text(gpsRestartLabel_,
                     localized(LV_SYMBOL_REFRESH " RESTART GPS",
                               LV_SYMBOL_REFRESH " 重启 GPS"));
-  if (recordLabel_) {
-    lv_label_set_text(recordLabel_,
-                      recording_ ? localized(LV_SYMBOL_STOP " STOP", LV_SYMBOL_STOP " 停止")
-                                 : localized(LV_SYMBOL_PLAY " RECORD", LV_SYMBOL_PLAY " 记录"));
-    lv_obj_set_style_text_font(recordLabel_, font, 0);
-  }
-  if (fitSaveLabel_)
-    lv_obj_set_style_text_font(fitSaveLabel_, font, 0);
+  setRecording(recording_, recordingArmed_);
+  setFitSaving(fitSaving_);
+  lv_obj_set_style_text_font(recordLabel_, font, 0);
+  lv_label_set_text(stopRecordLabel_, localized(LV_SYMBOL_STOP " STOP", LV_SYMBOL_STOP " 停止"));
+  lv_obj_set_style_text_font(stopRecordLabel_, font, 0);
+  lv_obj_set_style_text_font(fitSaveLabel_, font, 0);
+  lv_label_set_text(rideLogTitle_, localized("LOG", "日志"));
+  lv_obj_set_style_text_font(rideLogTitle_, font, 0);
+  lv_label_set_text(rideLogEntryLabel_, localized(LV_SYMBOL_LIST " RIDE LOG", LV_SYMBOL_LIST " 记录日志"));
+  lv_obj_set_style_text_font(rideLogEntryLabel_, font, 0);
+  lv_label_set_text(wifiSetupLabel_, localized("SET UP WI-FI", "配置网络"));
+  lv_obj_set_style_text_font(wifiSetupLabel_, font, 0);
+  lv_obj_set_style_text_font(rideLogText_, font, 0);
+  lv_obj_set_style_text_font(rideDurationLabel_, font, 0);
+  refreshRideLog();
   lv_obj_set_style_text_font(gpsTitle_, titleFont, 0);
   lv_obj_set_style_text_font(gpsRestartLabel_, font, 0);
   lv_obj_set_style_text_font(gpsFixLabel_, titleFont, 0);
@@ -2041,7 +2048,7 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_t *panels[] = {
     powerSourcePanel_, bleDevicePanel_, bleConfirmPanel_,
     bleLoadingPanel_, virtualPowerPanel_, settingsPanel_, soundPanel_, sdPanel_,
-    gpsPanel_, languagePanel_, wifiPanel_
+    gpsPanel_, languagePanel_, wifiPanel_, rideLogPanel_
   };
   for (lv_obj_t *panel : panels) {
     lv_obj_t *backButton = lv_obj_get_child(panel, 0);
@@ -2056,16 +2063,11 @@ void DisplayLcd::refreshLanguage() {
 void DisplayLcd::begin() {
   g_display = this;
 
-  // 暂时强制英文界面：中文渲染在某些面板会触发卡死（待修复）。
-  // 先从 NVS 读一次并清掉，避免遗留的 zh=true 影响。
   chinese_ = false;
   {
     Preferences preferences;
-    if (preferences.begin("aero-ui", false)) {
-      if (preferences.getBool("zh", false)) {
-        preferences.putBool("zh", false);
-        AppLog.println("[UI] Language forced to English (Chinese temporarily disabled).");
-      }
+    if (preferences.begin("aero-ui", true)) {
+      chinese_ = preferences.getBool("zh", false);
       preferences.end();
     }
   }
@@ -2144,55 +2146,7 @@ void DisplayLcd::begin() {
   lv_obj_set_style_border_width(headerLine, 0, 0);
   lv_obj_set_style_radius(headerLine, 0, 0);
 
-  lv_obj_t *cdaCard = lv_obj_create(screen_);
-  lv_obj_set_size(cdaCard, 216, 88);
-  lv_obj_align(cdaCard, LV_ALIGN_TOP_LEFT, 12, 43);
-  lv_obj_clear_flag(cdaCard, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_pad_all(cdaCard, 0, 0);
-  lv_obj_set_style_radius(cdaCard, 0, 0);
-  lv_obj_set_style_bg_color(cdaCard, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(cdaCard, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_color(cdaCard, lv_color_make(226, 232, 240), 0);
-  lv_obj_set_style_border_width(cdaCard, 0, 0);
-
-  cdaTitleLabel_ = lv_label_create(cdaCard);
-  lv_label_set_text(cdaTitleLabel_, "AERO ZONE");
-  lv_obj_set_width(cdaTitleLabel_, 84);
-  lv_label_set_long_mode(cdaTitleLabel_, LV_LABEL_LONG_DOT);
-  lv_obj_align(cdaTitleLabel_, LV_ALIGN_TOP_LEFT, 0, 7);
-  lv_obj_set_style_text_font(cdaTitleLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(cdaTitleLabel_, lv_color_make(100, 116, 139), 0);
-  lv_obj_t *cdaUnit = lv_label_create(cdaCard);
-  lv_label_set_text(cdaUnit, "CdA m2");
-  lv_obj_align(cdaUnit, LV_ALIGN_BOTTOM_LEFT, 0, -3);
-  lv_obj_set_style_text_font(cdaUnit, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(cdaUnit, lv_color_make(100, 116, 139), 0);
-
-  cdaLabel_ = lv_label_create(cdaCard);
-  lv_label_set_text(cdaLabel_, "--");
-  lv_obj_set_width(cdaLabel_, 116);
-  lv_label_set_long_mode(cdaLabel_, LV_LABEL_LONG_CLIP);
-  lv_obj_align(cdaLabel_, LV_ALIGN_BOTTOM_RIGHT, 0, -3);
-  lv_obj_set_style_text_align(cdaLabel_, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_set_style_text_font(cdaLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(cdaLabel_, lv_color_make(100, 116, 139), 0);
-
-  postureLabel_ = lv_label_create(cdaCard);
-  lv_label_set_text(postureLabel_, "WAITING FOR DATA");
-  lv_obj_set_width(postureLabel_, 84);
-  lv_label_set_long_mode(postureLabel_, LV_LABEL_LONG_DOT);
-  lv_obj_align(postureLabel_, LV_ALIGN_TOP_LEFT, 0, 32);
-  lv_obj_set_style_text_font(postureLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(postureLabel_, lv_color_make(100, 116, 139), 0);
-
-  zoneLabel_ = lv_label_create(cdaCard);
-  lv_label_set_text(zoneLabel_, "Z--");
-  lv_obj_set_width(zoneLabel_, 132);
-  lv_label_set_long_mode(zoneLabel_, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_align(zoneLabel_, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_align(zoneLabel_, LV_ALIGN_TOP_RIGHT, 0, 10);
-  lv_obj_set_style_text_font(zoneLabel_, &lv_font_montserrat_40, 0);
-  lv_obj_set_style_text_color(zoneLabel_, lv_color_make(37, 99, 235), 0);
+  aeroZone_.create(screen_);
 
   lv_obj_t *cdaDivider = lv_obj_create(screen_);
   lv_obj_set_size(cdaDivider, 216, 1);
@@ -2278,12 +2232,21 @@ void DisplayLcd::begin() {
   lv_obj_set_style_border_width(powerDivider, 0, 0);
 
   cadenceLabel_ = lv_label_create(screen_);
-  lv_label_set_text(cadenceLabel_, "CADENCE 0 rpm");
-  lv_obj_set_width(cadenceLabel_, 164);
+  lv_label_set_text(cadenceLabel_, "CADENCE / rpm");
+  lv_obj_set_width(cadenceLabel_, 104);
   lv_label_set_long_mode(cadenceLabel_, LV_LABEL_LONG_CLIP);
-  lv_obj_align(cadenceLabel_, LV_ALIGN_TOP_LEFT, 12, 292);
+  lv_obj_align(cadenceLabel_, LV_ALIGN_TOP_LEFT, 12, 294);
   lv_obj_set_style_text_font(cadenceLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(cadenceLabel_, lv_color_make(51, 65, 85), 0);
+
+  cadenceValueLabel_ = lv_label_create(screen_);
+  lv_label_set_text(cadenceValueLabel_, "0");
+  lv_obj_set_size(cadenceValueLabel_, 100, 28);
+  lv_label_set_long_mode(cadenceValueLabel_, LV_LABEL_LONG_CLIP);
+  lv_obj_set_style_text_align(cadenceValueLabel_, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_align(cadenceValueLabel_, LV_ALIGN_TOP_RIGHT, -12, 288);
+  lv_obj_set_style_text_font(cadenceValueLabel_, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(cadenceValueLabel_, lv_color_make(51, 65, 85), 0);
 
   timeLabel_ = lv_label_create(screen_);
   lv_label_set_text(timeLabel_, "--:--:--");
@@ -2506,28 +2469,7 @@ void DisplayLcd::update(const WindVector &w, bool windValid, float powerW,
 
   estimatedCda_ = cda;
   currentZone_ = (uint32_t)zone;
-  const char *posture = "WAITING FOR DATA";
-  const char *postureChinese = "等待数据";
-  if (zone == 1) { posture = "UPRIGHT"; postureChinese = "直立"; }
-  else if (zone == 2) { posture = "LOW / DROPS"; postureChinese = "低位 / 下把"; }
-  else if (zone == 3) { posture = "AERO"; postureChinese = "气动"; }
-  else if (zone == 4) { posture = "AGGRESSIVE"; postureChinese = "激进"; }
-  else if (zone == 5) { posture = "VERY AERO"; postureChinese = "极致气动"; }
-  else if (zone == 6) { posture = "RACE TT"; postureChinese = "竞赛 TT"; }
-  else if (zone == 7) { posture = "ELITE TT"; postureChinese = "精英 TT"; }
-  if (cda >= 0.0f) {
-    snprintf(buf, sizeof(buf), "%.2f", cda);
-    lv_label_set_text(cdaLabel_, buf);
-  } else {
-    lv_label_set_text(cdaLabel_, "--");
-  }
-  lv_label_set_text(postureLabel_, localized(posture, postureChinese));
-  if (zone > 0) {
-    snprintf(buf, sizeof(buf), "Z%d", zone);
-    lv_label_set_text(zoneLabel_, buf);
-  } else {
-    lv_label_set_text(zoneLabel_, "Z--");
-  }
+  aeroZone_.update(cda, zone);
 
   if (windValid)
     snprintf(buf, sizeof(buf), "%.1f", w.vAir * 3.6f);
@@ -2539,10 +2481,11 @@ void DisplayLcd::update(const WindVector &w, bool windValid, float powerW,
   lv_label_set_text(powerLabel_, buf);
   lv_obj_set_style_text_font(powerLabel_, fabsf(powerW) >= 10000 ? &lv_font_montserrat_28 : &lv_font_montserrat_40, 0);
 
-  snprintf(buf, sizeof(buf), localized("CADENCE %.0f rpm", "踏频 %.0f rpm"), cadRpm);
-  lv_label_set_text(cadenceLabel_, buf);
+  lv_label_set_text(cadenceLabel_, localized("CADENCE / rpm", "踏频 / rpm"));
   lv_obj_set_style_text_font(cadenceLabel_,
                              chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
+  snprintf(buf, sizeof(buf), "%.0f", cadRpm);
+  lv_label_set_text(cadenceValueLabel_, buf);
 
   lv_label_set_text(powerSourceLabel_, localized("SET", "设置"));
   lv_obj_set_style_text_color(powerSourceLabel_, lv_color_white(), 0);

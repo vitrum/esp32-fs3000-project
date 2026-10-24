@@ -51,12 +51,13 @@
     .card { position: absolute; left: 12px; width: 216px; border: 0; border-radius: 0; padding: 0; background: transparent; }
     .cda-card { top: 43px; height: 88px; }
     .cda-details { position: absolute; inset: 0; }
-    .cda-title { position: absolute; left: 0; top: 7px; color: #64748b; font-size: 14px; line-height: 17px; }
-    .cda-reading { position: absolute; right: 0; bottom: 3px; width: 116px; overflow: hidden; color: #64748b; font-size: 14px; line-height: 17px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .cda-title { position: absolute; left: 0; top: 0; width:104px; height:22px; color: #64748b; font-size: 14px; line-height: 22px; white-space:nowrap; }
+    .cda-reading { position: absolute; right: 0; top:70px; width: 100px; height:18px; overflow: hidden; color: #64748b; font-size: 14px; line-height: 18px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .metric-unit { position: absolute; left: 0; top: 32px; color: #64748b; font-size: 14px; line-height: 17px; }
-    .posture-reading { position: absolute; left: 0; top: 32px; width: 84px; overflow: hidden; text-overflow: ellipsis; color: #64748b; font-size: 14px; line-height: 17px; white-space: nowrap; }
-    .cda-unit{position:absolute;left:0;bottom:3px;font-size:14px;line-height:17px;color:#64748b;}
-    .zone-block { position: absolute; right: 0; top: 10px; width: 132px; text-align: right; color: #2563eb; }
+    .posture-reading { position: absolute; left: 0; top: 29px; width: 104px; height:22px; overflow: hidden; color: #64748b; font-size: 14px; line-height: 22px; white-space: nowrap; }
+    .cda-unit{position:absolute;left:0;top:70px;width:104px;height:18px;font-size:14px;line-height:18px;color:#64748b;}
+    .aero-rule{position:absolute;left:0;top:64px;width:216px;height:1px;background:#cbd5e1;}
+    .zone-block { position: absolute; right: 0; top: 12px; width: 100px; height:50px;text-align: right; color: #2563eb; }
     .zone-caption { display: none; }
     .zone-number { display: block; font-size: 40px; line-height: 48px; font-variant-numeric: tabular-nums; }
     .wind-card { top: 145px; height: 56px; }
@@ -70,7 +71,8 @@
     .bottom { position: absolute; inset: 0; pointer-events: none; }
     .bottom button { pointer-events: auto; }
     .bottom > div:first-child { position: static; }
-    .cadence { position: absolute; left: 12px; top: 292px; width: 164px; color: #334155; font-size: 14px; line-height: 17px; font-weight: 400; white-space: nowrap; }
+    .cadence-label { position:absolute;left:12px;top:294px;width:104px;color:#334155;font-size:14px;line-height:17px;white-space:nowrap; }
+    .cadence-value { position:absolute;right:12px;top:288px;width:100px;height:28px;color:#334155;font-size:20px;line-height:26px;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap; }
     .device .meter-button { position: absolute; left: 94px; top: 3px; width: 32px; height: 28px; min-height: 0; overflow: hidden; border: 0; border-radius: 0; padding: 0; background: transparent; color: #2563eb; font-size: 20px; line-height: 28px; text-align: center; cursor: pointer; pointer-events:auto; }
     .time { position: absolute; right: 12px; top: 8px; width: 94px; height: 20px; color: #64748b; font-size: 14px; line-height: 17px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .touch-dialog { position: absolute; z-index: 5; inset: 0; display: none; flex-direction: column; padding: 14px; background: #f8fafc; }
@@ -227,8 +229,9 @@
         <div class="card cda-card">
           <div class="cda-details">
             <div class="cda-title">AERO ZONE</div>
-            <span class="cda-unit" id="cda-unit">CdA m2</span><div class="cda-reading" id="cda-reading">--</div>
+            <span class="cda-unit" id="cda-unit">CdA / m2</span><div class="cda-reading" id="cda-reading">--</div>
             <div class="posture-reading" id="posture-reading">WAITING FOR DATA</div>
+            <div class="aero-rule"></div>
           </div>
           <div class="zone-block"><span class="zone-number" id="zone-reading">Z--</span></div>
         </div>
@@ -248,7 +251,7 @@
         </div>
         <div class="divider divider-power"></div>
         <div class="bottom">
-          <div><div class="cadence" id="cadence-reading">CADENCE 0 rpm</div></div>
+          <div><div class="cadence-label" id="cadence-label">CADENCE / rpm</div><div class="cadence-value" id="cadence-reading">0</div></div>
         </div>
         <div class="touch-dialog" id="touch-dialog" aria-hidden="true">
           <div class="dialog-heading"><button type="button" class="dialog-close" id="dialog-close" aria-label="Back">‹ BACK</button><span>POWER SOURCE</span></div>
@@ -299,7 +302,6 @@
           <header class="page-header"><button data-back="settings-dialog" type="button">‹ BACK</button>LANGUAGE</header>
           <p>Choose interface language</p>
           <div class="language-choices"><button id="language-en" class="selected" type="button">English</button><button id="language-zh" type="button">简体中文</button></div>
-          <p>Chinese selection is temporarily disabled in the firmware. The display stays English.</p>
         </section>
         <section class="screen-page" id="ride-log-page" hidden>
           <header class="page-header"><button data-back="settings-dialog" type="button">‹ BACK</button>LOG</header>
@@ -421,7 +423,7 @@
   </div>
 </main>
 <script src="fit.js"></script>
-<script src="simulator.js?v=startup-1"></script>
-<script src="regression.js?v=startup-1"></script>
+<script src="simulator.js?v=language-1"></script>
+<script src="regression.js?v=language-1"></script>
 </body>
 </html>

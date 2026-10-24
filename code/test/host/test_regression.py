@@ -19,6 +19,9 @@ from pytest_embedded.log import MessageQueue
 
 ROOT = Path(__file__).resolve().parents[2]
 SUITES = {
+    "ui_language": (
+        ["ui_language_test.cpp"], [], ["PASS UI language:"],
+    ),
     "sensors_power": (
         ["sensors_power_test.cpp"],
         ["fs3000.cpp", "wind_probe.cpp", "bme280_env.cpp", "power_key.cpp", "runtime_log.cpp", "audio.cpp"],
@@ -268,12 +271,22 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
         assert (gps / "TinyGPS++.cpp").is_file(), "Set GPS_SOURCE_DIR to TinyGPSPlus/src"
         command += ["-I" + str(gps), str(gps / "TinyGPS++.cpp")]
     command += ["-o", str(binary)]
+    if suite == "ui_language":
+        configured = subprocess.run(
+            ["cmake", "-S", str(ROOT / "test/host/ui"), "-B", str(tmp_path), "-DCMAKE_BUILD_TYPE=Debug"],
+            cwd=ROOT, capture_output=True, text=True, timeout=120)
+        assert configured.returncode == 0, configured.stdout + configured.stderr
+        command = ["cmake", "--build", str(tmp_path), "--parallel", "2"]
     built = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=120)
     assert built.returncode == 0, built.stdout + built.stderr
     arguments = [str(binary)]
     if suite.startswith("system_"):
         arguments.append(suite[len("system_"):])
     environment = os.environ.copy()
+    if suite == "ui_language":
+        ui_artifacts = ROOT / "test/results/ui-language"
+        ui_artifacts.mkdir(parents=True, exist_ok=True)
+        environment["UI_ARTIFACT_DIR"] = str(ui_artifacts)
     recording_suites = {"system_fit", "system_wind_power_fit",
                         "system_stage1_ble_wind_fit", "system_stage2_gps_ble_wind_fit",
                         "system_recording_lifecycle"}

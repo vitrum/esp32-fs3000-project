@@ -12,6 +12,7 @@
 #include "csv_logger.h"   // SdFileEntry
 #include "ui_navigation_guard.h"
 #include "ui_touch_buffer.h"
+#include "aero_zone_view.h"
 
 // ST7789 240x320 display for wind, CdA, live power, cadence, and status.
 class DisplayLcd {
@@ -101,11 +102,12 @@ private:
 
   lv_obj_t *screen_ = nullptr;
   float estimatedCda_ = -1;
-  lv_obj_t *cdaTitleLabel_ = nullptr;
+  AeroZoneView aeroZone_;
   lv_obj_t *windLabel_ = nullptr;
   lv_obj_t *powerLabel_ = nullptr;
   lv_obj_t *avg3Label_ = nullptr;
   lv_obj_t *cadenceLabel_ = nullptr;
+  lv_obj_t *cadenceValueLabel_ = nullptr;
   lv_obj_t *timeLabel_ = nullptr;
   lv_obj_t *statusLabel_ = nullptr;
   // 主界面顶部 GPS 状态指示（图标 + 卫星数 + 搜星动画）
@@ -123,12 +125,15 @@ private:
   lv_obj_t *settingsTitle_ = nullptr;
   lv_obj_t *rideLogPanel_ = nullptr;
   lv_obj_t *rideLogText_ = nullptr;
+  lv_obj_t *rideLogTitle_ = nullptr;
+  lv_obj_t *rideLogEntryLabel_ = nullptr;
   lv_obj_t *fitSaveButton_ = nullptr;
   lv_obj_t *fitSaveLabel_ = nullptr;
   bool fitSaveRequested_ = false;
   lv_obj_t *recordButton_ = nullptr;
   lv_obj_t *recordLabel_ = nullptr;
   lv_obj_t *stopRecordButton_ = nullptr;
+  lv_obj_t *stopRecordLabel_ = nullptr;
   lv_obj_t *rideDurationLabel_ = nullptr;
   bool recordingArmed_ = false;
   bool fitSaving_ = false;
@@ -138,6 +143,9 @@ private:
   bool rideLogFromDashboard_ = false;
   char rideHistory_[360] = {};
   uint32_t rideLastSample_ = 0;
+  uint32_t rideDurationMs_ = 0, rideSamples_ = 0, rideDropped_ = 0, rideSkipped_ = 0;
+  float ridePower_ = 0, rideCadence_ = 0, rideSpeed_ = 0;
+  char ridePath_[80] = {};
   lv_obj_t *settingsLanguageLabel_ = nullptr;
   lv_obj_t *settingsPowerLabel_ = nullptr;
   lv_obj_t *settingsPowerButton_ = nullptr;
@@ -156,6 +164,7 @@ private:
   // 独立「Wi-Fi」页面
   lv_obj_t *wifiPanel_ = nullptr;
   lv_obj_t *wifiTitle_ = nullptr;
+  lv_obj_t *wifiSetupLabel_ = nullptr;
   lv_obj_t *settingsWifiLabel_ = nullptr;
   lv_obj_t *settingsWifiButtons_[2] = {};
   lv_obj_t *settingsWifiButtonLabels_[2] = {};
@@ -220,9 +229,6 @@ private:
   lv_obj_t *bleConfirmNameLabel_ = nullptr;
   lv_obj_t *bleConfirmAddressLabel_ = nullptr;
   lv_obj_t *bleDeviceButtons_[4] = {};
-  lv_obj_t *cdaLabel_ = nullptr;
-  lv_obj_t *zoneLabel_ = nullptr;
-  lv_obj_t *postureLabel_ = nullptr;
   lv_obj_t *windLabelTitle_ = nullptr;
 
   int powerHistorySize_ = 3;
@@ -345,6 +351,7 @@ private:
   void buildNoticePanel();
   void refreshSoundVolume();
   void refreshSdList();
+  void refreshRideLog();
   void refreshLanguage();
   void refreshBleDeviceButtons();
   void setLanguage(bool chinese);

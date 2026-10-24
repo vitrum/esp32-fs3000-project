@@ -23,20 +23,25 @@
   document.querySelector("main").append(output);
   const originalAnchorClick = HTMLAnchorElement.prototype.click;
   const originalVolume = localStorage.getItem("aero-volume");
+  const originalLanguage = localStorage.getItem('aero-language');
   const downloads = [];
   HTMLAnchorElement.prototype.click = function () { downloads.push(this.download); };
   try {
+    sim.setLanguage('en');
     assert(snapshot().language === "en" && snapshot().powerSrc === 0 && !snapshot().recording, "Default: English, AUTO/no source, recording off");
     const metricRights = ["zone-reading", "wind-reading", "power-reading"].map((id) => $(id).getBoundingClientRect().right);
     assert(Math.max(...metricRights) - Math.min(...metricRights) < 1, "Zone, wind and power share the same right alignment");
     const zoneBounds = $("zone-reading").getBoundingClientRect();
     const cdaBounds = $("cda-reading").getBoundingClientRect();
     assert(parseFloat(getComputedStyle($("zone-reading")).fontSize) === 40 && parseFloat(getComputedStyle($("cda-reading")).fontSize) === 14 && zoneBounds.bottom <= cdaBounds.top, "Zone is the large primary reading above the smaller CdA value");
-    assert($("cda-unit").textContent === "CdA m2" && $("cda-unit").getBoundingClientRect().right <= cdaBounds.left && !/[a-z]/i.test($("cda-reading").textContent), "Secondary CdA has its label and unit on the left and number on the right");
+    assert($("cda-unit").textContent === "CdA / m2" && $("cda-unit").getBoundingClientRect().right <= cdaBounds.left && !/[a-z]/i.test($("cda-reading").textContent), "Secondary CdA has its label and unit on the left and number on the right");
     assert([...document.querySelectorAll(".card")].every((element) => getComputedStyle(element).borderRadius === "0px" && getComputedStyle(element).borderTopWidth === "0px"), "Dashboard uses unframed metric rows");
     const settingsBounds = $("screen-meter-button").getBoundingClientRect();
     const clockBounds = $("clock-reading").getBoundingClientRect();
     assert(Math.abs(settingsBounds.y + settingsBounds.height / 2 - clockBounds.y - clockBounds.height / 2) < 4 && settingsBounds.right < clockBounds.left, "Settings gear sits at the top without covering the clock");
+    const cadenceValueBounds=$("cadence-reading").getBoundingClientRect();
+    const powerValueBounds=$("power-reading").getBoundingClientRect();
+    assert(Math.abs(cadenceValueBounds.right-powerValueBounds.right)<1 && $("cadence-label").getBoundingClientRect().right+8<=cadenceValueBounds.left && $("cadence-label").scrollWidth<=$("cadence-label").clientWidth && !/[a-z]/i.test($("cadence-reading").textContent), "Small cadence unit stays clear of the right-aligned number");
     const gpsBounds=$("gps-indicator").getBoundingClientRect(),deviceBounds=document.querySelector('.device').getBoundingClientRect();
     assert(gpsBounds.left-deviceBounds.left===4 && $("gps-spinner").getBoundingClientRect().left>$("gps-icon").getBoundingClientRect().left && $("gps-satellites").hidden, "GPS hugs the left edge and the spinner uses the right-hand satellite slot");
     const sharedGpsX=$("gps-spinner").getBoundingClientRect().left;
@@ -46,10 +51,13 @@
     assert(!/[a-z]/i.test($("power-reading").textContent) && $("screen-meter-button").getAttribute("aria-label") === "Settings", "Values have separate units and the settings icon has an accessible name");
     $("boot-key").click();
     assert(snapshot().page === "settings-dialog" && document.querySelectorAll(".settings-grid button").length === 7, "BOOT opens six settings entries plus RIDE LOG");
+    const cadenceBeforeLanguageChange = $("cadence-reading").textContent;
     $("settings-language").click();
     $("language-zh").click();
-    assert(snapshot().language === "en" && snapshot().error.includes("disabled"), "Chinese selection stays disabled like firmware");
-    dismiss();
+    assert(snapshot().language === 'zh' && document.querySelector('.cda-title').textContent==='气动区间' && $("cadence-label").textContent==='踏频 / rpm' && localStorage.getItem('aero-language')==='zh', 'Chinese selection updates labels and persists the language');
+    assert($("cadence-reading").textContent===cadenceBeforeLanguageChange && !/[a-z]/i.test($("cadence-reading").textContent), 'Language selection preserves the numeric cadence reading');
+    $('language-en').click();
+    assert(snapshot().language==='en' && document.querySelector('.cda-title').textContent==='AERO ZONE', 'English selection restores labels without changing values');
     $("language-page").querySelector("[data-back]").click();
     $("settings-back").click();
     assert(snapshot().page === "settings-dialog", "A repeated back click cannot pass through the child page into SETTINGS");
@@ -305,5 +313,6 @@
     HTMLAnchorElement.prototype.click = originalAnchorClick;
     if (originalVolume === null) localStorage.removeItem("aero-volume");
     else localStorage.setItem("aero-volume", originalVolume);
+    if(originalLanguage===null)localStorage.removeItem('aero-language');else localStorage.setItem('aero-language',originalLanguage);
   }
 })();

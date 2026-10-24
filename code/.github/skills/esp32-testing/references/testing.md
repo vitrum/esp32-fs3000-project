@@ -40,6 +40,7 @@ Use other existing scenario names with `-k` as needed. Check
 
 | Production behavior | Existing test home |
 | --- | --- |
+| Real LVGL aero layout, Chinese glyph coverage, language-switch rendering and heap/pixels | `test/host/ui_language_test.cpp`, native build under `test/host/ui/` |
 | FS3000 calibration, wind vector, BME280, power key, disabled audio | `test/host/sensors_power_test.cpp` |
 | BLE scanning, manager, CPS/FTMS/CSC/posture parsing, diagnostics and log queues | `test/host/ble_diagnostics_test.cpp` |
 | GPS receiver, download pacing/errors and navigation guard | `test/host/concurrency_test.cpp` |

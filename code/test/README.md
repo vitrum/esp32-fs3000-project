@@ -13,7 +13,7 @@ From the workspace root:
 sh test/run.sh all
 ```
 
-This builds the test image, runs thirteen native C++ regression groups through
+This builds the test image, runs fourteen native C++ regression groups through
 `pytest-embedded`, builds the ESP32-S3 Unity firmware, and executes its ten cases
 using Espressif QEMU's ESP32-S3 machine and `pytest-embedded`'s `idf,qemu` services.
 No board is discovered, flashed, or reset by this command.
@@ -40,9 +40,12 @@ Subsequent builds use Docker layers and the pip download cache.
 ### Dashboard And Live Web UI
 
 The 240x320 dashboard uses unframed metric rows, horizontal separators and a
-common right edge for the large Zone/wind/power readings. Zone uses 40px type;
-the secondary CdA number uses 14px at the lower right, with its label/unit at the
-lower left and an ellipsized posture caption above. Wind/power units remain
+common right edge for the large Zone/wind/power readings. Zone uses 40px type.
+The aero block is a production `AeroZoneView` with fixed columns separated by
+12px: title and short posture description on the left, Zone on the right, and
+an independent CdA/unit bottom row separated by a horizontal line. Each text
+has a fixed height; long captions no longer compete with the coefficient row.
+The secondary CdA number uses 14px at the lower right. Wind/power units remain
 small on the left. Settings is a gear in the top status row. GPS hugs the left
 edge; the spinner and satellite count alternate in one slot to the icon's right.
 The live Web page keeps CdA as its primary
@@ -92,12 +95,13 @@ Unity failures, and timeouts all fail the corresponding pytest test.
 ## Functional Coverage
 
 The native groups execute production `.cpp` files, not copies of their algorithms.
-Each group includes multiple assertions and scenarios; thirteen groups do not mean
-only thirteen individual behaviors are checked. This is a coverage inventory, not a
+Each group includes multiple assertions and scenarios; fourteen groups do not mean
+only fourteen individual behaviors are checked. This is a coverage inventory, not a
 claim of 100% line/branch or end-to-end hardware coverage.
 
 | Group | Scenarios |
 | --- | --- |
+| `ui_language` | Actual LVGL C rendering, production AeroZoneView and generated Chinese font; all UI CJK glyphs/icons, text metrics, all zones in both languages, 1600 refreshes, heap integrity and nonblank pixels |
 | `system_coexistence` | GPS UART receiver and BLE scan/notifications stay active while an HTTP callback thread submits 64 control requests, 64 WebSocket telemetry frames are produced and 64 CSV samples are written; continued recording during paced HTTP download; SD lock contention, competing/missing downloads, Wi-Fi loss/reconnect, scan cancellation and clean GPS/BLE shutdown |
 | `system_wifi` | No credentials, preferences failure, STA initialization/start failure, low contiguous heap, mDNS failure, saved-network ordering, immediate failure/timeout progression, stop-after-list, manual reconnect, successful-connection persistence, SmartConfig timeout/manual retry/save failure, enable/disable, credential clearing, invalid controls/paths, escaped JSON and nonfinite telemetry |
 | `system_storage` | SPI/mount/task failure and startup worker retry/reuse, bounded CMD13 timeout recovery (no write-command or non-timeout retries), no automatic formatting, recording-directory file conflicts, GPS-over-fallback UTC priority, paused buffer overflow, date rollover, unique filenames, blocked writer recovery, short write/fsync recovery, session limits, repeated parent/child directory reads, empty versus missing directories, partial-list errors and recovery |
@@ -149,6 +153,54 @@ up and checking the card on a computer, then comparing against board-side reads.
 Native POSIX tests do not establish that the physical FAT or SPI link is healthy.
 
 ## Recorded FIT Validation
+
+### Chinese And English UI
+
+Language selection is restored and persisted as `aero-ui/zh`; boot reads the
+preference instead of forcibly clearing it. Numeric fields/units/icons keep
+Montserrat. Localized text uses a 14px, 4bpp, uncompressed Noto subset with the
+existing Montserrat 14 fallback, avoiding runtime glyph decompression. The
+subset covers the current UI string literals, not arbitrary Chinese device/file
+names. Unrecognized external characters still require a larger future font.
+
+Problems addressed: old English waiting/status captions exceeded their 84px
+column, independent update paths duplicated text/formatting, the CJK subset
+omitted newly added labels, and language refresh still applied the obsolete
+single record/stop-toggle text. The new aero component owns fixed text bounds
+and both value/language updates. Language refresh preserves the separate
+START/STOP buttons and the current waiting/saving state; log/time/setup labels
+are localized too. CSV/FIT values, intervals and recording state are unchanged.
+
+Rebuild the font after adding translated UI literals:
+
+```sh
+curl -fL -o /tmp/aeroprobe-NotoSansCJKsc-Regular.otf \
+  https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf
+node tools/build_ui_font.mjs /tmp/aeroprobe-NotoSansCJKsc-Regular.otf
+```
+
+The script pins `lv_font_conv@1.5.3` and checks source SHA256
+`2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b`.
+The font's existing OFL license remains in `src/NotoSansCJK-OFL.txt`.
+Do not disable glyph tests or use a full CJK font merely to hide missing labels.
+
+`ui_language` compiles the real LVGL C sources with one consistent native config,
+the production component in C++11 and actual generated font. It reproduces the
+old over-width caption, checks every current CJK literal and fallback icon,
+measures rectangles and text in both languages for zones 0-7, renders 1600
+frames, checks LVGL heap integrity and blue Zone pixels, and saves real renders
+to `test/results/ui-language/aero-en.ppm` and `aero-zh.ppm`. This is stronger than
+browser CSS-only checks, but still does not emulate the ST7789 bus or the whole
+screen/menu orchestration. Physical stress tests of language switches, all
+pages, NVS reboot preference and concurrent BLE/GPS/SD remain hardware gates.
+
+Focused check:
+
+```sh
+docker run --rm -v "$PWD:/project" aeroprobe-idf-test:4.4.6 \
+  /opt/pytest-venv/bin/python -m pytest -q test/host/test_regression.py \
+  -k ui_language --junitxml=test/results/ui-language.xml
+```
 
 ### Saved Connections And Startup Queue
 
