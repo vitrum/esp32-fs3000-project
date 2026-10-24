@@ -14,6 +14,7 @@
 #include <Wire.h>
 #include <cstring>
 #include <errno.h>
+#include <time.h>
 #include <esp_heap_caps.h>
 
 #include "config.h"
@@ -58,7 +59,6 @@ Window win;
 
 static uint32_t lastSampleMs = 0;
 static uint32_t lastLogMs    = 0;
-static uint32_t lastUiMs     = 0;
 static uint32_t lastWindProbeMs = 0;
 static uint32_t lastWindValidMs = 0;
 static uint32_t windWindowSamples = 0;
@@ -245,6 +245,10 @@ void loop() {
   lcd.setGpsModulePresent(gps.modulePresent(), gps.presenceChecked());
   if (!fitExport.busy() && gps.timeValid())
     logger.setUtcReference(gps.unixSec(), now);
+#if WIFI_WEB_ENABLE
+  if (!fitExport.busy() && wifiWeb.unixSec() != 0)
+    logger.setNetworkUtcReference(wifiWeb.unixSec(), now);
+#endif
   // 测试阶段兜底：拿不到 GPS 授时就用开机默认时间做 FIT 锚点。
   // 样本时间轴来自 millis()，相对时间正确，仅绝对日期不准。
   // 放在 GPS 之后，确保真实授时优先（useFallback 不会覆盖已存在的 GPS 时间）。
@@ -439,11 +443,14 @@ void loop() {
                         logger.droppedCount(), power, pmCadence(), vg);
     }
 
-#if WIFI_WEB_ENABLE
     const bool windValid = lastWindValidMs != 0 &&
                            now - lastWindValidMs <= 2000;
+  lcd.update(wv, windValid, pmPower(), pmCadence(), powerMeter.speed(),
+         posture.pitchDeg(), env.rhoKgM3(), pmSrc(), logger.ok());
+#if WIFI_WEB_ENABLE
     wifiWeb.broadcastTelemetry(now, power, pmCadence(), vg, vAir, windValid,
-                               yaw, post, rho, src, logger.ok());
+                 yaw, post, rho, src, logger.ok(), lcd.estimatedCda(),
+                 gps.timeValid() ? gps.unixSec() : wifiWeb.unixSec());
 #endif
 
     const char *sourceName = src == 3 ? "VIRTUAL" : (src == 1 ? "BLE" : "--");
@@ -467,14 +474,6 @@ void loop() {
 
     win = Window();
     windWindowSamples = 0;
-  }
-
-  if (now - lastUiMs >= LOG_WINDOW_MS) {
-    lastUiMs = now;
-    const bool windValid = lastWindValidMs != 0 &&
-                           now - lastWindValidMs <= 2000;
-    lcd.update(wv, windValid, pmPower(), pmCadence(), powerMeter.speed(),
-               posture.pitchDeg(), env.rhoKgM3(), pmSrc(), logger.ok());
   }
 
   if (!windSensor.present() && now - lastWindProbeMs >= 5000) {
@@ -520,11 +519,6 @@ void loop() {
       gps.formatLocalDateTime(localStr, sizeof(localStr), 8 * 60);
       // 把本地日期（"YYYY-MM-DD"）交给日志器：有定位时按日期建子目录。
       // localStr 形如 "YYYY-MM-DD HH:MM:SS"（无定位时为 "--"）。
-      if (!fitExport.busy() && gps.timeValid() && strlen(localStr) >= 10 && localStr[4] == '-') {
-        char ymd[12];
-        snprintf(ymd, sizeof(ymd), "%.10s", localStr);
-        logger.setLocalDate(ymd);
-      }
       const bool gpsOnline = gps.enabled() &&
                  (!gps.presenceChecked() || gps.modulePresent());
       lcd.updateGpsStatus(gpsOnline, gps.hasFix(), gps.satellites(),
@@ -534,6 +528,20 @@ void loop() {
       // 主界面顶部 GPS 状态图标：探测期间显示搜星中，未找到后显示关闭态。
       lcd.updateGpsIndicator(gpsOnline,
                              gps.hasFix(), gps.satellites());
+      uint32_t clockUtc = gps.timeValid() ? gps.unixSec() : 0;
+    #if WIFI_WEB_ENABLE
+      if (clockUtc == 0) clockUtc = wifiWeb.unixSec();
+    #endif
+      lcd.updateClock(clockUtc);
+      if (!fitExport.busy() && clockUtc != 0) {
+        const time_t localTime = (time_t)((uint64_t)clockUtc + 8 * 3600);
+        struct tm date;
+        if (gmtime_r(&localTime, &date)) {
+          char ymd[12];
+          strftime(ymd, sizeof(ymd), "%Y-%m-%d", &date);
+          logger.setLocalDate(ymd);
+        }
+      }
     }
   }
 

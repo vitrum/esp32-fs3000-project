@@ -6,6 +6,7 @@ Run from the workspace root:
 
 ```sh
 sh test/run.sh measurements
+sh test/run.sh stages
 sh test/run.sh host
 sh test/run.sh build
 sh test/run.sh qemu
@@ -13,6 +14,7 @@ sh test/run.sh all
 ```
 
 - `measurements`: prioritized wind/power checks; report `test/results/measurements.xml`.
+- `stages`: two native recording rehearsals, BLE+wind then GPS+BLE+wind; report `test/results/stages.xml`. No board flashing or browser UI emulation.
 - `host`: native pytest groups with controlled platform/hardware replacements.
 - `build`: separate ESP32-S3 Unity firmware build, not production firmware.
 - `qemu`: Unity firmware build and automatic menu execution on Espressif QEMU.
@@ -75,6 +77,15 @@ across UTC midnight. Its fixed timeline is 2026-10-22 23:59:00 UTC through
 2026-10-23 00:00:04 UTC: 64 seconds and 716.8 meters. These are fixture values,
 not universal assertions for arbitrary recordings. If intentionally changing
 the fixture, update expected inputs and summaries together and justify why.
+
+The stage fixtures instead retain a single 65-row CSV: stage 1 uses configured
+fallback UTC 2024-01-01 and no speed packets (zero distance); stage 2 parses real
+NMEA text through the background receiver, uses UTC+8 date directories and GPS
+speed, loses the NMEA stream for samples 20-24 and recovers at 25. Samples 22-24
+have zero fallback speed; independently expected distance is 702.964 m before
+FIT centimeter quantization. Both stages use raw FS3000 and CPS/FTMS inputs,
+keep Wi-Fi off, and preserve input/CSV/FIT/validation artifacts. See test/README.md
+for the ordered production-hardware gates; mocks do not certify the RF/UART/SD link.
 
 The independent `fitdecode` parser must use strict CRC and parsing modes.
 Validate standard power/speed/distance fields and the `airspeed`, `yaw`,

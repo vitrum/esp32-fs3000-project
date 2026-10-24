@@ -9,6 +9,8 @@
 #include <esp_heap_caps.h>
 #include "sd_download.h"
 #include <new>
+#include <esp_sntp.h>
+#include <time.h>
 
 WifiWeb wifiWeb;
 
@@ -324,6 +326,8 @@ void WifiWeb::tick() {
     bool nowConnected = (st == WL_CONNECTED);
     if (nowConnected && !_connected) {
       _connected = true;
+      configTime(0, 0, "ntp.aliyun.com", "time.cloudflare.com", "pool.ntp.org");
+      AppLog.println("[TIME] network connected; requesting NTP UTC asynchronously");
       startMdns();
       AppLog.printf("[WiFi] reconnected. IP=%s\n", WiFi.localIP().toString().c_str());
     } else if (!nowConnected && _connected) {
@@ -353,6 +357,20 @@ void WifiWeb::tick() {
       }
     }
   }
+  if (_connected && sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED &&
+      !_timeSynchronized) {
+    const time_t utc = time(nullptr);
+    if (utc >= 1577836800 && (uint64_t)utc <= 4102444799ULL) {
+      _timeSynchronized = true;
+      AppLog.printf("[TIME] NTP synchronized: UTC=%lu\n", (unsigned long)utc);
+    }
+  }
+}
+
+uint32_t WifiWeb::unixSec() const {
+  if (!_timeSynchronized) return 0;
+  const time_t utc = time(nullptr);
+  return utc >= 1577836800 && (uint64_t)utc <= 4102444799ULL ? (uint32_t)utc : 0;
 }
 
 // ============================================================================
@@ -378,7 +396,7 @@ void WifiWeb::onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
 void WifiWeb::broadcastTelemetry(uint32_t tMs, float powerW, float cadRpm,
                                  float vgMps, float vAirMps, bool windValid,
                                  float yawDeg, float postureDeg, float rho,
-                                 int powerSrc, bool logging) {
+                                 int powerSrc, bool logging, float cda, uint32_t utc) {
   if (!_connected || _ws.count() == 0) return;
 
   const char *srcName = powerSrc == 3 ? "VIRTUAL"
@@ -390,15 +408,18 @@ void WifiWeb::broadcastTelemetry(uint32_t tMs, float powerW, float cadRpm,
   if (!isfinite(yawDeg)) yawDeg = 0.0f;
   if (!isfinite(postureDeg)) postureDeg = 0.0f;
   if (!isfinite(rho)) rho = 0.0f;
-  char buf[320];
+  if (!isfinite(cda) || !windValid || powerSrc == 0) cda = -1;
+  if (utc == 0) utc = unixSec();
+  char buf[448];
   snprintf(buf, sizeof(buf),
            "{\"t\":%lu,\"p\":%.1f,\"cad\":%.0f,\"vg\":%.3f,\"vair\":%.3f,"
            "\"windValid\":%s,\"yaw\":%.1f,\"posture\":%.1f,"
            "\"rho\":%.4f,\"src\":\"%s\","
-           "\"log\":%s}",
+           "\"log\":%s,\"cda\":%.4f,\"utc\":%lu}",
            (unsigned long)tMs, powerW, cadRpm, vgMps, vAirMps,
            windValid ? "true" : "false", yawDeg,
-           postureDeg, rho, srcName, logging ? "true" : "false");
+           postureDeg, rho, srcName, logging ? "true" : "false", cda,
+           (unsigned long)utc);
 
   _ws.textAll(buf);
 }

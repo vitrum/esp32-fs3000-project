@@ -66,8 +66,10 @@ public:
   // 记录本次会话的 UTC 参考（GPS 授时）。允许在未开始记录时调用：
   // FIT 导出需要绝对时间锚点，而 GPS 授时可能早于/晚于 start()。
   void setUtcReference(uint32_t utc, uint32_t milliseconds);
+  // 网络授时优先于默认时间；不覆盖 GPS 或已固定的网络锚点。
+  void setNetworkUtcReference(uint32_t utc, uint32_t milliseconds);
   bool utcReference(uint32_t &utc, uint32_t &milliseconds) const;
-  // 当前 UTC 参考是否来自 GPS 授时（false = 开机默认时间或尚不可用）。
+  // 当前 UTC 参考是否来自 GPS（false 也可能是 NTP）。
   bool utcReferenceFromGps() const { return _referenceFromGps; }
   // 无 GPS 授时时的兜底：写入开机默认 UTC 时间。
   // 仅在当前没有 GPS 参考时生效，绝不覆盖真实 GPS 时间。
@@ -124,6 +126,7 @@ private:
   uint32_t _sampleCount = 0, _sessionDropped = 0;
   uint32_t _referenceUtc = 0, _referenceMs = 0;
   bool     _referenceFromGps = false;   // UTC 参考是否来自 GPS 授时
+  bool     _referenceFromNetwork = false;
   char _sessionFiles[kSessionFiles][80] = {};
   size_t _sessionFileCount = 0;
   bool _sessionOverflow = false;

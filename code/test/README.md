@@ -13,7 +13,7 @@ From the workspace root:
 sh test/run.sh all
 ```
 
-This builds the test image, runs ten native C++ regression groups through
+This builds the test image, runs twelve native C++ regression groups through
 `pytest-embedded`, builds the ESP32-S3 Unity firmware, and executes its ten cases
 using Espressif QEMU's ESP32-S3 machine and `pytest-embedded`'s `idf,qemu` services.
 No board is discovered, flashed, or reset by this command.
@@ -24,6 +24,7 @@ Individual stages:
 sh test/run.sh image
 sh test/run.sh host
 sh test/run.sh measurements
+sh test/run.sh stages
 sh test/run.sh build
 sh test/run.sh qemu
 ```
@@ -35,6 +36,36 @@ The first image build downloads tool dependencies and needs Internet access.
 Subsequent builds use Docker layers and the pip download cache.
 
 ## Coverage And Boundaries
+
+### Dashboard And Live Web UI
+
+The 240x320 dashboard uses unframed metric rows, horizontal separators, small
+left-side units and a common right edge for CdA/wind/power. Settings is a gear
+on the cadence row. The live Web page uses the same hierarchy: one column on
+phones, instrument plus supporting controls/records on desktop. It has no
+external font/icon/CDN dependency. Web airspeed and ground speed display km/h;
+production telemetry, CSV and FIT retain their existing m/s units.
+
+Web telemetry adds the LCD's current estimated `cda` and UTC `utc`; the main loop
+refreshes the LCD estimate before broadcasting. Missing/invalid wind suppresses
+CdA. This does not change the existing approximate CdA model or constitute
+calibration. Realtime values are cleared on disconnect, bad JSON or a five-second
+data timeout, while command errors remain independent from incoming telemetry.
+
+With the workspace served over local HTTP:
+
+- `simulator/index.html?test=1`: device UI regression, including alignment,
+  separate units, unframed rows and the cadence/settings row.
+- `simulator/web-preview.html?test=1`: loads the actual HTML from
+  `src/web_assets.h`, installs simulated WebSocket/HTTP boundaries and runs Web
+  regression. Without `?test=1` it is an interactive preview, not a device client.
+
+Web checks include null versus valid zero, km/h conversion, large signed power,
+invalid wind/CdA, start/stop requests, settings, record-list failures, safe file
+names, successful/failed downloads, duplicate sockets, malformed frames and
+disconnect recovery. Validate 1440px desktop, 390px mobile and 320px narrow mobile
+with Playwright screenshots, bounding boxes, overflow checks and canvas pixels.
+Actual LCD rendering/touch targets and the real network remain hardware gates.
 
 | Layer | Production code exercised | Hardware dependencies |
 | --- | --- | --- |
@@ -56,8 +87,8 @@ Unity failures, and timeouts all fail the corresponding pytest test.
 ## Functional Coverage
 
 The native groups execute production `.cpp` files, not copies of their algorithms.
-Each group includes multiple assertions and scenarios; ten groups do not mean
-only ten individual behaviors are checked. This is a coverage inventory, not a
+Each group includes multiple assertions and scenarios; twelve groups do not mean
+only twelve individual behaviors are checked. This is a coverage inventory, not a
 claim of 100% line/branch or end-to-end hardware coverage.
 
 | Group | Scenarios |
@@ -67,6 +98,8 @@ claim of 100% line/branch or end-to-end hardware coverage.
 | `system_storage` | SPI/mount/task failure and startup worker retry/reuse, bounded CMD13 timeout recovery (no write-command or non-timeout retries), no automatic formatting, recording-directory file conflicts, GPS-over-fallback UTC priority, paused buffer overflow, date rollover, unique filenames, blocked writer recovery, short write/fsync recovery, session limits, repeated parent/child directory reads, empty versus missing directories, partial-list errors and recovery |
 | `system_fit` | HTTP start request, real CSV recording and writer, 65 fixed samples split at UTC midnight, asynchronous FIT export, automatic stop/flush, overwrite protection, malformed CSV rejection, retained output and independent strict FIT decoding |
 | `system_wind_power_fit` | Real FS3000 frames and CPS/FTMS notification parsing feed CSV and FIT; every wind/power value is checked independently; power boundaries, quiet/full-scale wind, checksum/short packet protection, disconnect/reconnect and protocol switch |
+| `system_stage1_ble_wind_fit` | Wi-Fi off, GPS absent, raw FS3000 + CPS/FTMS packets, BLE disconnect/reconnect, one 65-row CSV, fallback UTC and independently decoded FIT |
+| `system_stage2_gps_ble_wind_fit` | Stage 1 measurement inputs plus background TinyGPSPlus NMEA reception, GPS UTC/local date, GPS speed override, checksum error, 5-second stream loss/recovery and uninterrupted 65-row CSV/FIT |
 | `sensors_power` | FS3000 calibration knots/interpolation/clamping, invalid frames/checksum/offline/reprobe; wind magnitude and yaw sign; BME280 fallback/formula/refresh/invalid samples; boot latch, short/long press and shutdown GPIOs; disabled audio rejects playback without I2S allocation |
 | `concurrency` | GPS background reception, valid-NMEA presence, offline timeout, noise rejection, automatic reconnect after disconnect or initial absence, freshness/checksum/UART overflow/restart; HTTP download pacing, lock timeout, short read/open/seek errors; navigation release/bounce/timer wrap |
 | `ble_runtime` | Scan start/end/deadline/cancel/stop errors, adaptive scan windows, bounded packet inbox and generations, controller queue/cancellation/restart, CPS/FTMS/CSC/posture decoding, log replay/MTU/byte budget/backoff/commands/disconnect |
@@ -110,6 +143,34 @@ up and checking the card on a computer, then comparing against board-side reads.
 Native POSIX tests do not establish that the physical FAT or SPI link is healthy.
 
 ## Recorded FIT Validation
+
+### Wi-Fi Network Time
+
+After a station connection the firmware starts ESP-IDF SNTP asynchronously with
+`ntp.aliyun.com`, `time.cloudflare.com` and `pool.ntp.org`. No blocking
+`getLocalTime()` wait is used. Until an actual SNTP completion the network clock
+is untrusted; DNS/server failure leaves the dashboard at `--:--:--` unless GPS
+provides time. SNTP manages retries and periodic resynchronization. A previously
+synchronized system clock continues through disconnection or Wi-Fi OFF, but is
+not retained across power loss. Reconnection requests synchronization again.
+
+The dashboard uses valid GPS UTC first, then synchronized network UTC, and shows
+UTC+8 `HH:MM:SS` at the top right. The small recording icon is gray when stopped
+and green while recording; tapping opens RIDE LOG and BACK returns to its origin.
+NTP can replace a fallback recording UTC anchor; GPS remains higher priority.
+Repeated NTP updates do not move an already selected network anchor. CSV date
+directories use UTC+8, FIT timestamps remain UTC, and sample timing stays based
+on `millis()` rather than a corrected wall clock.
+
+`system_wifi` covers pending/success/reconnect and retained time while offline;
+`system_storage` covers NTP/fallback/GPS priority and anchor retention;
+`system_fit` independently decodes the real FIT generated from a network-reference
+fixture. The browser regression models server unavailability, completion and
+holdover, but does not contact real NTP servers. Physical verification: connect
+Wi-Fi with Internet/UDP 123 access, wait for `[TIME] NTP synchronized`, compare the
+clock with local UTC+8 time, disable Wi-Fi and confirm it still advances, then
+record/export without GPS and check the resulting FIT UTC date. DNS/NTP service
+availability and actual LCD rendering are hardware gates, not mock guarantees.
 
 ### Wind And Power First
 
@@ -171,6 +232,60 @@ docker run --rm -v "$PWD:/project" aeroprobe-idf-test:4.4.6 \
   /opt/pytest-venv/bin/python -m pytest -q test/host/test_regression.py \
   -k system_fit --junitxml=test/results/recording-fit.xml
 ```
+
+### Two-Stage Recording Rehearsal
+
+```sh
+sh test/run.sh stages
+```
+
+This is a native production-module simulation, not browser UI or RF emulation.
+It does not flash/reset the board. Report: `test/results/stages.xml`.
+`measurements` also includes these two scenarios (five groups total).
+
+Both scenarios feed the real FS3000 driver and BLE CPS/FTMS decoder, writer and
+FIT exporter. They test valid zero watts, negative signed power, BLE loss at
+samples 30-31, reconnect/protocol switch at 32, wind checksum rejection and
+truncated BLE packets. All 65 saved records are independently checked, not just
+the export return value. Wi-Fi stays off to match the initial hardware stages.
+
+| Stage | Time and speed | Expected artifacts |
+| --- | --- | --- |
+| 1: BLE + wind + logging | No GPS; configured fallback UTC 2024-01-01; these packets contain no wheel speed, so ground speed/distance are zero | One 65-row CSV under `/LOG`, FIT with 65 records, 64 seconds, zero distance |
+| 2: GPS + BLE + wind + logging | NMEA UTC starts 2026-10-22 23:59:00; UTC+8 directory is 2026-10-23; 22.4 knots becomes 11.524 m/s; no NMEA at samples 20-24, offline/zero fallback speed at 22-24, recovery at 25 | One 65-row CSV and FIT, 64 seconds, 702.964 m before FIT centimeter quantization |
+
+Find each run in `test/results/fit/recording-*/validation.json` using its `stage`
+and `time_source`. The folder contains `sensor-input.csv`, `segment-0.csv`,
+`recording.fit`, `decoded.json` and `validation.json`; stage 2 additionally saves
+`gps-input.nmea` (60 valid sentences plus one bad-checksum sentence).
+The stages call production modules as a harness; they do not execute `main.cpp`
+or model real I2C/UART/RF timing. The existing browser simulator remains a
+separate UI/demo tool, not proof of firmware measurement accuracy.
+
+### Production Hardware Sequence
+
+Use the known-good card and existing production firmware, not `run.sh hardware`
+(that command replaces it with Unity firmware). Capture the serial monitor from
+boot. Leave Wi-Fi off and audio disabled in both initial stages.
+
+1. Stage 1: disconnect GPS, select the real BLE power meter (not VIRTUAL), verify
+  changing watts and source BLE, then record for at least 120 seconds. Include
+  coasting/zero watts and controlled airflow over the FS3000. Stop, save FIT,
+  retain CSV/FIT and serial logs. Require no SD errors or dropped samples;
+  compare steady power and wind values across monitor, CSV and decoded FIT.
+  Zero watts with BLE connected must stay valid; missing BLE must not become
+  valid zero power. No wheel-speed packets means zero speed/distance is expected.
+  Fallback UTC is not a real ride date. Back up the card before stage 2.
+2. Stage 2: power down before changing GPS wiring, then restart outside and wait
+  for fresh FIX/UTC. Repeat the same recording, confirm the UTC+8 date directory
+  and FIT UTC timestamps, and compare GPS ground speed separately from airspeed.
+  Exercise loss/recovery by safely interrupting only the NMEA stream (never
+  rewire power while running). Logging must continue, GPS must become offline,
+  ground speed must fall back to BLE wheel speed or zero, then recover.
+3. Accept each stage only after independently decoding its real FIT and comparing
+  count, power, airspeed, source IDs, UTC, duration and distance against retained
+  CSV/monitor data. Record device identities, firmware revision and test times.
+  These are manual gates; the automated simulation does not mark them passed.
 
 ### Remaining Hardware Gates
 

@@ -27,6 +27,13 @@
   HTMLAnchorElement.prototype.click = function () { downloads.push(this.download); };
   try {
     assert(snapshot().language === "en" && snapshot().powerSrc === 0 && !snapshot().recording, "Default: English, AUTO/no source, recording off");
+    const metricRights = ["cda-reading", "wind-reading", "power-reading"].map((id) => $(id).getBoundingClientRect().right);
+    assert(Math.max(...metricRights) - Math.min(...metricRights) < 1, "CdA, wind and power share the same right alignment");
+    assert([...document.querySelectorAll(".card")].every((element) => getComputedStyle(element).borderRadius === "0px" && getComputedStyle(element).borderTopWidth === "0px"), "Dashboard uses unframed metric rows");
+    const settingsBounds = $("screen-meter-button").getBoundingClientRect();
+    const cadenceBounds = $("cadence-reading").getBoundingClientRect();
+    assert(Math.abs(settingsBounds.y + settingsBounds.height / 2 - cadenceBounds.y - cadenceBounds.height / 2) < 2, "Settings gear shares the cadence row");
+    assert(!/[a-z]/i.test($("power-reading").textContent) && $("screen-meter-button").getAttribute("aria-label") === "Settings", "Values have separate units and the settings icon has an accessible name");
     $("boot-key").click();
     assert(snapshot().page === "settings-dialog" && document.querySelectorAll(".settings-grid button").length === 7, "BOOT opens six settings entries plus RIDE LOG");
     $("settings-language").click();
@@ -104,13 +111,13 @@
     assert(snapshot().cda === null, "CdA is unavailable below 3 m/s");
     sim.setInput({ wind: 36 });
     change("wind-valid", false);
-    assert($("wind-reading").textContent === "-- km/h", "Invalid wind data displays placeholder");
+    assert($("wind-reading").textContent === "--", "Invalid wind data displays placeholder with separate unit");
     change("wind-valid", true);
     $("virtual-back").click();
     $("auto-source").click();
     assert(snapshot().mode === 0 && snapshot().power === 100 && snapshot().powerSrc === 1, "AUTO uses connected BLE without ANT or virtual leakage");
     $("toggle-run").click();
-    assert(!snapshot().recording && $("log-status").textContent === "LOG OFF", "Automatic sampling is independent from CSV recording");
+    assert(!snapshot().recording && $("log-status").title.includes("Recording stopped"), "Automatic sampling is independent from CSV recording");
     $("toggle-run").click();
     $("record-start").click();
     assert(snapshot().error.includes("Wi-Fi"), "Web recording command rejects disconnected Wi-Fi");
@@ -121,12 +128,20 @@
     assert(snapshot().wifi === "provisioning", "Wi-Fi without credentials waits for SmartConfig");
     change("wifi-input", "disconnected");
     assert(snapshot().wifi === "connecting", "Unavailable access point leaves Wi-Fi connecting");
+    sim.setInput({ ntpAvailable: false });
     change("wifi-input", "connected");
     sim.step(1);
     assert(snapshot().wifi === "connected" && $("wifi-status").textContent.includes("aeroprobe.local"), "Wi-Fi ON button models station connection and URLs");
+    assert($("clock-reading").textContent === "--:--:--", "Clock stays unknown before NTP completion");
+    sim.step(3);
+    assert($("clock-reading").textContent === "--:--:--", "Unavailable NTP server does not fabricate a clock");
+    sim.setInput({ ntpAvailable: true });
+    sim.step(1);
+    assert(/^\d{2}:\d{2}:\d{2}$/.test($("clock-reading").textContent), "NTP completion displays local clock without GPS");
     assert($("wifi-on").getAttribute("aria-pressed") === "true" && $("wifi-off").getAttribute("aria-pressed") === "false", "Wi-Fi buttons show only the active selection");
     $("wifi-off").click();
     assert(snapshot().wifi === "off" && $("wifi-off").classList.contains("selected"), "Wi-Fi OFF button disables the station and updates selection");
+    assert($("clock-reading").textContent !== "--:--:--", "Synchronized clock remains available after Wi-Fi is disabled");
     $("wifi-on").click(); sim.step(1);
     change("gps-input", "fixed");
     sim.recording(true);
@@ -214,9 +229,8 @@
     assert(snapshot().page === "ride-log-page" && $("ride-log-data").textContent.includes("Samples:"), "RIDE LOG shows current record and live values");
     sim.recording(true);
     sim.step(3);
-    $("fit-save").click();
-    assert(snapshot().recording && snapshot().error.includes("GPS time"), "Missing trusted GPS time does not stop recording or fabricate FIT dates");
-    dismiss();
+    assert(snapshot().recording && snapshot().networkTime && snapshot().trustedTime,
+      "NTP provides trusted recording time when GPS has no fix");
     change("gps-input", "fixed");
     sim.step(1);
     change("sd-ready", false);

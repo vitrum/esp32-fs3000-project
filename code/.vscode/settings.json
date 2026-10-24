@@ -31,6 +31,14 @@
     "/^docker run --rm -v \"\\$PWD:/project\" aeroprobe-idf-test:4\\.4\\.6 /opt/pytest-venv/bin/python -m pytest -q test/host/test_regression\\.py -k system_storage --junitxml=test/results/sd-directory\\.xml$/": {
       "approve": true,
       "matchCommandLine": true
+    },
+    "/^docker run --rm -v \"\\$PWD:/project\" aeroprobe-idf-test:4\\.4\\.6 /opt/pytest-venv/bin/python -c 'import xml\\.etree\\.ElementTree as E, pathlib, json, hashlib; root=pathlib\\.Path\\(\"/project/test/results\"\\); \\[\\(print\\(name,\\[s\\.attrib for s in E\\.parse\\(root/name\\)\\.iter\\(\"testsuite\"\\)\\]\\)\\) for name in \\[\"host\\.xml\",\"unity-qemu\\.xml\"\\]\\]; reports=sorted\\(\\(root/\"fit\"\\)\\.glob\\(\"recording-\\*/validation\\.json\"\\),key=lambda p:p\\.stat\\(\\)\\.st_mtime,reverse=True\\)\\[:4\\]; \\[\\(print\\(str\\(p\\),json\\.loads\\(p\\.read_text\\(\\)\\)\\[\"content\"\\],json\\.loads\\(p\\.read_text\\(\\)\\)\\[\"records\"\\],\"sha256_matches\",hashlib\\.sha256\\(\\(p\\.parent/\"recording\\.fit\"\\)\\.read_bytes\\(\\)\\)\\.hexdigest\\(\\)==json\\.loads\\(p\\.read_text\\(\\)\\)\\[\"sha256\"\\]\\)\\) for p in reports\\]'$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^docker run --rm -v \"\\$PWD:/project\" aeroprobe-idf-test:4\\.4\\.6 /opt/pytest-venv/bin/python -m pytest -q test/host/test_regression\\.py -k system_wifi --junitxml=test/results/web-ui\\.xml$/": {
+      "approve": true,
+      "matchCommandLine": true
     }
   }
 }

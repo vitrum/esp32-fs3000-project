@@ -470,9 +470,9 @@ bool CsvLogger::start() {
   // 不要无条件清零 UTC 参考：GPS 可能在本轮 start() 之前就已授时，
   // 那是真实且可用的绝对时间锚点，清掉会导致 FIT 保存被拒绝
   // （日志中的 "[FIT] No trusted time for this recording."）。
-  // 这里只清除「兜底默认时间」，保留 GPS 授时；若既无 GPS 也无兜底，
+  // 这里只清除「兜底默认时间」，保留 GPS/NTP 授时；若没有有效授时，
   // FIT 导出时会再写入开机默认时间。
-  if (!_referenceFromGps) {
+  if (!_referenceFromGps && !_referenceFromNetwork) {
     _referenceUtc = _referenceMs = 0;
     _referenceFromGps = false;
   }
@@ -520,9 +520,18 @@ void CsvLogger::setUtcReference(uint32_t utc, uint32_t milliseconds) {
     _referenceUtc = utc;
     _referenceMs = milliseconds;
     _referenceFromGps = true;
+    _referenceFromNetwork = false;
     AppLog.printf("[SD] UTC reference set from GPS: %lu\n",
                   (unsigned long)utc);
   }
+}
+
+void CsvLogger::setNetworkUtcReference(uint32_t utc, uint32_t milliseconds) {
+  if (_referenceFromGps || _referenceFromNetwork || utc < 1577836800) return;
+  _referenceUtc = utc;
+  _referenceMs = milliseconds;
+  _referenceFromNetwork = true;
+  AppLog.printf("[SD] UTC reference set from NTP: %lu\n", (unsigned long)utc);
 }
 
 void CsvLogger::useFallbackUtcReference(uint32_t utc, uint32_t milliseconds) {

@@ -23,6 +23,7 @@
     virtualPower: 0, virtualCadence: 0, wind: 9.5, windValid: true,
     samples: [], seconds: 0, running: false, page: "dashboard",
     wifiEnabled: false, wifi: "off", wifiEnvironment: "unconfigured", wifiDeadline: 0,
+    networkTime: false, ntpDeadline: 0, ntpAvailable: true,
     volume: Number.isFinite(savedVolume) ? Math.max(0, Math.min(100, savedVolume)) : 55,
     gpsEnvironment: "searching", gps: "searching", gpsDeadline: 0, gpsSpeed: 30 / 3.6,
     sdReady: true, sdBusy: false, directory: "/", audio: null, audioDeadline: 0,
@@ -56,7 +57,7 @@
 
   function estimateCda() {
     const watts = average(state.samples.slice(-3));
-    if (!source() || watts <= 0 || state.wind < 3) return null;
+    if (!state.windValid || !source() || watts <= 0 || state.wind < 3) return null;
     const aeroPower = watts * 0.975 - 85 * 9.80665 * 0.004 * state.wind;
     return aeroPower > 0 ? aeroPower / (0.5 * 1.225 * state.wind ** 3) : null;
   }
@@ -94,15 +95,18 @@
   function render() {
     const cda = estimateCda();
     const zone = zoneFor(cda);
-    $("power-reading").textContent = `${Math.round(power())} W`;
+    $("power-reading").textContent = String(Math.round(power()));
+    $("power-reading").style.fontSize = Math.abs(power()) >= 10000 ? "28px" : "40px";
     $("cadence-reading").textContent = `CADENCE ${Math.round(cadence())} rpm`;
-    $("wind-reading").textContent = state.windValid ? `${(state.wind * 3.6).toFixed(1)} km/h` : "-- km/h";
-    $("cda-reading").textContent = cda === null ? "-- m2" : `${cda.toFixed(2)} m2`;
-    $("zone-reading").textContent = zone?.zone ?? "--";
+    $("wind-reading").textContent = state.windValid ? (state.wind * 3.6).toFixed(1) : "--";
+    $("cda-reading").textContent = cda === null ? "--" : cda.toFixed(2);
+    $("cda-reading").style.fontSize = cda >= 10 ? "28px" : "40px";
+    $("zone-reading").textContent = `Z${zone?.zone ?? "--"}`;
     $("posture-reading").textContent = zone?.posture ?? "WAITING FOR DATA";
-    $("screen-meter-button").style.backgroundColor = source() === 3 ? "#d97706" : "#2563eb";
-    $("clock-reading").textContent = timeString(state.seconds);
-    $("log-status").textContent = `LOG ${state.recording ? "OK" : "OFF"}`;
+    $("clock-reading").textContent = gpsFixed() || state.networkTime
+      ? formattedDate(localDate()).slice(11) : "--:--:--";
+    $("log-status").title = `${state.recording ? "Recording" : "Recording stopped"}; open ride log`;
+    $("log-status").setAttribute("aria-label", $("log-status").title);
     $("log-status").style.color = state.recording ? "#16a34a" : "#64748b";
     $("toggle-run").textContent = state.running ? "Pause Auto Sampling" : "Start Auto Sampling";
     $("connect-ble").classList.toggle("selected", state.bleConnected);
@@ -167,7 +171,7 @@
     }
   }
   function createRecord() {
-    if (gpsFixed() || state.gps === "stale") state.logDate = localDate().toISOString().slice(0, 10);
+    if (gpsFixed() || state.gps === "stale" || state.networkTime) state.logDate = localDate().toISOString().slice(0, 10);
     const date = state.logDate;
     const directory = date ? `/LOG/${date}` : "/LOG";
     files.set(directory, { directory: true });
@@ -184,7 +188,7 @@
     if (enabled && !state.recording) {
       state.pending = []; state.writer = []; state.dropped = 0;
       state.sessionRecords = []; state.fitPath = ""; state.fitBytes = null;
-      state.trustedTime = gpsFixed() || state.gps === "stale";
+      state.trustedTime = gpsFixed() || state.gps === "stale" || state.networkTime;
       createRecord();
       state.recording = true;
     } else if (!enabled && state.recording) {
@@ -200,8 +204,8 @@
     if (state.samples.length > 60) state.samples.shift();
     flushWriter();
     if (!state.recording) return;
-    if (gpsFixed() || state.gps === "stale") state.trustedTime = true;
-    if (gpsFixed() || state.gps === "stale") state.logDate = localDate().toISOString().slice(0, 10);
+    if (gpsFixed() || state.gps === "stale" || state.networkTime) state.trustedTime = true;
+    if (gpsFixed() || state.gps === "stale" || state.networkTime) state.logDate = localDate().toISOString().slice(0, 10);
     const date = state.logDate;
     if (date !== state.currentRecord.date && !state.sdBusy && state.sdReady) {
       state.currentRecord.rows.push(...state.writer, ...state.pending);
@@ -367,7 +371,14 @@
         notice(`Saved ${pending.path}`);
       }
     }
-    if (state.wifiEnabled && state.wifiEnvironment === "connected" && time >= state.wifiDeadline) state.wifi = "connected";
+    if (state.wifiEnabled && state.wifiEnvironment === "connected" && time >= state.wifiDeadline) {
+      if (state.wifi !== "connected") state.ntpDeadline = time + 1000;
+      state.wifi = "connected";
+    }
+    if (state.wifi === "connected" && state.ntpDeadline && state.ntpAvailable && time >= state.ntpDeadline) {
+      state.networkTime = true;
+      state.ntpDeadline = 0;
+    }
     if (["detecting", "restarting"].includes(state.gps) && time >= state.gpsDeadline)
       state.gps = state.gpsEnvironment === "absent" ? "absent" : "searching";
     if (state.audio && time >= state.audioDeadline) stopAudio();
@@ -431,6 +442,7 @@
     $(`settings-${button}`).onclick = () => showPage(page);
   $("settings-sd").onclick = () => browse("/");
   $("settings-log").onclick = () => showPage("ride-log-page");
+  $("log-status").onclick = () => showPage("ride-log-page");
   function saveFit() {
     if (state.fitSaving) return;
     if (!(gpsFixed() || state.gps === "stale")) return notice("Acquire GPS time before saving FIT.");
@@ -527,6 +539,7 @@
       for (const field of ["power", "cadence", "virtualPower", "virtualCadence"])
         if (field in values) state[field] = Number(values[field]);
       if ("wind" in values) state.wind = Number(values.wind) / 3.6;
+      if ("ntpAvailable" in values) state.ntpAvailable = Boolean(values.ntpAvailable);
       syncInputs(); render();
     },
     snapshot() {
@@ -537,6 +550,7 @@
         average3: average(state.samples.slice(-3)), average60: average(state.samples), sampleCount: state.samples.length,
         seconds: state.seconds, page: state.page, language: "en", volume: state.volume,
         wifi: state.wifi, gps: state.gps, gpsSpeedMps: state.gpsSpeed, audio: state.audio,
+        networkTime: state.networkTime, trustedTime: state.trustedTime,
         bleConnected: state.bleConnected, postureConnected: state.postureConnected, operation: state.operation?.kind ?? null,
         recording: state.recording, buffered: state.pending.length, queued: state.writer.length, dropped: state.dropped,
         written: state.currentRecord?.rows.length ?? 0, csv: CSV_HEADER + (state.currentRecord?.rows.join("") ?? ""),

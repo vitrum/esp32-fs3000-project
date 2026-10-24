@@ -8,6 +8,7 @@
 #include "wifi_web.h"
 #include "storage_platform.h"
 #include <esp_heap_caps.h>
+#include <esp_sntp.h>
 #include <driver/uart.h>
 #include <cassert>
 #include <filesystem>
@@ -112,14 +113,27 @@ static void wifiTests() {
     auto *socket = AsyncWebSocket::instances.back();
     WiFi.state = WL_CONNECTED;
     MDNS.fail = true;
+    const auto requestsBeforeConnect = hostNtpRequests;
     web.tick();
     assert(web.connected());
+    assert(hostNtpRequests == requestsBeforeConnect + 1 && web.unixSec() == 0);
+    assert(hostNtpOffset == 0 && hostNtpDaylightOffset == 0);
+    for (const auto &server : hostNtpServers) assert(!server.empty());
+    web.tick();
+    assert(hostNtpRequests == requestsBeforeConnect + 1 && web.unixSec() == 0);
+    hostSntpStatus = SNTP_SYNC_STATUS_COMPLETED;
+    web.tick();
+    assert(web.unixSec() >= 1577836800);
     MDNS.fail = false;
     socket->clients = 1;
     web.broadcastTelemetry(1, NAN, INFINITY, NAN, NAN, false, NAN, NAN, NAN, 1, false);
     assert(socket->frames.back().find("nan") == std::string::npos);
     assert(socket->frames.back().find("inf") == std::string::npos);
     assert(socket->frames.back().find("\"windValid\":false") != std::string::npos);
+    assert(socket->frames.back().find("\"cda\":-1.0000") != std::string::npos);
+    web.broadcastTelemetry(2, 250, 90, 8, 10, true, 0, 0, 1.225, 1, true, 0.3125f, 1792483200);
+    assert(socket->frames.back().find("\"cda\":0.3125") != std::string::npos);
+    assert(socket->frames.back().find("\"utc\":1792483200") != std::string::npos);
     for (const char *cmd : {"", "bogus", "source"}) {
       AsyncWebServerRequest request;
       if (*cmd) request.arguments["cmd"] = cmd;
@@ -165,6 +179,13 @@ static void wifiTests() {
     http->dispatch("/api/status", HTTP_GET, status);
     assert(status.status == 200 && status.content.find("\\u0009") != std::string::npos);
     const auto frames = socket->frames.size();
+    WiFi.state = WL_DISCONNECTED;
+    web.tick();
+    assert(web.unixSec() >= 1577836800);
+    WiFi.state = WL_CONNECTED;
+    web.tick();
+    assert(hostNtpRequests == requestsBeforeConnect + 2);
+    assert(web.unixSec() >= 1577836800);
     WiFi.state = WL_DISCONNECTED;
     web.tick();
     web.broadcastTelemetry(1, 1, 1, 1, 1, true, 1, 1, 1, 1, true);
@@ -259,7 +280,18 @@ static void storageTests() {
   assert(logger.stop());
   failTaskCreation = false;
   logger.useFallbackUtcReference(1704067200, 0);
+  logger.setNetworkUtcReference(0, 50);
+  uint32_t networkUtc, networkMs;
+  assert(logger.utcReference(networkUtc, networkMs) && networkUtc == 1704067200);
+  logger.setNetworkUtcReference(1792483100, 75);
+  assert(logger.utcReference(networkUtc, networkMs) && networkUtc == 1792483100 && networkMs == 75);
+  assert(!logger.utcReferenceFromGps());
+  assert(logger.start() && logger.stop());
+  assert(logger.utcReference(networkUtc, networkMs) && networkUtc == 1792483100);
+  logger.setNetworkUtcReference(1792483150, 90);
+  assert(logger.utcReference(networkUtc, networkMs) && networkUtc == 1792483100 && networkMs == 75);
   logger.setUtcReference(1792483200, 100);
+  logger.setNetworkUtcReference(1792483300, 110);
   assert(logger.start());
   uint32_t utc, milliseconds;
   assert(logger.utcReference(utc, milliseconds) && utc == 1792483200 && milliseconds == 100);
@@ -555,7 +587,11 @@ static void recordingFitTests(bool measurements = false, bool gpsInput = false,
     snprintf(date, sizeof(date), "%.10s", local);
     logger.setLocalDate(date);
   } else if (!fallbackTime) {
-    logger.setUtcReference(uint32_t(timegm(&reference)), 10000);
+    if (measurements) logger.setUtcReference(uint32_t(timegm(&reference)), 10000);
+    else {
+      logger.setNetworkUtcReference(uint32_t(timegm(&reference)), 10000);
+      assert(!logger.utcReferenceFromGps());
+    }
   }
   assert(logger.start() && logger.ok());
   if (fallbackTime) {

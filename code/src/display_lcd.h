@@ -85,6 +85,8 @@ public:
   // 更新主界面顶部的 GPS 状态图标（非阻塞）：enabled=GPS 是否启用；
   // fix=是否已定位；sat=卫星数。搜星中显示旋转动画，定位后显示绿色图标+卫星数。
   void updateGpsIndicator(bool enabled, bool fix, uint8_t sat);
+  void updateClock(uint32_t utc);
+  float estimatedCda() const { return estimatedCda_; }
   // 主循环回填 GPS 模块检测结果。present=是否找到；done=是否已完成一次判定。
   // 用于"点击 GPS 按钮时提示找不到模块"。
   void setGpsModulePresent(bool present, bool done) {
@@ -96,6 +98,7 @@ private:
   Arduino_GFX     *_gfx = nullptr;
 
   lv_obj_t *screen_ = nullptr;
+  float estimatedCda_ = -1;
   lv_obj_t *cdaTitleLabel_ = nullptr;
   lv_obj_t *windLabel_ = nullptr;
   lv_obj_t *powerLabel_ = nullptr;
@@ -125,6 +128,7 @@ private:
   bool recordingRequested_ = false;
   bool recordingRequestStart_ = false;
   bool recording_ = false;
+  bool rideLogFromDashboard_ = false;
   char rideHistory_[360] = {};
   uint32_t rideLastSample_ = 0;
   lv_obj_t *settingsLanguageLabel_ = nullptr;

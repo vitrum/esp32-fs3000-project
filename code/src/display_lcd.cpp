@@ -175,6 +175,7 @@ void DisplayLcd::onSettingsBack(lv_event_t *) {
 
 void DisplayLcd::onRideLogButton(lv_event_t *) {
   if (!g_display) return;
+  g_display->rideLogFromDashboard_ = lv_obj_has_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(g_display->rideLogPanel_, LV_OBJ_FLAG_HIDDEN);
 }
@@ -182,7 +183,8 @@ void DisplayLcd::onRideLogButton(lv_event_t *) {
 void DisplayLcd::onRideLogBack(lv_event_t *) {
   if (!g_display) return;
   lv_obj_add_flag(g_display->rideLogPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  if (!g_display->rideLogFromDashboard_)
+    lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::onFitSave(lv_event_t *) {
@@ -221,6 +223,9 @@ bool DisplayLcd::takeRecordingRequest(bool &start) {
 
 void DisplayLcd::setRecording(bool recording) {
   recording_ = recording;
+  if (statusLabel_)
+    lv_obj_set_style_text_color(statusLabel_, recording ? lv_color_make(22, 163, 74)
+                                                       : lv_color_make(100, 116, 139), 0);
   if (!recordButton_) return;
   // 记录中：红色 STOP；空闲：绿色 RECORD。
   lv_obj_set_style_bg_color(
@@ -1756,10 +1761,10 @@ void DisplayLcd::refreshLanguage() {
   const lv_font_t *titleFont = chinese_ ? &lv_font_noto_sans_sc_14
                                         : &lv_font_montserrat_16;
   lv_obj_set_style_text_font(cdaTitleLabel_, font, 0);
-  lv_label_set_text(cdaTitleLabel_, localized("ESTIMATED CdA", "估算 CdA"));
-  lv_label_set_text(windLabelTitle_, localized("WIND SPEED", "风速"));
+  lv_label_set_text(cdaTitleLabel_, localized("EST. CdA", "估算 CdA"));
+  lv_label_set_text(windLabelTitle_, localized("WIND", "风速"));
   lv_obj_set_style_text_font(windLabelTitle_, font, 0);
-  lv_label_set_text(avg3Label_, localized("LIVE POWER", "实时功率"));
+  lv_label_set_text(avg3Label_, localized("POWER", "功率"));
   lv_obj_set_style_text_font(avg3Label_, font, 0);
 
   const char *posture = "WAITING FOR DATA";
@@ -1777,9 +1782,8 @@ void DisplayLcd::refreshLanguage() {
   lv_label_set_text(powerSourceLabel_, localized("SET", "设置"));
   lv_obj_set_style_text_font(powerSourceLabel_, titleFont, 0);
 
-  lv_label_set_text(statusLabel_,
-                    localized("LOG: OFF", "日志: 关闭"));
-  lv_obj_set_style_text_font(statusLabel_, font, 0);
+  lv_label_set_text(statusLabel_, LV_SYMBOL_SAVE);
+  lv_obj_set_style_text_font(statusLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_font(cadenceLabel_, font, 0);
   AppLog.println("[LANG] 1 main done");
 
@@ -2078,145 +2082,180 @@ void DisplayLcd::begin() {
   lv_obj_set_size(headerLine, 216, 2);
   lv_obj_align(headerLine, LV_ALIGN_TOP_LEFT, 12, 36);
   lv_obj_set_style_bg_color(headerLine, lv_color_make(203, 213, 225), 0);
+  lv_obj_set_style_border_width(headerLine, 0, 0);
+  lv_obj_set_style_radius(headerLine, 0, 0);
 
   lv_obj_t *cdaCard = lv_obj_create(screen_);
-  lv_obj_set_size(cdaCard, 216, 74);
+  lv_obj_set_size(cdaCard, 216, 88);
   lv_obj_align(cdaCard, LV_ALIGN_TOP_LEFT, 12, 43);
   lv_obj_clear_flag(cdaCard, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_pad_all(cdaCard, 0, 0);
-  lv_obj_set_style_radius(cdaCard, 8, 0);
+  lv_obj_set_style_radius(cdaCard, 0, 0);
   lv_obj_set_style_bg_color(cdaCard, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(cdaCard, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_opa(cdaCard, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_color(cdaCard, lv_color_make(226, 232, 240), 0);
-  lv_obj_set_style_border_width(cdaCard, 1, 0);
+  lv_obj_set_style_border_width(cdaCard, 0, 0);
 
   cdaTitleLabel_ = lv_label_create(cdaCard);
-  lv_label_set_text(cdaTitleLabel_, "ESTIMATED CdA");
-  lv_obj_align(cdaTitleLabel_, LV_ALIGN_TOP_LEFT, 8, 3);
+  lv_label_set_text(cdaTitleLabel_, "EST. CdA");
+  lv_obj_align(cdaTitleLabel_, LV_ALIGN_TOP_LEFT, 0, 7);
   lv_obj_set_style_text_font(cdaTitleLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(cdaTitleLabel_, lv_color_make(100, 116, 139), 0);
+  lv_obj_t *cdaUnit = lv_label_create(cdaCard);
+  lv_label_set_text(cdaUnit, "m2");
+  lv_obj_align(cdaUnit, LV_ALIGN_TOP_LEFT, 0, 32);
+  lv_obj_set_style_text_font(cdaUnit, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(cdaUnit, lv_color_make(100, 116, 139), 0);
 
   cdaLabel_ = lv_label_create(cdaCard);
-  lv_label_set_text(cdaLabel_, "-- m2");
+  lv_label_set_text(cdaLabel_, "--");
   lv_obj_set_width(cdaLabel_, 132);
   lv_label_set_long_mode(cdaLabel_, LV_LABEL_LONG_CLIP);
-  lv_obj_align(cdaLabel_, LV_ALIGN_TOP_LEFT, 8, 18);
-  lv_obj_set_style_text_font(cdaLabel_, &lv_font_montserrat_28, 0);
+  lv_obj_align(cdaLabel_, LV_ALIGN_TOP_RIGHT, 0, 10);
+  lv_obj_set_style_text_align(cdaLabel_, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_set_style_text_font(cdaLabel_, &lv_font_montserrat_40, 0);
   lv_obj_set_style_text_color(cdaLabel_, lv_color_make(23, 32, 51), 0);
 
   postureLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(postureLabel_, "WAITING FOR DATA");
-  lv_obj_set_width(postureLabel_, 190);
+  lv_obj_set_width(postureLabel_, 180);
   lv_label_set_long_mode(postureLabel_, LV_LABEL_LONG_CLIP);
-  lv_obj_align(postureLabel_, LV_ALIGN_BOTTOM_LEFT, 8, -1);
+  lv_obj_align(postureLabel_, LV_ALIGN_BOTTOM_LEFT, 0, -3);
   lv_obj_set_style_text_font(postureLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(postureLabel_, lv_color_make(100, 116, 139), 0);
 
   zoneLabel_ = lv_label_create(cdaCard);
-  lv_label_set_text(zoneLabel_, "--");
-  lv_obj_align(zoneLabel_, LV_ALIGN_RIGHT_MID, -8, 0);
-  lv_obj_set_style_text_font(zoneLabel_, &lv_font_montserrat_40, 0);
+  lv_label_set_text(zoneLabel_, "Z--");
+  lv_obj_align(zoneLabel_, LV_ALIGN_BOTTOM_RIGHT, 0, -3);
+  lv_obj_set_style_text_font(zoneLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(zoneLabel_, lv_color_make(37, 99, 235), 0);
 
   lv_obj_t *cdaDivider = lv_obj_create(screen_);
   lv_obj_set_size(cdaDivider, 216, 1);
-  lv_obj_align(cdaDivider, LV_ALIGN_TOP_LEFT, 12, 119);
+  lv_obj_align(cdaDivider, LV_ALIGN_TOP_LEFT, 12, 137);
+  lv_obj_set_style_radius(cdaDivider, 0, 0);
   lv_obj_set_style_bg_color(cdaDivider, lv_color_make(203, 213, 225), 0);
   lv_obj_set_style_border_width(cdaDivider, 0, 0);
 
   lv_obj_t *windCard = lv_obj_create(screen_);
   lv_obj_set_size(windCard, 216, 56);
-  lv_obj_align(windCard, LV_ALIGN_TOP_LEFT, 12, 123);
+  lv_obj_align(windCard, LV_ALIGN_TOP_LEFT, 12, 145);
   lv_obj_clear_flag(windCard, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_pad_all(windCard, 0, 0);
-  lv_obj_set_style_radius(windCard, 8, 0);
+  lv_obj_set_style_radius(windCard, 0, 0);
   lv_obj_set_style_bg_color(windCard, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(windCard, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_opa(windCard, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_color(windCard, lv_color_make(226, 232, 240), 0);
-  lv_obj_set_style_border_width(windCard, 1, 0);
+  lv_obj_set_style_border_width(windCard, 0, 0);
 
   windLabelTitle_ = lv_label_create(windCard);
-  lv_label_set_text(windLabelTitle_, "WIND SPEED");
-  lv_obj_align(windLabelTitle_, LV_ALIGN_TOP_LEFT, 8, 3);
+  lv_label_set_text(windLabelTitle_, "WIND");
+  lv_obj_align(windLabelTitle_, LV_ALIGN_TOP_LEFT, 0, 6);
   lv_obj_set_style_text_font(windLabelTitle_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(windLabelTitle_, lv_color_make(100, 116, 139), 0);
+  lv_obj_t *windUnit = lv_label_create(windCard);
+  lv_label_set_text(windUnit, "km/h");
+  lv_obj_align(windUnit, LV_ALIGN_TOP_LEFT, 0, 31);
+  lv_obj_set_style_text_font(windUnit, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(windUnit, lv_color_make(100, 116, 139), 0);
 
   windLabel_ = lv_label_create(windCard);
-  lv_label_set_text(windLabel_, "0.0 km/h");
-  lv_obj_align(windLabel_, LV_ALIGN_BOTTOM_LEFT, 8, -2);
-  lv_obj_set_style_text_font(windLabel_, &lv_font_montserrat_20, 0);
+  lv_label_set_text(windLabel_, "0.0");
+  lv_obj_set_width(windLabel_, 132);
+  lv_label_set_long_mode(windLabel_, LV_LABEL_LONG_CLIP);
+  lv_obj_set_style_text_align(windLabel_, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_align(windLabel_, LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_set_style_text_font(windLabel_, &lv_font_montserrat_40, 0);
   lv_obj_set_style_text_color(windLabel_, lv_color_make(23, 32, 51), 0);
 
   lv_obj_t *windDivider = lv_obj_create(screen_);
   lv_obj_set_size(windDivider, 216, 1);
-  lv_obj_align(windDivider, LV_ALIGN_TOP_LEFT, 12, 181);
+  lv_obj_align(windDivider, LV_ALIGN_TOP_LEFT, 12, 208);
+  lv_obj_set_style_radius(windDivider, 0, 0);
   lv_obj_set_style_bg_color(windDivider, lv_color_make(203, 213, 225), 0);
   lv_obj_set_style_border_width(windDivider, 0, 0);
 
   lv_obj_t *powerCard = lv_obj_create(screen_);
-  lv_obj_set_size(powerCard, 216, 76);
-  lv_obj_align(powerCard, LV_ALIGN_TOP_LEFT, 12, 185);
+  lv_obj_set_size(powerCard, 216, 56);
+  lv_obj_align(powerCard, LV_ALIGN_TOP_LEFT, 12, 216);
   lv_obj_clear_flag(powerCard, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_pad_all(powerCard, 0, 0);
-  lv_obj_set_style_radius(powerCard, 8, 0);
+  lv_obj_set_style_radius(powerCard, 0, 0);
   lv_obj_set_style_bg_color(powerCard, lv_color_make(239, 246, 255), 0);
-  lv_obj_set_style_bg_opa(powerCard, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_opa(powerCard, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_color(powerCard, lv_color_make(191, 219, 254), 0);
-  lv_obj_set_style_border_width(powerCard, 1, 0);
+  lv_obj_set_style_border_width(powerCard, 0, 0);
 
   avg3Label_ = lv_label_create(powerCard);
-  lv_label_set_text(avg3Label_, "LIVE POWER");
-  lv_obj_align(avg3Label_, LV_ALIGN_TOP_LEFT, 8, 5);
+  lv_label_set_text(avg3Label_, "POWER");
+  lv_obj_align(avg3Label_, LV_ALIGN_TOP_LEFT, 0, 6);
   lv_obj_set_style_text_font(avg3Label_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(avg3Label_, lv_color_make(37, 99, 235), 0);
+  lv_obj_t *powerUnit = lv_label_create(powerCard);
+  lv_label_set_text(powerUnit, "W");
+  lv_obj_align(powerUnit, LV_ALIGN_TOP_LEFT, 0, 31);
+  lv_obj_set_style_text_font(powerUnit, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(powerUnit, lv_color_make(100, 116, 139), 0);
 
   powerLabel_ = lv_label_create(powerCard);
-  lv_label_set_text(powerLabel_, "0 W");
-  lv_obj_set_width(powerLabel_, 190);
+  lv_label_set_text(powerLabel_, "0");
+  lv_obj_set_width(powerLabel_, 132);
   lv_label_set_long_mode(powerLabel_, LV_LABEL_LONG_CLIP);
-  lv_obj_align(powerLabel_, LV_ALIGN_CENTER, 0, 8);
-  lv_obj_set_style_text_align(powerLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(powerLabel_, &lv_font_montserrat_28, 0);
+  lv_obj_align(powerLabel_, LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_set_style_text_align(powerLabel_, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_set_style_text_font(powerLabel_, &lv_font_montserrat_40, 0);
   lv_obj_set_style_text_color(powerLabel_, lv_color_make(29, 78, 216), 0);
 
   lv_obj_t *powerDivider = lv_obj_create(screen_);
   lv_obj_set_size(powerDivider, 216, 1);
-  lv_obj_align(powerDivider, LV_ALIGN_TOP_LEFT, 12, 265);
+  lv_obj_align(powerDivider, LV_ALIGN_TOP_LEFT, 12, 280);
+  lv_obj_set_style_radius(powerDivider, 0, 0);
   lv_obj_set_style_bg_color(powerDivider, lv_color_make(203, 213, 225), 0);
   lv_obj_set_style_border_width(powerDivider, 0, 0);
 
   cadenceLabel_ = lv_label_create(screen_);
   lv_label_set_text(cadenceLabel_, "CADENCE 0 rpm");
-  lv_obj_align(cadenceLabel_, LV_ALIGN_TOP_LEFT, 12, 268);
+  lv_obj_set_width(cadenceLabel_, 164);
+  lv_label_set_long_mode(cadenceLabel_, LV_LABEL_LONG_CLIP);
+  lv_obj_align(cadenceLabel_, LV_ALIGN_TOP_LEFT, 12, 292);
   lv_obj_set_style_text_font(cadenceLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(cadenceLabel_, lv_color_make(51, 65, 85), 0);
 
   timeLabel_ = lv_label_create(screen_);
-  lv_label_set_text(timeLabel_, "00:00:00");
-  lv_obj_align(timeLabel_, LV_ALIGN_TOP_RIGHT, -12, 268);
+  lv_label_set_text(timeLabel_, "--:--:--");
+  lv_obj_set_size(timeLabel_, 94, 20);
+  lv_label_set_long_mode(timeLabel_, LV_LABEL_LONG_CLIP);
+  lv_obj_set_style_text_align(timeLabel_, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_align(timeLabel_, LV_ALIGN_TOP_RIGHT, -12, 8);
   lv_obj_set_style_text_font(timeLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(timeLabel_, lv_color_make(100, 116, 139), 0);
 
   statusLabel_ = lv_label_create(screen_);
-  lv_label_set_text(statusLabel_, "LOG: OFF");
-  lv_obj_set_width(statusLabel_, 68);
-  lv_obj_set_style_text_align(statusLabel_, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_align(statusLabel_, LV_ALIGN_TOP_RIGHT, -12, 8);
+  lv_label_set_text(statusLabel_, LV_SYMBOL_SAVE);
+  lv_obj_set_size(statusLabel_, 28, 24);
+  lv_obj_set_style_text_align(statusLabel_, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_pad_top(statusLabel_, 3, 0);
+  lv_obj_align(statusLabel_, LV_ALIGN_TOP_LEFT, 100, 5);
+  lv_obj_add_flag(statusLabel_, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(statusLabel_, onRideLogButton, LV_EVENT_CLICKED, nullptr);
   lv_obj_set_style_text_font(statusLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(statusLabel_, lv_color_make(100, 116, 139), 0);
 
   powerSourceButton_ = lv_btn_create(screen_);
-  lv_obj_set_size(powerSourceButton_, 216, 28);
-  lv_obj_align(powerSourceButton_, LV_ALIGN_TOP_LEFT, 12, 289);
+  lv_obj_set_size(powerSourceButton_, 44, 32);
+  lv_obj_align(powerSourceButton_, LV_ALIGN_TOP_LEFT, 184, 284);
   lv_obj_set_style_radius(powerSourceButton_, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_color(powerSourceButton_, lv_color_make(37, 99, 235), 0);
+  lv_obj_set_style_bg_opa(powerSourceButton_, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_shadow_width(powerSourceButton_, 0, 0);
   lv_obj_add_event_cb(powerSourceButton_, onSettingsButton, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *powerSourceIcon = lv_label_create(powerSourceButton_);
   lv_label_set_text(powerSourceIcon, LV_SYMBOL_SETTINGS);
-  lv_obj_align(powerSourceIcon, LV_ALIGN_LEFT_MID, 8, 0);
+  lv_obj_center(powerSourceIcon);
   lv_obj_set_style_text_font(powerSourceIcon, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(powerSourceIcon, lv_color_white(), 0);
+  lv_obj_set_style_text_color(powerSourceIcon, lv_color_make(37, 99, 235), 0);
   powerSourceLabel_ = lv_label_create(powerSourceButton_);
+  lv_obj_add_flag(powerSourceLabel_, LV_OBJ_FLAG_HIDDEN);
   lv_label_set_text(powerSourceLabel_, "SET");
   lv_obj_set_width(powerSourceLabel_, 178);
   lv_label_set_long_mode(powerSourceLabel_, LV_LABEL_LONG_DOT);
@@ -2381,7 +2420,7 @@ void DisplayLcd::update(const WindVector &w, bool windValid, float powerW,
   float cda = -1.0f;
   int zone = 0;
   const float airspeed = w.vAir;
-  if (pmSrc != 0 && power3sAvg_ > 0.0f &&
+  if (windValid && pmSrc != 0 && power3sAvg_ > 0.0f &&
       airspeed >= CDA_MIN_AIRSPEED_MPS && rho > 0.0f) {
     const float groundSpeed = airspeed;
     const float wheelPower = power3sAvg_ * CDA_DRIVETRAIN_EFFICIENCY;
@@ -2400,6 +2439,7 @@ void DisplayLcd::update(const WindVector &w, bool windValid, float powerW,
     }
   }
 
+  estimatedCda_ = cda;
   currentZone_ = (uint32_t)zone;
   const char *posture = "WAITING FOR DATA";
   const char *postureChinese = "等待数据";
@@ -2411,27 +2451,29 @@ void DisplayLcd::update(const WindVector &w, bool windValid, float powerW,
   else if (zone == 6) { posture = "RACE TT"; postureChinese = "竞赛 TT"; }
   else if (zone == 7) { posture = "ELITE TT"; postureChinese = "精英 TT"; }
   if (cda >= 0.0f) {
-    snprintf(buf, sizeof(buf), "%.2f m2", cda);
+    snprintf(buf, sizeof(buf), "%.2f", cda);
     lv_label_set_text(cdaLabel_, buf);
   } else {
-    lv_label_set_text(cdaLabel_, "-- m2");
+    lv_label_set_text(cdaLabel_, "--");
   }
+  lv_obj_set_style_text_font(cdaLabel_, cda >= 10 ? &lv_font_montserrat_28 : &lv_font_montserrat_40, 0);
   lv_label_set_text(postureLabel_, localized(posture, postureChinese));
   if (zone > 0) {
-    snprintf(buf, sizeof(buf), "%d", zone);
+    snprintf(buf, sizeof(buf), "Z%d", zone);
     lv_label_set_text(zoneLabel_, buf);
   } else {
-    lv_label_set_text(zoneLabel_, "--");
+    lv_label_set_text(zoneLabel_, "Z--");
   }
 
   if (windValid)
-    snprintf(buf, sizeof(buf), "%.1f km/h", w.vAir * 3.6f);
+    snprintf(buf, sizeof(buf), "%.1f", w.vAir * 3.6f);
   else
-    snprintf(buf, sizeof(buf), "-- km/h");
+    snprintf(buf, sizeof(buf), "--");
   lv_label_set_text(windLabel_, buf);
 
-  snprintf(buf, sizeof(buf), "%.0f W", powerW);
+  snprintf(buf, sizeof(buf), "%.0f", powerW);
   lv_label_set_text(powerLabel_, buf);
+  lv_obj_set_style_text_font(powerLabel_, fabsf(powerW) >= 10000 ? &lv_font_montserrat_28 : &lv_font_montserrat_40, 0);
 
   snprintf(buf, sizeof(buf), localized("CADENCE %.0f rpm", "踏频 %.0f rpm"), cadRpm);
   lv_label_set_text(cadenceLabel_, buf);
@@ -2446,20 +2488,20 @@ void DisplayLcd::update(const WindVector &w, bool windValid, float powerW,
   lv_obj_set_style_text_font(powerSourceLabel_,
                              chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_16, 0);
 
-  snprintf(buf, sizeof(buf), localized("LOG %s", "日志 %s"),
-           logOk ? "OK" : localized("OFF", "关闭"));
-  lv_label_set_text(statusLabel_, buf);
-  lv_obj_set_style_text_font(statusLabel_,
-                             chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
+  lv_label_set_text(statusLabel_, LV_SYMBOL_SAVE);
   lv_obj_set_style_text_color(statusLabel_, logOk ? lv_color_make(22, 163, 74) : lv_color_make(100, 116, 139), 0);
 
-  uint32_t now = millis();
-  uint32_t sec = now / 1000;
-  uint32_t h = (sec / 3600) % 24;
-  uint32_t m = (sec / 60) % 60;
-  uint32_t s = sec % 60;
-  snprintf(buf, sizeof(buf), "%02u:%02u:%02u", h, m, s);
-  lv_label_set_text(timeLabel_, buf);
-
   lv_obj_invalidate(screen_);
+}
+
+void DisplayLcd::updateClock(uint32_t utc) {
+  if (!timeLabel_) return;
+  char text[12] = "--:--:--";
+  if (utc != 0) {
+    const uint32_t seconds = ((uint64_t)utc + 8 * 3600) % 86400;
+    snprintf(text, sizeof(text), "%02u:%02u:%02u",
+             (unsigned)(seconds / 3600), (unsigned)(seconds / 60 % 60),
+             (unsigned)(seconds % 60));
+  }
+  lv_label_set_text(timeLabel_, text);
 }

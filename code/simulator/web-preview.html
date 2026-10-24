@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AeroProbe Web Preview</title>
+  <style>
+    body{margin:0;background:#f8fafb;font-family:sans-serif;}
+    .preview-status{height:26px;padding:6px 16px;font-size:11px;color:#65767b;border-bottom:1px solid #d3dddf;}
+    iframe{display:block;width:100%;height:calc(100dvh - 26px);border:0;}
+  </style>
+</head>
+<body>
+  <div class="preview-status" id="preview-status">SIMULATED</div>
+  <iframe id="preview" title="AeroProbe live dashboard with simulated telemetry"></iframe>
+  <script>
+    function installPreviewBackend(){
+      const sockets=[];
+      const data={t:0,p:285,cad:88,vg:8.3,vair:10,windValid:true,yaw:0,posture:-12,rho:1.225,src:'BLE',log:false,cda:.31,utc:Math.floor(Date.now()/1000)};
+      const records=[{name:'ride_20261024.csv',size:16384},{name:'ride_20261024.fit',size:8192}];
+      const backend={failControl:false,failDownload:false,failRecords:false,requests:[],records};
+      backend.ready=new Promise(resolve=>{backend.completeOpen=resolve;});
+      backend.send=patch=>{
+        Object.assign(data,patch);
+        for(const socket of sockets)if(socket.readyState===1)socket.onmessage?.({data:JSON.stringify(data)});
+      };
+      backend.invalidMessage=()=>{for(const socket of sockets)if(socket.readyState===1)socket.onmessage?.({data:'invalid JSON'});};
+      backend.socketCount=()=>sockets.filter(socket=>socket.readyState<=1).length;
+      window.previewBackend=backend;
+      window.WebSocket=class{
+        constructor(){this.readyState=0;sockets.push(this);setTimeout(()=>{this.readyState=1;this.onopen?.();backend.send({});backend.completeOpen();},0);}
+        close(){if(this.readyState===3)return;this.readyState=3;this.onclose?.();}
+      };
+      window.fetch=async(input,options={})=>{
+        const url=new URL(input,parent.location.href);
+        backend.requests.push({path:url.pathname,cmd:url.searchParams.get('cmd'),method:options.method||'GET'});
+        if(url.pathname==='/api/records')return new Response(JSON.stringify(records),{status:backend.failRecords?500:200});
+        if(url.pathname==='/api/control'){
+          if(backend.failControl)return new Response('failed',{status:503});
+          backend.send({log:url.searchParams.get('cmd')==='start'});
+          return new Response('queued',{status:202});
+        }
+        if(url.pathname==='/api/download')return new Response('t_ms,powerW\n1000,285\n',{status:backend.failDownload?500:200});
+        if(url.pathname==='/api/wifi/provision')return new Response('queued',{status:202});
+        return new Response('not found',{status:404});
+      };
+      setInterval(()=>backend.send({t:data.t+1000,utc:Math.floor(Date.now()/1000)}),1000);
+    }
+
+    async function runRegression(frame){
+      const win=frame.contentWindow,doc=frame.contentDocument,backend=win.previewBackend;
+      const checks=[];
+      const check=(condition,message)=>{if(!condition)throw new Error(message);checks.push(message);};
+      const text=id=>doc.getElementById(id).textContent;
+      try{
+        await backend.ready;
+        await new Promise((resolve,reject)=>{
+          if(doc.querySelector('#records .file-name'))return resolve();
+          const observer=new win.MutationObserver(()=>{
+            if(doc.querySelector('#records .file-name')){observer.disconnect();win.clearTimeout(deadline);resolve();}
+          });
+          const deadline=win.setTimeout(()=>{observer.disconnect();reject(new Error('Initial records did not finish'));},2000);
+          observer.observe(doc.getElementById('records'),{childList:true,subtree:true});
+        });
+        backend.send({t:1000,p:285,cad:88,vg:8.3,vair:10,windValid:true,src:'BLE',cda:.31,log:false});
+        check(text('p')==='285'&&text('vair')==='36.0'&&text('cda')==='0.31','Live numbers and m/s to km/h conversion');
+        check([...doc.querySelectorAll('.metric')].every(el=>win.getComputedStyle(el).borderRadius==='0px'),'Metrics have no rounded frames');
+        const right=['p','vair','cda'].map(id=>doc.getElementById(id).getBoundingClientRect().right);
+        check(Math.max(...right)-Math.min(...right)<1,'Primary values share one right alignment');
+        backend.send({p:null,cad:null,vg:null,vair:null,cda:null});
+        check(['p','cad','vg','vair','cda'].every(id=>text(id)==='--'),'Missing values never become zero');
+        backend.send({p:0,cad:0,vg:0,vair:0,windValid:true,cda:-1,src:'BLE'});
+        check(text('p')==='0'&&text('vair')==='0.0'&&text('cda')==='--','Connected zero power stays valid');
+        backend.send({p:285,vair:10,cda:.31,windValid:false});
+        check(text('vair')==='--'&&text('cda')==='--','Invalid wind suppresses CdA');
+        backend.send({windValid:true,src:'NONE'});
+        check(text('cda')==='--','Missing power source suppresses CdA');
+        backend.send({src:'BLE',p:-32768,vair:15,cda:100.23});
+        check(doc.getElementById('p').classList.contains('compact'),'Large signed power selects compact type');
+        backend.send({p:285,cad:88,cda:.31});
+        backend.failControl=true;
+        await win.ctl('start');
+        check(text('feedback').includes('503'),'HTTP control errors are visible');
+        backend.send({});
+        check(text('feedback').includes('503'),'Live telemetry does not erase command errors');
+        backend.failControl=false;
+        await win.ctl('start');
+        check(text('logstate')==='记录中'&&doc.getElementById('start').disabled&&!doc.getElementById('stop').disabled,'Start command updates recording controls');
+        check(backend.requests.some(req=>req.path==='/api/control'&&req.cmd==='start'&&req.method==='POST'),'Start uses the actual POST control endpoint');
+        await win.ctl('stop');
+        check(text('logstate')==='已停止','Stop command updates recording state');
+        doc.getElementById('settings-button').click();
+        check(doc.getElementById('controls-panel').hidden,'Settings gear collapses controls');
+        doc.getElementById('settings-button').click();
+        check(!doc.getElementById('controls-panel').hidden,'Settings gear restores controls');
+        backend.records.push({name:'<img src=x onerror=alert(1)>.csv',size:1024});
+        await win.loadRecords();
+        check(doc.querySelectorAll('#records img').length===0&&text('records').includes('<img'),'File names render as text, not HTML');
+        backend.failDownload=true;
+        await win.downloadRecord('ride_20261024.fit');
+        check(text('feedback').includes('500'),'Download errors are visible');
+        backend.failDownload=false;
+        const originalClick=win.HTMLAnchorElement.prototype.click,downloads=[];
+        win.HTMLAnchorElement.prototype.click=function(){downloads.push(this.download);};
+        try{await win.downloadRecord('ride_20261024.fit');}
+        finally{win.HTMLAnchorElement.prototype.click=originalClick;}
+        check(downloads.length===1&&downloads[0]==='ride_20261024.fit','Successful download offers the actual FIT filename');
+        check(text('feedback').includes('下载已准备'),'Successful download clears an earlier failure message');
+        backend.failRecords=true;
+        await win.loadRecords();
+        check(text('records').includes('500'),'Record listing errors are visible');
+        backend.failRecords=false;
+        await win.loadRecords();
+        win.connect();win.connect();
+        check(backend.socketCount()===1,'Repeated connection requests do not create duplicate sockets');
+        backend.invalidMessage();
+        check(text('p')==='--'&&doc.getElementById('start').disabled,'Malformed telemetry clears values and disables controls');
+        backend.send({});
+        check(text('p')==='285'&&!doc.getElementById('start').disabled,'Valid telemetry recovers the live display');
+        win.setConn(false);
+        check(text('p')==='--'&&text('vair')==='--'&&doc.getElementById('start').disabled,'Disconnect never leaves stale live values');
+        backend.send({});
+        window.webTestResult={passed:checks.length,failures:[],checks};
+        document.getElementById('preview-status').textContent='SIMULATED · PASS '+checks.length;
+      }catch(error){
+        window.webTestResult={passed:checks.length,failures:[error.message],checks};
+        document.getElementById('preview-status').textContent='SIMULATED · FAIL '+error.message;
+      }
+    }
+
+    (async()=>{
+      try{
+        const response=await fetch('../src/web_assets.h');
+        if(!response.ok)throw new Error('HTTP '+response.status);
+        const source=await response.text();
+        const html=source.split('R"HTML(')[1]?.split(')HTML"')[0];
+        if(!html)throw new Error('Embedded page not found');
+        const frame=document.getElementById('preview');
+        frame.addEventListener('load',()=>{
+          if(new URLSearchParams(location.search).has('test'))runRegression(frame);
+        },{once:true});
+        const setup='<script>('+installPreviewBackend.toString()+')();<\/script>';
+        frame.srcdoc=html.replace('<script>',setup+'<script>');
+      }catch(error){document.getElementById('preview-status').textContent='PREVIEW ERROR: '+error.message;}
+    })();
+  </script>
+</body>
+</html>

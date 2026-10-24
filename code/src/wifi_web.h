@@ -41,7 +41,8 @@ public:
   // 1Hz 推送一帧实时数据到所有 WebSocket 客户端。
   void broadcastTelemetry(uint32_t tMs, float powerW, float cadRpm, float vgMps,
                           float vAirMps, bool windValid, float yawDeg,
-                          float postureDeg, float rho, int powerSrc, bool logging);
+                          float postureDeg, float rho, int powerSrc, bool logging,
+                          float cda = -1, uint32_t utc = 0);
 
   void startSmartConfig();     // 主动触发配网
   void clearCredentials();     // 清除已存凭据
@@ -52,6 +53,7 @@ public:
   IPAddress ip() const { return WiFi.localIP(); }
   String ssid() const { return _ssid; }
   uint32_t clientCount() const;
+  uint32_t unixSec() const;
 
   // 主循环消费异步 HTTP 回调产生的请求。
   bool takeRecordingRequest(bool &start);
@@ -69,6 +71,7 @@ private:
   bool _mdnsStarted = false;
   bool _wifiModeReady = false;
   bool _wifiBuffersConfigured = false;
+  bool _timeSynchronized = false;
   uint32_t _lastReconnectMs = 0;
   uint32_t _smartConfigStartMs = 0;
   uint32_t _smartConfigRetryAtMs = 0;
