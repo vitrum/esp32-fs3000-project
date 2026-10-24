@@ -63,6 +63,63 @@ for scenario, marker in {"wifi": "PASS WiFi:", "storage": "PASS CSV storage:",
     SUITES["system_" + scenario] = (SUITES["system_coexistence"][0],
                                   SUITES["system_coexistence"][1], [marker])
 
+SUITES["system_recording_lifecycle"] = (SUITES["system_coexistence"][0],
+    SUITES["system_coexistence"][1], ["PASS recording lifecycle:"])
+
+
+def validate_recovered_fit(artifacts: Path) -> None:
+    reports = []
+    cases = {
+        "recovered": (1792483200, (10000, 11000, 14000, 15000),
+                      (0, 250, 300, 400), (0, 10, 12, 15), (0, 8, 10, 11), (80, 81, 82, 83), 41.5),
+        "shutdown": (1792483300, (20000, 21000), (250, 300), (10, 12), (8, 10), (90, 90), 9.0),
+        "batch": (1792483400, tuple(60000 + index * 1000 for index in range(65)),
+              tuple(200 + index for index in range(65)), (10,) * 65, (8,) * 65, (90,) * 65, 512.0),
+    }
+    for name, (epoch, times, powers, winds, speeds, cadences, distance) in cases.items():
+        path = artifacts / (name + ".fit")
+        data = path.read_bytes()
+        with fitdecode.FitReader(path, check_crc=fitdecode.CrcCheck.RAISE,
+                                 error_handling=fitdecode.ErrorHandling.RAISE) as reader:
+            messages = [frame for frame in reader if isinstance(frame, fitdecode.FitDataMessage)]
+        records = [message for message in messages if message.name == "record"]
+        assert Counter(message.name for message in messages) == {
+            "file_id": 1, "developer_data_id": 1, "field_description": 5,
+            "record": len(times), "event": 2, "lap": 1, "session": 1, "activity": 1,
+        }
+        with (artifacts / (name + ".csv")).open(newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        assert len(records) == len(rows) == len(times)
+        start = datetime.fromtimestamp(epoch, timezone.utc)
+        total = 0.0
+        for index, (record, row) in enumerate(zip(records, rows)):
+            assert int(row["t_ms"]) == times[index]
+            assert float(row["powerW"]) == powers[index]
+            assert float(row["vAirMps"]) == winds[index]
+            assert float(row["speedMps"]) == speeds[index]
+            assert float(row["cadenceRpm"]) == cadences[index]
+            assert int(row["powerSrc"]) == 1
+            if index:
+                total += (speeds[index - 1] + speeds[index]) * 0.5 * (times[index] - times[index - 1]) / 1000
+            assert record.get_value("timestamp") == start + timedelta(milliseconds=times[index] - times[0])
+            assert record.get_value("power") == powers[index]
+            assert record.get_value("cadence") == cadences[index]
+            assert record.get_value("speed") == pytest.approx(speeds[index], abs=0.0005)
+            assert record.get_value("distance") == pytest.approx(total, abs=0.0051)
+            for field, expected, units in (("airspeed", winds[index], "m/s"), ("yaw", 0, "deg"),
+                    ("posture", -15, "deg"), ("air_density", 1.225, "kg/m3")):
+                assert record.get_value(field) == pytest.approx(expected, abs=0.0001)
+                assert record.get_field(field).units == units
+            assert record.get_value("power_source") == 1
+        assert total == distance
+        for summary in [message for message in messages if message.name in {"lap", "session"}]:
+            assert summary.get_value("total_elapsed_time") == (times[-1] - times[0]) / 1000
+            assert summary.get_value("total_distance") == pytest.approx(distance, abs=0.0051)
+        assert [message.get_value("event_type") for message in messages if message.name == "event"] == ["start", "stop_all"]
+        reports.append({"case": name, "records": len(records), "distance_meters": distance,
+                        "sha256": hashlib.sha256(data).hexdigest(), "content": "passed", "crc": "passed"})
+    (artifacts / "validation.json").write_text(json.dumps({"lifecycle": reports}, indent=2) + "\n")
+
 
 def validate_recording_fit(artifacts: Path, measurements: bool = False,
                            gps: bool = False, fallback: bool = False) -> None:
@@ -218,7 +275,8 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
         arguments.append(suite[len("system_"):])
     environment = os.environ.copy()
     recording_suites = {"system_fit", "system_wind_power_fit",
-                        "system_stage1_ble_wind_fit", "system_stage2_gps_ble_wind_fit"}
+                        "system_stage1_ble_wind_fit", "system_stage2_gps_ble_wind_fit",
+                        "system_recording_lifecycle"}
     if suite in recording_suites:
         artifact_root = ROOT / "test/results/fit"
         artifact_root.mkdir(parents=True, exist_ok=True)
@@ -229,7 +287,9 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
     msg_queue.put(output)
     assert result.returncode == 0, output.decode(errors="replace")
     dut.expect_exact(markers, expect_all=True, timeout=10)
-    if suite in recording_suites:
+    if suite == "system_recording_lifecycle":
+        validate_recovered_fit(artifacts)
+    elif suite in recording_suites:
         validate_recording_fit(artifacts, measurements=suite != "system_fit",
                                gps=suite == "system_stage2_gps_ble_wind_fit",
                                fallback=suite == "system_stage1_ble_wind_fit")

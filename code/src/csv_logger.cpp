@@ -481,6 +481,17 @@ bool CsvLogger::start() {
   return _ok;
 }
 
+bool CsvLogger::sync() {
+  return !_ok || flushPending(pdMS_TO_TICKS(5000));
+}
+
+bool CsvLogger::resetUtcReference() {
+  if (_ok) return false;
+  _referenceUtc = _referenceMs = 0;
+  _referenceFromGps = _referenceFromNetwork = false;
+  return true;
+}
+
 bool CsvLogger::stop() {
   if (!_ok) return true;
   if (!flushPending(pdMS_TO_TICKS(5000))) {

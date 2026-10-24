@@ -27,7 +27,7 @@ if [ "$action" = all ] || [ "$action" = host ] || [ "$action" = measurements ] |
   set --
   report=host
   if [ "$action" = measurements ]; then
-    set -- -k 'sensors_power or ble_runtime or system_wind_power_fit or system_stage'
+    set -- -k 'sensors_power or ble_runtime or system_wind_power_fit or system_stage or system_recording_lifecycle'
     report=measurements
   elif [ "$action" = stages ]; then
     set -- -k 'system_stage'

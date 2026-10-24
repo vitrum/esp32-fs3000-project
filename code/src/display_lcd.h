@@ -62,9 +62,10 @@ public:
   // start=true 表示请求开始记录，false 表示请求停止。
   bool takeRecordingRequest(bool &start);
   // 主循环回填当前记录状态，用于切换按钮文字（RECORD / STOP）与颜色。
-  void setRecording(bool recording);
+  void setRecording(bool recording, bool armed = false);
   void updateRideLog(const char *path, bool recording, uint32_t samples,
-                     uint32_t dropped, float power, float cadence, float speed);
+                     uint32_t dropped, float power, float cadence, float speed,
+                     uint32_t durationMs = 0, uint32_t skipped = 0);
   void setFitSaving(bool saving);
   void showFitResult(const char *message);
 
@@ -125,6 +126,10 @@ private:
   bool fitSaveRequested_ = false;
   lv_obj_t *recordButton_ = nullptr;
   lv_obj_t *recordLabel_ = nullptr;
+  lv_obj_t *stopRecordButton_ = nullptr;
+  lv_obj_t *rideDurationLabel_ = nullptr;
+  bool recordingArmed_ = false;
+  bool fitSaving_ = false;
   bool recordingRequested_ = false;
   bool recordingRequestStart_ = false;
   bool recording_ = false;

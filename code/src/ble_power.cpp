@@ -59,6 +59,8 @@ bool BlePowerMeter::s_hasCyclingPower = false;
 bool BlePowerMeter::s_hasFitnessMachine = false;
 bool BlePowerMeter::s_hasSpeedCadence = false;
 std::atomic<float> BlePowerMeter::s_power{0};
+std::atomic<bool> BlePowerMeter::s_powerValid{false};
+std::atomic<uint32_t> BlePowerMeter::s_powerReceivedMs{0};
 std::atomic<float> BlePowerMeter::s_cadence{0};
 std::atomic<float> BlePowerMeter::s_speed{0};
 float BlePowerMeter::s_wheelCirc = BLE_WHEEL_CIRC_M;
@@ -74,6 +76,7 @@ class BlePowerClientCallbacks : public NimBLEClientCallbacks {
   void onDisconnect(NimBLEClient *, int reason) override {
     AppLog.printf("[BLE] power link disconnected reason=%d\n", reason);
     BlePowerMeter::s_connected = false;
+    BlePowerMeter::s_powerValid = false;
     powerInbox.reset();
     BlePowerMeter::s_disconnectCount++;
   }
@@ -109,6 +112,7 @@ void BlePowerMeter::processData() {
     processedGeneration = generation;
     s_hasWheel = s_hasCrank = false;
     s_power = s_cadence = s_speed = 0;
+    s_powerValid = false;
     s_lastFitnessMachineFlags = 0;
     s_notificationCount = 0;
     s_fitnessMachineNotificationCount = 0;
@@ -129,6 +133,8 @@ void BlePowerMeter::parseCyclingPower(uint8_t *data, size_t length) {
   const uint16_t flags = readU16(data, 0);
   size_t index = 2;
   s_power = (float)(int16_t)readU16(data, index);
+  s_powerReceivedMs = millis();
+  s_powerValid = true;
   s_notificationCount++;
   index += 2;
 
@@ -206,9 +212,10 @@ void BlePowerMeter::parseIndoorBike(uint8_t *data, size_t length) {
     index += 2;
   }
   bool hasPower = false;
+  float nextPower = s_power.load();
   if (flags & 0x0040) {
     if (!hasBytes(length, index, 2)) return;
-    s_power = (float)(int16_t)readU16(data, index);
+    nextPower = (float)(int16_t)readU16(data, index);
     index += 2;
     hasPower = true;
   }
@@ -238,7 +245,12 @@ void BlePowerMeter::parseIndoorBike(uint8_t *data, size_t length) {
   }
   s_lastFitnessMachineFlags = flags;
   s_fitnessMachineNotificationCount++;
-  if (hasPower) s_notificationCount++;
+  if (hasPower) {
+    s_power = nextPower;
+    s_powerReceivedMs = millis();
+    s_powerValid = true;
+    s_notificationCount++;
+  }
 }
 
 void BlePowerMeter::parseSpeedCadence(uint8_t *data, size_t length) {
@@ -411,6 +423,7 @@ void BlePowerMeter::disconnect() {
     s_client = nullptr;
   }
   s_connected = false;
+  s_powerValid = false;
   s_connectedAddress[0] = '\0';
   s_hasCyclingPower = false;
   s_hasFitnessMachine = false;

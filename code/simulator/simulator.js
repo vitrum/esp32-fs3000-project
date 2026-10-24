@@ -30,6 +30,7 @@
     operation: null, bleResult: "success", discoveredDevices: [], manualPairing: false,
     postureEnvironment: "absent", postureConnected: false, nextPostureMs: 30000,
     recording: false, currentRecord: null, logDate: "", pending: [], writer: [], dropped: 0,
+    armed: false, recordStarted: 0, recordedDuration: 0, skipped: 0, powerValid: true,
     download: null, downloadMessage: "", error: "", extraMs: 0, fileSequence: 0,
     sessionRecords: [], fitSaving: null, fitPath: "", fitBytes: null, trustedTime: false
   };
@@ -99,8 +100,7 @@
     $("power-reading").style.fontSize = Math.abs(power()) >= 10000 ? "28px" : "40px";
     $("cadence-reading").textContent = `CADENCE ${Math.round(cadence())} rpm`;
     $("wind-reading").textContent = state.windValid ? (state.wind * 3.6).toFixed(1) : "--";
-    $("cda-reading").textContent = cda === null ? "--" : cda.toFixed(2);
-    $("cda-reading").style.fontSize = cda >= 10 ? "28px" : "40px";
+    $("cda-reading").textContent = `CdA ${cda === null ? "--" : cda.toFixed(2)} m2`;
     $("zone-reading").textContent = `Z${zone?.zone ?? "--"}`;
     $("posture-reading").textContent = zone?.posture ?? "WAITING FOR DATA";
     $("clock-reading").textContent = gpsFixed() || state.networkTime
@@ -146,8 +146,13 @@
       : state.downloadMessage;
     $("fit-save").disabled = Boolean(state.fitSaving);
     $("fit-save").textContent = state.fitSaving ? "SAVING" : "SAVE FIT";
+    $("ride-start").disabled=state.recording||state.armed||Boolean(state.fitSaving);
+    $("ride-start").textContent=state.armed ? "WAITING" : "▶ START";
+    $("ride-stop").disabled=(!state.recording&&!state.armed)||Boolean(state.fitSaving);
+    const duration=state.recording ? state.seconds-state.recordStarted : state.recordedDuration;
+    $("ride-duration").textContent=`${state.armed ? "WAITING" : "TIME"} ${timeString(duration)}`;
     const recent = state.currentRecord ? [...state.currentRecord.rows, ...state.writer, ...state.pending] : [];
-    $("ride-log-data").textContent = `${state.recording ? "RECORDING" : "STOPPED"}\n${state.currentRecord?.path ?? "No recording yet"}\n\n` +
+    $("ride-log-data").textContent = `${state.armed ? "WAITING FOR POWER + WIND" : state.fitSaving ? "SAVING" : state.recording ? "RECORDING" : "STOPPED"}\n${state.currentRecord?.path ?? "No recording yet"}\n\n` +
       `Samples: ${state.sessionRecords.reduce((sum, record) => sum + record.rows.length, 0) + state.writer.length + state.pending.length}\nDropped: ${state.dropped}\n` +
       `\nPower: ${Math.round(power())} W\nCadence: ${Math.round(cadence())} rpm\n` +
       `Speed: ${((gpsFixed() ? state.gpsSpeed : state.bleConnected ? state.bleSpeed : 0) * 3.6).toFixed(1)} km/h\n\nRecent samples (ms,W,rpm,m/s):\n` +
@@ -181,20 +186,20 @@
     state.currentRecord = record;
     state.sessionRecords.push(record);
   }
-  function recording(enabled) {
+  function recording(enabled, local = false) {
     if (state.fitSaving) return notice("Wait for FIT export before recording control.");
-    if (state.wifi !== "connected") return notice("Web command unavailable: connect Wi-Fi first.");
+    if (!local && state.wifi !== "connected") return notice("Web command unavailable: connect Wi-Fi first.");
     if (!state.sdReady || state.sdBusy) return notice("SD card unavailable or busy. Recording state unchanged.");
-    if (enabled && !state.recording) {
+    if (enabled && !state.recording && !state.armed) {
       state.pending = []; state.writer = []; state.dropped = 0;
       state.sessionRecords = []; state.fitPath = ""; state.fitBytes = null;
+      state.currentRecord=null;state.recordedDuration=0;state.skipped=0;
       state.trustedTime = gpsFixed() || state.gps === "stale" || state.networkTime;
-      createRecord();
-      state.recording = true;
+      state.armed = true;
+    } else if (!enabled && state.armed) {
+      state.armed=false;
     } else if (!enabled && state.recording) {
-      state.currentRecord.rows.push(...state.writer, ...state.pending);
-      state.pending = []; state.writer = [];
-      state.recording = false;
+      saveFit(true);
     }
     render();
   }
@@ -203,7 +208,10 @@
     state.samples.push(power());
     if (state.samples.length > 60) state.samples.shift();
     flushWriter();
+    const inputsValid=Boolean(source())&&(state.mode===3||state.powerValid)&&state.windValid&&Number.isFinite(power())&&Number.isFinite(state.wind);
+    if(state.armed&&inputsValid){createRecord();state.recording=true;state.armed=false;state.recordStarted=state.seconds;}
     if (!state.recording) return;
+    if(!inputsValid){state.skipped++;return;}
     if (gpsFixed() || state.gps === "stale" || state.networkTime) state.trustedTime = true;
     if (gpsFixed() || state.gps === "stale" || state.networkTime) state.logDate = localDate().toISOString().slice(0, 10);
     const date = state.logDate;
@@ -368,7 +376,7 @@
       else {
         state.fitPath = pending.path; state.fitBytes = pending.bytes;
         files.set(pending.path, { binary: pending.bytes });
-        notice(`Saved ${pending.path}`);
+        if(!pending.auto)notice(`Saved ${pending.path}`);
       }
     }
     if (state.wifiEnabled && state.wifiEnvironment === "connected" && time >= state.wifiDeadline) {
@@ -443,10 +451,8 @@
   $("settings-sd").onclick = () => browse("/");
   $("settings-log").onclick = () => showPage("ride-log-page");
   $("log-status").onclick = () => showPage("ride-log-page");
-  function saveFit() {
+  function saveFit(auto = false) {
     if (state.fitSaving) return;
-    if (!(gpsFixed() || state.gps === "stale")) return notice("Acquire GPS time before saving FIT.");
-    if (!state.trustedTime) return notice("No trusted time for this recording.");
     if (!state.sdReady || state.sdBusy) return notice("SD card unavailable or busy. Recording state unchanged.");
     if (state.audio) return notice("Stop audio before saving FIT.");
     const rows = [...state.sessionRecords.flatMap((record) => record.rows), ...state.writer, ...state.pending]
@@ -455,14 +461,18 @@
     const path = state.sessionRecords[0].path.replace(/\.csv$/, ".fit");
     if (files.has(path)) return notice("FIT already exists. CSV retained.");
     if (state.sessionRecords.length > 8) return notice("Too many daily CSV segments for FIT export.");
-    const bytes = window.encodeRideFit(rows, Date.UTC(2026,9,19,4) / 1000 + Math.floor(rows[0][0] / 1000));
+    const epoch=state.trustedTime ? Date.UTC(2026,9,19,4)/1000 : 1704067200;
+    const bytes = window.encodeRideFit(rows, epoch + Math.floor(rows[0][0] / 1000));
     // A local screen command does not require Wi-Fi.
     state.currentRecord.rows.push(...state.writer, ...state.pending);
+    if(state.recording)state.recordedDuration=state.seconds-state.recordStarted;
     state.writer = []; state.pending = []; state.recording = false;
-    state.fitSaving = { path, bytes, deadline: now() + 1000 };
+    state.fitSaving = { path, bytes, auto: auto===true, deadline: now() + 1000 };
     render();
   }
-  $("fit-save").onclick = saveFit;
+  $("fit-save").onclick = () => saveFit();
+  $("ride-start").onclick = () => recording(true,true);
+  $("ride-stop").onclick = () => recording(false,true);
   $("settings-gps").onclick = () => state.gps === "absent"
     ? notice("GPS module not found.\nCheck the UART wiring and power.") : showPage("gps-page");
   document.querySelectorAll("[data-back]").forEach((button) => {
@@ -540,6 +550,7 @@
         if (field in values) state[field] = Number(values[field]);
       if ("wind" in values) state.wind = Number(values.wind) / 3.6;
       if ("ntpAvailable" in values) state.ntpAvailable = Boolean(values.ntpAvailable);
+      if ("powerValid" in values) state.powerValid = Boolean(values.powerValid);
       syncInputs(); render();
     },
     snapshot() {
@@ -553,6 +564,7 @@
         networkTime: state.networkTime, trustedTime: state.trustedTime,
         bleConnected: state.bleConnected, postureConnected: state.postureConnected, operation: state.operation?.kind ?? null,
         recording: state.recording, buffered: state.pending.length, queued: state.writer.length, dropped: state.dropped,
+        armed:state.armed,duration:state.recording ? state.seconds-state.recordStarted : state.recordedDuration,skipped:state.skipped,
         written: state.currentRecord?.rows.length ?? 0, csv: CSV_HEADER + (state.currentRecord?.rows.join("") ?? ""),
         recordPath: state.currentRecord?.path ?? null, downloading: Boolean(state.download), downloadMessage: state.downloadMessage,
         error: state.error, fitSaving: Boolean(state.fitSaving), fitPath: state.fitPath,

@@ -214,6 +214,7 @@ static void controlTests() {
   assert(outcome(manager).success && power.connected());
   manager.tick();
   auto *measurement = &NimBLEDevice::clients.front()->service.measurement;
+  assert(!power.measurementValid(millis()));
   const auto notifications = power.notificationCount();
   AppLog.setRaw(true);
   const auto logEnd = AppLog.end();
@@ -222,6 +223,8 @@ static void controlTests() {
   assert(bleDiagnostics.setSensorBusy(true));
   manager.tick();
   assert(power.power() == 250 && power.notificationCount() == notifications + 1);
+  assert(power.measurementValid(millis()));
+  assert(!power.measurementValid(millis() + 3001));
   assert(AppLog.end() > logEnd);
   assert(bleDiagnostics.setSensorBusy(false));
   AppLog.setRaw(false);
@@ -253,6 +256,10 @@ static void controlTests() {
   manager.tick();
   assert(power.power() == 300 && power.cadence() == 90 && power.speed() == 10);
   measurement = &NimBLEDevice::clients.front()->service.measurement;
+  const auto previousPower = power.power();
+  measurement->emit({0xc1, 0, 11, 0});
+  manager.tick();
+  assert(power.power() == previousPower);
   for (int16_t watts : {int16_t(0), int16_t(256), int16_t(2000), int16_t(-25)}) {
     const auto before = power.notificationCount();
     measurement->emit({0x41, 0, uint8_t(watts), uint8_t(uint16_t(watts) >> 8)});

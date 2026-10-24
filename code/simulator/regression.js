@@ -27,8 +27,12 @@
   HTMLAnchorElement.prototype.click = function () { downloads.push(this.download); };
   try {
     assert(snapshot().language === "en" && snapshot().powerSrc === 0 && !snapshot().recording, "Default: English, AUTO/no source, recording off");
-    const metricRights = ["cda-reading", "wind-reading", "power-reading"].map((id) => $(id).getBoundingClientRect().right);
-    assert(Math.max(...metricRights) - Math.min(...metricRights) < 1, "CdA, wind and power share the same right alignment");
+    const metricRights = ["zone-reading", "wind-reading", "power-reading"].map((id) => $(id).getBoundingClientRect().right);
+    assert(Math.max(...metricRights) - Math.min(...metricRights) < 1, "Zone, wind and power share the same right alignment");
+    const zoneBounds = $("zone-reading").getBoundingClientRect();
+    const cdaBounds = $("cda-reading").getBoundingClientRect();
+    assert(parseFloat(getComputedStyle($("zone-reading")).fontSize) === 40 && parseFloat(getComputedStyle($("cda-reading")).fontSize) === 14 && zoneBounds.bottom <= cdaBounds.top, "Zone is the large primary reading above the smaller CdA value");
+    assert($("cda-reading").textContent.startsWith("CdA ") && $("cda-reading").textContent.endsWith(" m2"), "Secondary CdA retains its label and unit");
     assert([...document.querySelectorAll(".card")].every((element) => getComputedStyle(element).borderRadius === "0px" && getComputedStyle(element).borderTopWidth === "0px"), "Dashboard uses unframed metric rows");
     const settingsBounds = $("screen-meter-button").getBoundingClientRect();
     const cadenceBounds = $("cadence-reading").getBoundingClientRect();
@@ -157,6 +161,8 @@
     assert(rows[0] === "t_ms,powerW,cadenceRpm,speedMps,vAirMps,yawDeg,postureDeg,rhoKgM3,powerSrc" && rows.length === 4, "CSV stop flushes all rows with exact firmware header");
     assert(Number(rows[1].split(",")[3]) > 8 && Number(rows[3].split(",")[3]) === 5, "Fresh GPS speed enters logs; stale fix falls back to BLE speed");
     assert(rows.slice(1).every((row) => row.split(",").length === 9 && row.endsWith(",1")), "CSV emits nine fields and BLE source ID 1");
+    sim.step(1);
+    assert(!snapshot().fitSaving && snapshot().fitPath.endsWith(".fit"), "STOP automatically completes FIT before a new recording");
     sim.recording(true); sim.step(60);
     assert(snapshot().written === 60 && snapshot().buffered === 0, "CSV flushes a complete 60-sample batch");
     if (snapshot().operation) sim.step(2);
@@ -165,11 +171,13 @@
     $("sd-files").firstElementChild.click();
     assert(snapshot().audio === "/music/demo.mp3" && !snapshot().bleConnected && snapshot().powerSrc === 0, "Audio playback suspends BLE and uses simulated SD file");
     sim.step(61);
-    assert(snapshot().buffered === 60 && snapshot().dropped === bufferedBeforeAudio + 1, "Audio pauses CSV submissions and reports bounded-buffer overflow");
+    assert(snapshot().buffered === bufferedBeforeAudio && snapshot().dropped === 0 && snapshot().skipped >= 61, "Missing BLE power skips invalid windows without fabricating zero samples");
     $("sd-stop").click();
     sim.step(1);
-    assert(snapshot().audio === null && snapshot().written >= 120, "Stopping audio resumes queued CSV writes without reconnecting BLE power meter");
+    assert(snapshot().audio === null && snapshot().written === 60, "Stopping audio does not fabricate measurements before BLE reconnects");
+    sim.connect();sim.step(1);
     sim.recording(false);
+    sim.step(1);
     const csvBeforeDownload = snapshot().csv;
     sim.download(); sim.download();
     assert(snapshot().downloading && snapshot().error.includes("Another download"), "Second concurrent download is rejected");
@@ -204,8 +212,10 @@
     assert(snapshot().gps === "searching", "GPS restart returns to searching, not a fabricated immediate fix");
     change("sd-ready", true);
     sim.recording(true);
+    sim.step(1);
     assert(snapshot().recordPath.startsWith("/LOG/2026-10-19/"), "GPS restart retains the last known log date");
     sim.recording(false);
+    sim.step(1);
     for (const [entry, back] of [
       ["settings-language", "#language-page [data-back]"],
       ["settings-wifi", "#wifi-page [data-back]"],
@@ -257,6 +267,25 @@
     assert(snapshot().error.includes("already exists"), "FIT save never silently overwrites an existing activity");
     dismiss();
     assert(document.querySelectorAll('[data-source="ANT+"], #connect-ant').length === 0, "No ANT entry remains");
+    sim.showPage("ride-log-page");
+    sim.setInput({power:0,wind:0,powerValid:false});
+    $("ride-start").click();$("ride-start").click();sim.step(2);
+    assert(snapshot().armed && !snapshot().recording && snapshot().duration===0 && $("ride-start").disabled,
+      "Separate START is idempotent and waits for valid power without timing");
+    sim.setInput({powerValid:true});change("wind-valid",false);sim.step(1);
+    assert(snapshot().armed && !snapshot().recording, "Valid power alone does not start a recording");
+    change("wind-valid",true);sim.step(1);
+    assert(snapshot().recording && !snapshot().armed && snapshot().buffered===1,
+      "Valid zero power and zero wind automatically start the first sample");
+    sim.step(2);
+    assert(snapshot().duration===2 && $("ride-duration").textContent.includes("00:00:02"), "Recording duration starts at the first valid sample");
+    $("ride-start").click();
+    assert(snapshot().recording && snapshot().duration===2, "Repeated START cannot toggle into STOP or reset duration");
+    $("ride-stop").click();
+    assert(snapshot().fitSaving && !snapshot().recording && $("ride-stop").disabled, "Separate STOP finalizes and locks controls until FIT completes");
+    sim.step(1);
+    assert(snapshot().fitBytes && snapshot().duration===2 && !snapshot().fitSaving,
+      "Automatic FIT completion preserves the stopped duration");
     window.simulatorTestResult = { passed: results.length, failures: [], checks: results };
     output.textContent = `PASS: ${results.length} checks\n` + results.join("\n");
   } catch (error) {

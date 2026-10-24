@@ -50,7 +50,7 @@ static const char WIFI_WEB_INDEX_HTML[] PROGMEM = R"HTML(
 </header>
 <main>
   <section class="instrument" aria-label="实时骑行仪表">
-    <div class="instrument-top"><div class="instrument-status"><span id="src">--</span><span id="log-icon" title="未记录" aria-label="未记录">●</span></div><time id="clock">--:--:--</time></div>
+    <div class="instrument-top"><div class="instrument-status"><span id="src">--</span><span id="log-icon" title="未记录" aria-label="未记录">●</span><time id="record-duration" class="status" title="录制时长" aria-label="录制时长">00:00:00</time></div><time id="clock">--:--:--</time></div>
     <div class="metric cda"><div class="metric-label">估算 CdA<span class="unit">m²</span></div><div class="value" id="cda">--</div><div class="metric-note"><span id="cda-state">等待有效数据</span><span id="zone">Z--</span></div></div>
     <div class="metric"><div class="metric-label">风速<span class="unit">km/h</span></div><div class="value" id="vair">--</div></div>
     <div class="metric power"><div class="metric-label">功率<span class="unit">W</span></div><div class="value" id="p">--</div></div>
@@ -72,7 +72,7 @@ static const char WIFI_WEB_INDEX_HTML[] PROGMEM = R"HTML(
 <script>
 const connEl = document.getElementById('conn');
 let ws = null, retryTimer = null;
-let online = false, busy = false, logging = false, lastFrame = 0, lastSample = null;
+let online = false, busy = false, logging = false, armed = false, saving = false, lastFrame = 0, lastSample = null;
 let deviceUtc = 0, utcReceived = 0, recordsLoading = false;
 const history = [];
 const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -80,9 +80,9 @@ const fmt = (value, digits) => finite(value) ? value.toFixed(digits) : '--';
 const localClock = new Intl.DateTimeFormat('en-GB', {timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
 
 function updateControls(){
-  document.getElementById('start').disabled = !online || busy || logging;
-  document.getElementById('stop').disabled = !online || busy || !logging;
-  document.getElementById('provision').disabled = !online || busy;
+  document.getElementById('start').disabled = !online || busy || saving || logging || armed;
+  document.getElementById('stop').disabled = !online || busy || saving || (!logging && !armed);
+  document.getElementById('provision').disabled = !online || busy || saving;
 }
 
 function setConn(ok){
@@ -95,6 +95,7 @@ function setConn(ok){
     document.getElementById('cda-state').textContent='等待有效数据';
     document.getElementById('zone').textContent='Z--';
     document.getElementById('logstate').textContent='记录状态未知';
+    document.getElementById('record-duration').textContent='--:--:--';
     document.getElementById('log-icon').className='';
     document.getElementById('log-icon').title='记录状态未知';
     document.getElementById('log-icon').setAttribute('aria-label','记录状态未知');
@@ -122,10 +123,14 @@ function render(d){
   document.getElementById('cda-state').textContent=zone ? ['','直立','低位 / 下把','气动','激进','极致气动','竞赛 TT','精英 TT'][zone] : '等待有效数据';
   for(const id of ['p','vair','cda']) document.getElementById(id).classList.toggle('compact',document.getElementById(id).textContent.length>5);
   logging=d.log===true;
-  document.getElementById('logstate').textContent=logging ? '记录中' : '已停止';
+  armed=d.armed===true;saving=d.saving===true;
+  const state=saving ? '保存中' : armed ? '等待有效功率和风速' : logging ? '记录中' : '已停止';
+  document.getElementById('logstate').textContent=state;
+  const duration=finite(d.duration)&&d.duration>=0 ? Math.floor(d.duration/1000) : 0;
+  document.getElementById('record-duration').textContent=[Math.floor(duration/3600),Math.floor(duration/60)%60,duration%60].map(value=>String(value).padStart(2,'0')).join(':');
   const icon=document.getElementById('log-icon');
   icon.className=logging ? 'active' : '';
-  icon.title=logging ? '记录中' : '已停止';
+  icon.title=state;
   icon.setAttribute('aria-label',icon.title);
   if(finite(d.utc) && d.utc>=1577836800){deviceUtc=d.utc;utcReceived=Date.now();}
   else{deviceUtc=0;}

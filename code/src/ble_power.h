@@ -44,6 +44,9 @@ public:
   uint32_t fitnessMachineNotificationCount() const { return s_fitnessMachineNotificationCount; }
   uint16_t lastFitnessMachineFlags() const { return s_lastFitnessMachineFlags; }
   uint32_t disconnectCount() const { return s_disconnectCount; }
+  bool measurementValid(uint32_t now, uint32_t maxAgeMs = 3000) const {
+    return s_connected && s_powerValid && now - s_powerReceivedMs.load() <= maxAgeMs;
+  }
   void setWheelCircumference(float m) { s_wheelCirc = m; }
 
 private:
@@ -59,6 +62,8 @@ private:
   static bool   s_hasCyclingPower;
   static bool   s_hasFitnessMachine;
   static std::atomic<float> s_power;
+  static std::atomic<bool> s_powerValid;
+  static std::atomic<uint32_t> s_powerReceivedMs;
   static std::atomic<float> s_cadence;
   static std::atomic<float> s_speed;
   static float  s_wheelCirc;

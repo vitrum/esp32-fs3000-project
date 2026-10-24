@@ -45,6 +45,8 @@ public:
   bool begin();                       // 挂载 SD，准备 /LOG 目录（不创建文件）
   bool start();                       // 开始一次新的记录（选定目录/文件名，缓存待写）
   bool stop();                        // 结束记录：把剩余缓存写入并关闭文件
+  bool sync();
+  bool resetUtcReference();
   bool ok() const { return _ok; }
 
   // 由主循环在有本地日期时设置（"YYYY-MM-DD"）。空字符串表示暂无日期。
@@ -71,6 +73,7 @@ public:
   bool utcReference(uint32_t &utc, uint32_t &milliseconds) const;
   // 当前 UTC 参考是否来自 GPS（false 也可能是 NTP）。
   bool utcReferenceFromGps() const { return _referenceFromGps; }
+  bool utcReferenceFromNetwork() const { return _referenceFromNetwork; }
   // 无 GPS 授时时的兜底：写入开机默认 UTC 时间。
   // 仅在当前没有 GPS 参考时生效，绝不覆盖真实 GPS 时间。
   void useFallbackUtcReference(uint32_t utc, uint32_t milliseconds);

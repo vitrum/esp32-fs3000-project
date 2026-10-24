@@ -396,7 +396,8 @@ void WifiWeb::onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
 void WifiWeb::broadcastTelemetry(uint32_t tMs, float powerW, float cadRpm,
                                  float vgMps, float vAirMps, bool windValid,
                                  float yawDeg, float postureDeg, float rho,
-                                 int powerSrc, bool logging, float cda, uint32_t utc) {
+                                 int powerSrc, bool logging, float cda, uint32_t utc,
+                                 bool armed, bool saving, uint32_t durationMs, uint32_t skipped) {
   if (!_connected || _ws.count() == 0) return;
 
   const char *srcName = powerSrc == 3 ? "VIRTUAL"
@@ -415,11 +416,12 @@ void WifiWeb::broadcastTelemetry(uint32_t tMs, float powerW, float cadRpm,
            "{\"t\":%lu,\"p\":%.1f,\"cad\":%.0f,\"vg\":%.3f,\"vair\":%.3f,"
            "\"windValid\":%s,\"yaw\":%.1f,\"posture\":%.1f,"
            "\"rho\":%.4f,\"src\":\"%s\","
-           "\"log\":%s,\"cda\":%.4f,\"utc\":%lu}",
+           "\"log\":%s,\"cda\":%.4f,\"utc\":%lu,\"armed\":%s,\"saving\":%s,\"duration\":%lu,\"skipped\":%lu}",
            (unsigned long)tMs, powerW, cadRpm, vgMps, vAirMps,
            windValid ? "true" : "false", yawDeg,
            postureDeg, rho, srcName, logging ? "true" : "false", cda,
-           (unsigned long)utc);
+           (unsigned long)utc, armed ? "true" : "false", saving ? "true" : "false",
+           (unsigned long)durationMs, (unsigned long)skipped);
 
   _ws.textAll(buf);
 }

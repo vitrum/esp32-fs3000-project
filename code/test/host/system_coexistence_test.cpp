@@ -2,6 +2,8 @@
 #include "ble_diagnostics.h"
 #include "csv_logger.h"
 #include "fit_export.h"
+#include "recording_journal.h"
+#include "ride_recorder.h"
 #include "fs3000.h"
 #include "gps_time.h"
 #include "sd_download.h"
@@ -134,6 +136,10 @@ static void wifiTests() {
     web.broadcastTelemetry(2, 250, 90, 8, 10, true, 0, 0, 1.225, 1, true, 0.3125f, 1792483200);
     assert(socket->frames.back().find("\"cda\":0.3125") != std::string::npos);
     assert(socket->frames.back().find("\"utc\":1792483200") != std::string::npos);
+    web.broadcastTelemetry(3, 0, 0, 0, 0, true, 0, 0, 1.225, 1, false, -1, 1792483200, true, false, 0, 0);
+    assert(socket->frames.back().find("\"armed\":true") != std::string::npos);
+    web.broadcastTelemetry(4, 250, 90, 8, 10, true, 0, 0, 1.225, 1, true, .3, 1792483201, false, false, 123000, 2);
+    assert(socket->frames.back().find("\"duration\":123000") != std::string::npos);
     for (const char *cmd : {"", "bogus", "source"}) {
       AsyncWebServerRequest request;
       if (*cmd) request.arguments["cmd"] = cmd;
@@ -229,7 +235,102 @@ static void wifiTests() {
   std::cout << "PASS WiFi: lifecycle, startup cooldown, low heap, SmartConfig timeout/retry/persistence, reconnect, mDNS, HTTP validation, telemetry\n";
 }
 
+static void journalTests() {
+  const auto *check = reinterpret_cast<const uint8_t *>("123456789");
+  assert(esp_rom_crc32_le(0, check, 9) == 0xcbf43926);
+  hostJournalPresent = false;
+  RecordingJournal absent;
+  assert(!absent.begin());
+  hostJournalPresent = true;
+  for (int cut : {0, 1, 30, 59, 60, 61, 63}) {
+    std::fill(hostJournalFlash.begin(), hostJournalFlash.end(), 0xff);
+    RecordingJournal creating;
+    assert(creating.begin());
+    hostFlashWriteBudget = cut;
+    assert(!creating.start(123));
+    hostFlashWriteBudget = -1;
+    RecordingJournal afterStartCut;
+    assert(afterStartCut.begin() && !afterStartCut.pending());
+  }
+  std::fill(hostJournalFlash.begin(), hostJournalFlash.end(), 0xff);
+  RecordingJournal journal;
+  assert(journal.begin() && !journal.pending());
+  assert(journal.start(123));
+  assert(!journal.start(124));
+  RecordingJournal::Reference reference{1792483200, 1000, RecordingJournal::TimeSource::Gps};
+  assert(journal.setReference(reference));
+  FitSample sample{1000, 0, 90, 8, 0, 0, -15, 1.225f, 1};
+  for (unsigned index = 0; index < 65; ++index) {
+    sample.milliseconds = 1000 + index * 1000;
+    sample.power = index;
+    assert(journal.log(sample));
+  }
+  RecordingJournal reboot;
+  assert(reboot.begin() && reboot.pending() && reboot.samples() == 65);
+  assert(reboot.reference().utc == reference.utc && reboot.session() == 123);
+  unsigned restored = 0;
+  for (uint32_t index = 1; index < reboot.records(); ++index) {
+    FitSample retained;
+    bool isSample;
+    assert(reboot.sample(index, retained, isSample));
+    if (isSample) {
+      assert(retained.milliseconds == 1000 + restored * 1000);
+      assert(retained.power == restored && retained.wind == 0 && retained.source == 1);
+      ++restored;
+    }
+  }
+  assert(restored == 65);
+  for (size_t byte : {size_t(4), size_t(20)}) {
+    auto snapshot = hostJournalFlash;
+    hostJournalFlash[2 * 64 + byte] ^= 1;
+    RecordingJournal corrupted;
+    assert(!corrupted.begin() && corrupted.pending());
+    hostJournalFlash = snapshot;
+  }
+  for (int cut : {0, 1, 30, 59, 60, 61, 63}) {
+    auto snapshot = hostJournalFlash;
+    hostFlashWriteBudget = cut;
+    assert(!journal.log(sample));
+    hostFlashWriteBudget = -1;
+    RecordingJournal interrupted;
+    assert(interrupted.begin() && interrupted.samples() == 65);
+    assert(interrupted.finish());
+    hostJournalFlash = snapshot;
+    assert(journal.begin());
+  }
+  hostFlashReadFailure = true;
+  RecordingJournal readFailure;
+  assert(!readFailure.begin());
+  hostFlashReadFailure = false;
+  hostFlashWriteBudget = 1;
+  assert(!reboot.finish());
+  hostFlashWriteBudget = -1;
+  RecordingJournal interruptedAck;
+  assert(interruptedAck.begin() && interruptedAck.samples() == 65);
+  assert(interruptedAck.finish());
+  RecordingJournal completed;
+  assert(completed.begin() && !completed.pending());
+  assert(completed.start(456) && completed.setReference(reference) && completed.log(sample));
+  RecordingJournal reused;
+  assert(reused.begin() && reused.samples() == 1 && reused.session() == 456);
+  assert(reused.finish());
+  {
+    auto snapshot = hostJournalFlash;
+    hostJournalPartition.size = 8192;
+    RecordingJournal bounded;
+    assert(bounded.begin() && bounded.start(999) && bounded.setReference(reference));
+    for (unsigned index = 0; index < 126; ++index) assert(bounded.log(sample));
+    assert(!bounded.log(sample) && bounded.samples() == 126);
+    RecordingJournal full;
+    assert(full.begin() && full.samples() == 126 && full.finish());
+    hostJournalPartition.size = hostJournalFlash.size();
+    hostJournalFlash = snapshot;
+  }
+  std::cout << "PASS journal: CRC, reboot replay, torn records, interrupted acknowledgement, session reuse\n";
+}
+
 static void storageTests() {
+  journalTests();
   assert(beginSdCardMutex());
   SdFileEntry unavailableEntries[1];
   int unavailableError = 0;
@@ -266,6 +367,19 @@ static void storageTests() {
   assert(!logger.start());
   failTaskCreation = false;
   assert(logger.begin() && !logger.ok());
+  {
+    RecordingJournal journal;
+    FitExport exporter;
+    RideRecorder controller(logger, exporter, journal);
+    assert(controller.begin() && controller.requestStart() && controller.waiting());
+    assert(controller.requestStart());
+    FitSample sample{10000, 0, 90, 0, 0, 0, -15, 1.225f, 1};
+    assert(!controller.accept(sample, false, true, 789));
+    assert(controller.waiting() && controller.duration(20000) == 0);
+    assert(!controller.accept(sample, true, false, 789));
+    controller.requestStop(20000);
+    assert(!controller.waiting() && !journal.pending());
+  }
   const std::string logDirectory = std::string(sdMountPoint()) + "/LOG";
   std::filesystem::create_directories(logDirectory);
   const std::string conflictPath = logDirectory + "/conflict";
@@ -751,6 +865,124 @@ static void recordingFitTests(bool measurements = false, bool gpsInput = false,
             << "real CSV writer, async export, retained artifacts, overwrite protection, malformed CSV rejection\n";
 }
 
+static void recordingLifecycleTests() {
+  const char *root = getenv("FIT_ARTIFACT_DIR");
+  assert(root && beginSdCardMutex());
+  const std::filesystem::path artifacts(root);
+  static CsvLogger interruptedLogger;
+  assert(interruptedLogger.begin());
+  {
+    RecordingJournal missing;
+    FitExport unused;
+    RideRecorder unavailable(interruptedLogger, unused, missing);
+    hostJournalPresent = false;
+    assert(!unavailable.begin());
+    unavailable.requestShutdown(0);
+    assert(unavailable.readyToPowerOff());
+    hostJournalPresent = true;
+  }
+  RecordingJournal interruptedJournal;
+  FitExport interruptedExporter;
+  RideRecorder interrupted(interruptedLogger, interruptedExporter, interruptedJournal);
+  assert(interrupted.begin() && interrupted.requestStart());
+  interruptedLogger.setUtcReference(1792483200, 10000);
+  FitSample sample{9000, 0, 80, 0, 0, 0, -15, 1.225f, 1};
+  assert(!interrupted.accept(sample, false, true, 123));
+  assert(interrupted.waiting() && interruptedLogger.sampleCount() == 0);
+  const uint32_t times[] = {10000, 11000, 14000, 15000};
+  const float watts[] = {0, 250, 300, 400};
+  const float winds[] = {0, 10, 12, 15};
+  const float speeds[] = {0, 8, 10, 11};
+  for (unsigned index = 0; index < 4; ++index) {
+    sample.milliseconds = times[index];
+    sample.power = watts[index]; sample.wind = winds[index]; sample.speed = speeds[index];
+    sample.cadence = 80 + index;
+    assert(interrupted.accept(sample, true, true, 123));
+    assert(interrupted.requestStart());
+    if (index == 1) {
+      sample.milliseconds = 12000;
+      assert(!interrupted.accept(sample, false, true, 123));
+      sample.milliseconds = 13000;
+      assert(!interrupted.accept(sample, true, false, 123));
+    }
+  }
+  assert(interrupted.recording() && interrupted.duration(15000) == 5000);
+  assert(interrupted.skipped() == 2 && interruptedLogger.sampleCount() == 4);
+  const auto originalCsv = readFile(std::string(sdMountPoint()) + interruptedLogger.fileName());
+  assert(std::count(originalCsv.begin(), originalCsv.end(), '\n') == 1);
+  hostFlashWriteBudget = 61;
+  assert(!interruptedJournal.log(sample));
+  hostFlashWriteBudget = -1;
+
+  static CsvLogger recoveredLogger;
+  assert(recoveredLogger.begin());
+  RecordingJournal recoveredJournal;
+  FitExport recoveredExporter;
+  RideRecorder recovered(recoveredLogger, recoveredExporter, recoveredJournal);
+  assert(recovered.begin() && recovered.restoring());
+  assert(recoveredJournal.damagedTail() && recoveredJournal.samples() == 4);
+  assert(!recovered.requestStart());
+  syncFailures = 1;
+  await([&] { recovered.poll(millis()); return !recovered.busy(); });
+  assert(recoveredJournal.pending() && !recovered.readyToPowerOff());
+  assert(recovered.requestSave(millis()));
+  await([&] { recovered.poll(millis()); return !recovered.busy(); });
+  assert(!recoveredJournal.pending() && recoveredLogger.sampleCount() == 4);
+  assert(recoveredLogger.droppedCount() == 0 && recovered.duration(millis()) == 5000);
+  auto recoveredCsv = std::filesystem::path(sdMountPoint()) / (recoveredLogger.fileName() + 1);
+  auto recoveredFit = recoveredCsv; recoveredFit.replace_extension(".fit");
+  assert(std::filesystem::exists(recoveredFit));
+  std::filesystem::copy_file(recoveredCsv, artifacts / "recovered.csv");
+  std::filesystem::copy_file(recoveredFit, artifacts / "recovered.fit");
+
+  assert(recovered.requestStart());
+  recoveredLogger.setUtcReference(1792483300, 20000);
+  sample = FitSample{20000, 250, 90, 8, 10, 0, -15, 1.225f, 1};
+  assert(recovered.accept(sample, true, true, 456));
+  sample.milliseconds = 21000; sample.power = 300; sample.speed = 10; sample.wind = 12;
+  assert(recovered.accept(sample, true, true, 456));
+  auto shutdownCsv = std::filesystem::path(sdMountPoint()) / (recoveredLogger.fileName() + 1);
+  auto shutdownFit = shutdownCsv; shutdownFit.replace_extension(".fit");
+  recovered.requestShutdown(21000);
+  assert(!recovered.readyToPowerOff() && recovered.busy());
+  hostFlashWriteBudget = 0;
+  await([&] { recovered.poll(millis()); return !recoveredExporter.busy() && std::filesystem::exists(shutdownFit); });
+  recovered.poll(millis());
+  assert(recoveredJournal.pending() && !recovered.readyToPowerOff());
+  hostFlashWriteBudget = -1;
+  recovered.poll(millis() + 1001);
+  assert(recovered.readyToPowerOff() && !recoveredJournal.pending());
+  assert(recovered.duration(99999) == 1000);
+  std::filesystem::copy_file(shutdownCsv, artifacts / "shutdown.csv");
+  std::filesystem::copy_file(shutdownFit, artifacts / "shutdown.fit");
+  assert(!recovered.requestStart());
+  static CsvLogger batchLogger;
+  assert(batchLogger.begin());
+  RecordingJournal batchJournal;
+  FitExport batchExporter;
+  RideRecorder batch(batchLogger, batchExporter, batchJournal);
+  assert(batch.begin() && batch.requestStart());
+  batchLogger.setUtcReference(1792483400, 60000);
+  for (unsigned index = 0; index < 65; ++index) {
+    sample = FitSample{60000 + index * 1000, 200.0f + index, 90, 8, 10, 0, -15, 1.225f, 1};
+    assert(batch.accept(sample, true, true, 999));
+  }
+  static CsvLogger batchRestoredLogger;
+  assert(batchRestoredLogger.begin());
+  RecordingJournal batchRestoredJournal;
+  FitExport batchRestoredExporter;
+  RideRecorder batchRestored(batchRestoredLogger, batchRestoredExporter, batchRestoredJournal);
+  assert(batchRestored.begin() && batchRestored.restoring());
+  await([&] { batchRestored.poll(millis()); return !batchRestored.busy(); });
+  assert(!batchRestoredJournal.pending() && batchRestoredLogger.sampleCount() == 65);
+  assert(batchRestoredLogger.droppedCount() == 0);
+  auto batchCsv = std::filesystem::path(sdMountPoint()) / (batchRestoredLogger.fileName() + 1);
+  auto batchFit = batchCsv; batchFit.replace_extension(".fit");
+  std::filesystem::copy_file(batchCsv, artifacts / "batch.csv");
+  std::filesystem::copy_file(batchFit, artifacts / "batch.fit");
+  std::cout << "PASS recording lifecycle: validity gate, zero values, duplicate start, duration, power-loss replay, SD retry, shutdown FIT and acknowledgement\n";
+}
+
 int main(int argc, char **argv) {
   const std::string mode = argc > 1 ? argv[1] : "coexistence";
   if (mode == "wifi") wifiTests();
@@ -759,5 +991,6 @@ int main(int argc, char **argv) {
   else if (mode == "wind_power_fit") recordingFitTests(true);
   else if (mode == "stage1_ble_wind_fit") recordingFitTests(true, false, true);
   else if (mode == "stage2_gps_ble_wind_fit") recordingFitTests(true, true);
+  else if (mode == "recording_lifecycle") recordingLifecycleTests();
   else coexistenceTests();
 }

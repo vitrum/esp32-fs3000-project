@@ -52,12 +52,12 @@
     .cda-card { top: 43px; height: 88px; }
     .cda-details { position: absolute; inset: 0; }
     .cda-title { position: absolute; left: 0; top: 7px; color: #64748b; font-size: 14px; line-height: 17px; }
-    .cda-reading { position: absolute; right: 0; top: 10px; width: 132px; overflow: hidden; color: #172033; font-size: 40px; line-height: 48px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .cda-reading { position: absolute; right: 0; bottom: 3px; width: 116px; overflow: hidden; color: #64748b; font-size: 14px; line-height: 17px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .metric-unit { position: absolute; left: 0; top: 32px; color: #64748b; font-size: 14px; line-height: 17px; }
-    .posture-reading { position: absolute; left: 0; bottom: 3px; width: 180px; overflow: hidden; color: #64748b; font-size: 14px; line-height: 17px; white-space: nowrap; }
-    .zone-block { position: absolute; right: 0; bottom: 3px; color: #2563eb; }
+    .posture-reading { position: absolute; left: 0; bottom: 3px; width: 96px; overflow: hidden; text-overflow: ellipsis; color: #64748b; font-size: 14px; line-height: 17px; white-space: nowrap; }
+    .zone-block { position: absolute; right: 0; top: 10px; width: 132px; text-align: right; color: #2563eb; }
     .zone-caption { display: none; }
-    .zone-number { font-size: 14px; line-height: 17px; font-variant-numeric: tabular-nums; }
+    .zone-number { display: block; font-size: 40px; line-height: 48px; font-variant-numeric: tabular-nums; }
     .wind-card { top: 145px; height: 56px; }
     .wind-row { position: absolute; inset: 0; }
     .wind-title { position: absolute; left: 0; top: 6px; color: #64748b; font-size: 14px; line-height: 17px; }
@@ -172,7 +172,10 @@
     .settings-grid button:nth-child(6) { background: #15803d; }
     .settings-grid #settings-log { grid-column: 1 / -1; height: 42px; background: #334155; }
     #fit-save { position: absolute; right: 10px; top: 12px; width: 78px; min-height: 30px; padding: 2px; background: #2563eb; color: white; }
-    #ride-log-data { position: absolute; top: 54px; left: 8px; width: 224px; height: 258px; overflow: auto; padding: 6px; white-space: pre-wrap; overflow-wrap: anywhere; color: #334155; font-size: 13px; line-height: 1.5; border: 1px solid #cbd5e1; margin: 0; }
+    #ride-log-data { position: absolute; top: 112px; left: 8px; width: 224px; height: 192px; overflow: auto; padding: 6px; white-space: pre-wrap; overflow-wrap: anywhere; color: #334155; font-size: 13px; line-height: 1.5; border: 1px solid #cbd5e1; margin: 0; }
+    #ride-start,#ride-stop{position:absolute;top:50px;width:108px;height:34px;min-height:0;padding:4px;color:#fff;border:0;}
+    #ride-start{left:8px;background:#16a34a;}#ride-stop{left:124px;background:#dc2626;}
+    #ride-duration{position:absolute;left:12px;top:90px;font-size:14px;color:#334155;}
     .screen-page .choice-list { display: grid; gap: 6px; margin-top: 16px; }
     .screen-page .choice-list button { min-height: 38px; }
     .screen-page .language-choices { display: flex; gap: 4px; margin-top: 20px; }
@@ -219,9 +222,8 @@
         <div class="rule"></div>
         <div class="card cda-card">
           <div class="cda-details">
-            <div class="cda-title">EST. CdA</div>
-            <span class="metric-unit">m2</span>
-            <div class="cda-reading" id="cda-reading">--</div>
+            <div class="cda-title">AERO ZONE</div>
+            <div class="cda-reading" id="cda-reading">CdA -- m2</div>
             <div class="posture-reading" id="posture-reading">WAITING FOR DATA</div>
           </div>
           <div class="zone-block"><span class="zone-number" id="zone-reading">Z--</span></div>
@@ -298,6 +300,8 @@
         <section class="screen-page" id="ride-log-page" hidden>
           <header class="page-header"><button data-back="settings-dialog" type="button">‹ BACK</button>LOG</header>
           <button id="fit-save" type="button">SAVE FIT</button>
+          <button id="ride-start" type="button">▶ START</button><button id="ride-stop" type="button" disabled>■ STOP</button>
+          <div id="ride-duration">TIME 00:00:00</div>
           <pre id="ride-log-data">No recording yet</pre>
         </section>
         <section class="screen-page" id="wifi-page" hidden>
@@ -412,7 +416,7 @@
   </div>
 </main>
 <script src="fit.js"></script>
-<script src="simulator.js"></script>
-<script src="regression.js"></script>
+<script src="simulator.js?v=zone-1"></script>
+<script src="regression.js?v=zone-1"></script>
 </body>
 </html>

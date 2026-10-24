@@ -13,7 +13,7 @@ From the workspace root:
 sh test/run.sh all
 ```
 
-This builds the test image, runs twelve native C++ regression groups through
+This builds the test image, runs thirteen native C++ regression groups through
 `pytest-embedded`, builds the ESP32-S3 Unity firmware, and executes its ten cases
 using Espressif QEMU's ESP32-S3 machine and `pytest-embedded`'s `idf,qemu` services.
 No board is discovered, flashed, or reset by this command.
@@ -39,9 +39,12 @@ Subsequent builds use Docker layers and the pip download cache.
 
 ### Dashboard And Live Web UI
 
-The 240x320 dashboard uses unframed metric rows, horizontal separators, small
-left-side units and a common right edge for CdA/wind/power. Settings is a gear
-on the cadence row. The live Web page uses the same hierarchy: one column on
+The 240x320 dashboard uses unframed metric rows, horizontal separators and a
+common right edge for the large Zone/wind/power readings. Zone uses 40px type;
+the secondary CdA value, label and unit use 14px at the lower right of that row,
+beside an ellipsized posture caption. Wind/power units remain small on the left.
+Settings is a gear on the cadence row. The live Web page keeps CdA as its primary
+aero value with the same unframed visual structure: one column on
 phones, instrument plus supporting controls/records on desktop. It has no
 external font/icon/CDN dependency. Web airspeed and ground speed display km/h;
 production telemetry, CSV and FIT retain their existing m/s units.
@@ -87,8 +90,8 @@ Unity failures, and timeouts all fail the corresponding pytest test.
 ## Functional Coverage
 
 The native groups execute production `.cpp` files, not copies of their algorithms.
-Each group includes multiple assertions and scenarios; twelve groups do not mean
-only twelve individual behaviors are checked. This is a coverage inventory, not a
+Each group includes multiple assertions and scenarios; thirteen groups do not mean
+only thirteen individual behaviors are checked. This is a coverage inventory, not a
 claim of 100% line/branch or end-to-end hardware coverage.
 
 | Group | Scenarios |
@@ -96,6 +99,7 @@ claim of 100% line/branch or end-to-end hardware coverage.
 | `system_coexistence` | GPS UART receiver and BLE scan/notifications stay active while an HTTP callback thread submits 64 control requests, 64 WebSocket telemetry frames are produced and 64 CSV samples are written; continued recording during paced HTTP download; SD lock contention, competing/missing downloads, Wi-Fi loss/reconnect, scan cancellation and clean GPS/BLE shutdown |
 | `system_wifi` | No credentials, preferences failure, STA initialization/start failure, retry cooldown, low contiguous heap, mDNS failure, reconnect fallback, SmartConfig timeout/retry/save failure, enable/disable, credential clearing, invalid commands/source IDs/paths, escaped status JSON and nonfinite telemetry |
 | `system_storage` | SPI/mount/task failure and startup worker retry/reuse, bounded CMD13 timeout recovery (no write-command or non-timeout retries), no automatic formatting, recording-directory file conflicts, GPS-over-fallback UTC priority, paused buffer overflow, date rollover, unique filenames, blocked writer recovery, short write/fsync recovery, session limits, repeated parent/child directory reads, empty versus missing directories, partial-list errors and recovery |
+| `system_recording_lifecycle` | Production RideRecorder and raw Flash journal: validity-gated start, valid zero samples, duplicate START, skipped windows/duration, torn session/sample/ack writes, CRC corruption, full cache, SD recovery retry, four-sample and 65-sample reboot replay, shutdown FIT and delayed cache acknowledgement; three retained CSV/FIT pairs independently decoded |
 | `system_fit` | HTTP start request, real CSV recording and writer, 65 fixed samples split at UTC midnight, asynchronous FIT export, automatic stop/flush, overwrite protection, malformed CSV rejection, retained output and independent strict FIT decoding |
 | `system_wind_power_fit` | Real FS3000 frames and CPS/FTMS notification parsing feed CSV and FIT; every wind/power value is checked independently; power boundaries, quiet/full-scale wind, checksum/short packet protection, disconnect/reconnect and protocol switch |
 | `system_stage1_ble_wind_fit` | Wi-Fi off, GPS absent, raw FS3000 + CPS/FTMS packets, BLE disconnect/reconnect, one 65-row CSV, fallback UTC and independently decoded FIT |
@@ -143,6 +147,80 @@ up and checking the card on a computer, then comparing against board-side reads.
 Native POSIX tests do not establish that the physical FAT or SPI link is healthy.
 
 ## Recorded FIT Validation
+
+### Recording And Power-Loss Recovery
+
+START and STOP are separate fixed-position buttons. START arms the recorder;
+the first 1Hz window containing fresh power and valid wind creates the recording.
+The production BLE power validity window is 3 seconds; connection alone and CSC
+cadence notifications are not power. Valid 0W and 0m/s wind are accepted. Explicit
+VIRTUAL input is accepted for testing. Invalid windows are skipped, not stored as
+invented zero measurements; the session timer continues and shows skipped count.
+STOP cancels waiting or finalizes CSV/FIT automatically. Saving prevents a new
+START. Long-press shutdown waits for FIT publication and Flash acknowledgement;
+failure retains data and power, with local SAVE FIT available for recovery retry.
+
+| Storage option | Suitable role | Power-loss limitation |
+| --- | --- | --- |
+| RAM/PSRAM | Fast existing sample batches | Volatile, cannot recover after power loss |
+| Shorter SD flush interval | Smaller normal buffering window | Still depends on SD and in-flight FAT writes |
+| NVS | Small settings/metadata | Existing 20KB partition is unsuitable for continuous ride samples |
+| Dedicated append-only Flash journal (selected) | Durable committed samples plus existing SD CSV/FIT | Finite capacity/endurance; in-flight sample can be lost; physical brownout testing still required |
+
+The selected layout in `partitions.csv` keeps NVS, application, SPIFFS and
+coredump at their previous offsets, adds `ridecache` at 0x400000 with size
+0x800000, and requires the board's 16MB Flash. It does not move existing data
+partitions or format the SD. **Back up device and SD data before deployment.**
+The partition table and application must both be updated using the configured
+PlatformIO upload, not an app-only flash. Do not erase the whole chip. An old
+partition table or unavailable/corrupt cache disables new production recordings
+instead of silently claiming power-loss protection. No board was auto-flashed.
+
+Each journal record is 64 bytes: versioned magic, session/index/type, payload,
+CRC32 and a separately programmed commit word. Payload is written before commit.
+Time-source/UTC-to-millis reference is included, so recovery does not substitute
+the reboot's clock for the previous ride. A sequential 4KB sector is erased only
+when first used by a new session, not for every sample. Header plus sample records
+provide about 36 hours at 1Hz, slightly less with time-reference upgrades. Full
+cache stops accepting samples and finalizes the committed prefix; it never wraps
+over unsaved data. This is not wear-leveled archival storage: erase endurance,
+especially the first metadata sector per ride, depends on the actual Flash chip.
+
+At boot, an unfinished session is replayed by a background task into new CSV/FIT
+files under `/LOG/R<session-id>/`. A short final uncommitted record is ignored;
+CRC damage in a committed record blocks automatic recovery/erasure. Replay flushes
+every 60 samples to avoid RAM backlog loss. If normal CSV buffering dropped rows,
+the same journal replay is used before FIT completion. New recording is blocked
+until the pending session is recovered. Flash is acknowledged only after FIT is
+published. SD errors or acknowledgement failure preserve the cache for retry.
+Power loss after publishing FIT but before acknowledgement can create another
+recovered copy on reboot; original files are never overwritten. Successful normal
+CSV files are retained, including pre-recovery copies. This journal supports one
+pending session, not multiple offline rides or recording without an initially
+writable SD card.
+
+Limits: the current in-flight sample/Flash operation can be lost, and actual
+power failure can also damage SD media. This is committed-prefix recovery, not
+zero-loss certification. Use the known-good card; validate Flash erase/write
+latency with BLE/GPS active and exercise the real power latch without USB keeping
+the board powered. Do not treat mock/QEMU tests as brownout or endurance proof.
+
+Focused check:
+
+```sh
+docker run --rm -v "$PWD:/project" aeroprobe-idf-test:4.4.6 \
+  /opt/pytest-venv/bin/python -m pytest -q test/host/test_regression.py \
+  -k 'system_storage or system_recording_lifecycle' --junitxml=test/results/recording-recovery.xml
+```
+
+The lifecycle scenario retains `recovered.csv/fit` (4 valid rows, 5 seconds,
+41.5m), `shutdown.csv/fit` (2 rows, 1 second, 9m), and `batch.csv/fit` (65 rows,
+64 seconds, 512m) plus `validation.json` under a new `test/results/fit/recording-*`.
+It verifies actual production journal/controller/writer/exporter behavior using
+NOR 1-to-0 and torn-write mocks, then independently decodes timestamps, all power,
+wind, cadence/speed, developer fields/units, distances, events and summaries.
+The lower-level logger fixtures intentionally still test legacy/missing-source
+rows; production RideRecorder filters invalid windows before reaching the logger.
 
 ### Wi-Fi Network Time
 
@@ -241,7 +319,7 @@ sh test/run.sh stages
 
 This is a native production-module simulation, not browser UI or RF emulation.
 It does not flash/reset the board. Report: `test/results/stages.xml`.
-`measurements` also includes these two scenarios (five groups total).
+`measurements` also includes these two scenarios and recording lifecycle (six groups total).
 
 Both scenarios feed the real FS3000 driver and BLE CPS/FTMS decoder, writer and
 FIT exporter. They test valid zero watts, negative signed power, BLE loss at

@@ -15,6 +15,9 @@ sh test/run.sh all
 
 - `measurements`: prioritized wind/power checks; report `test/results/measurements.xml`.
 - `stages`: two native recording rehearsals, BLE+wind then GPS+BLE+wind; report `test/results/stages.xml`. No board flashing or browser UI emulation.
+- `system_recording_lifecycle` (native pytest selection): power/wind validity gate,
+  Flash commit/reboot replay, SD retry, automatic STOP/shutdown FIT and acknowledgement.
+  Included in `measurements` and `all`; recovery artifacts have recovered/shutdown/batch CSV/FIT pairs.
 - `host`: native pytest groups with controlled platform/hardware replacements.
 - `build`: separate ESP32-S3 Unity firmware build, not production firmware.
 - `qemu`: Unity firmware build and automatic menu execution on Espressif QEMU.
@@ -107,6 +110,13 @@ success as proof of correct measurements, or offline parsing as Garmin/Strava
 upload certification. Do not commit generated artifacts as test source.
 
 ## Environment And Safety
+
+Production uses `partitions.csv`: existing NVS/app/SPIFFS/coredump offsets remain
+unchanged; an 8MB `ridecache` region starts at 4MB on the 16MB board. Update both
+partition table and app only with explicit user authorization; never auto-flash,
+erase the whole chip, or format SD. Recovery is a CRC-checked committed prefix,
+not a guarantee against a failing card or arbitrary brownout. Actual NOR timing,
+power latch, first-deployment preservation and endurance need hardware gates.
 
 - Current Docker base: `espressif/idf:v4.4.6`, image `aeroprobe-idf-test:4.4.6`.
   Production remains Arduino-ESP32 2.0.14 / ESP-IDF 4.4.6 under PlatformIO.

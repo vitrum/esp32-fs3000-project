@@ -198,6 +198,8 @@ bool DisplayLcd::takeFitSaveRequest() {
 }
 
 void DisplayLcd::setFitSaving(bool saving) {
+  fitSaving_ = saving;
+  setRecording(recording_, recordingArmed_);
   if (!fitSaveButton_) return;
   if (lv_obj_has_state(fitSaveButton_, LV_STATE_DISABLED) == saving) return;
   if (saving) lv_obj_add_state(fitSaveButton_, LV_STATE_DISABLED);
@@ -207,11 +209,15 @@ void DisplayLcd::setFitSaving(bool saving) {
 
 void DisplayLcd::showFitResult(const char *message) { showNotice(message); }
 
-void DisplayLcd::onRecordToggle(lv_event_t *) {
+void DisplayLcd::onRecordToggle(lv_event_t *event) {
   if (!g_display) return;
-  // 点击时按当前状态取反：未记录→请求开始，记录中→请求停止。
-  g_display->recordingRequestStart_ = !g_display->recording_;
+  const bool start = (uintptr_t)lv_event_get_user_data(event) == 1;
+  if (g_display->recordingRequested_ || g_display->fitSaving_) return;
+  if (start == (g_display->recording_ || g_display->recordingArmed_)) return;
+  g_display->recordingRequestStart_ = start;
   g_display->recordingRequested_ = true;
+  lv_obj_add_state(g_display->recordButton_, LV_STATE_DISABLED);
+  lv_obj_add_state(g_display->stopRecordButton_, LV_STATE_DISABLED);
 }
 
 bool DisplayLcd::takeRecordingRequest(bool &start) {
@@ -221,25 +227,40 @@ bool DisplayLcd::takeRecordingRequest(bool &start) {
   return true;
 }
 
-void DisplayLcd::setRecording(bool recording) {
+void DisplayLcd::setRecording(bool recording, bool armed) {
   recording_ = recording;
+  recordingArmed_ = armed;
   if (statusLabel_)
     lv_obj_set_style_text_color(statusLabel_, recording ? lv_color_make(22, 163, 74)
                                                        : lv_color_make(100, 116, 139), 0);
   if (!recordButton_) return;
-  // 记录中：红色 STOP；空闲：绿色 RECORD。
-  lv_obj_set_style_bg_color(
-      recordButton_,
-      recording ? lv_color_make(220, 38, 38) : lv_color_make(22, 163, 74), 0);
+  if (recording || armed || fitSaving_ || recordingRequested_)
+    lv_obj_add_state(recordButton_, LV_STATE_DISABLED);
+  else lv_obj_clear_state(recordButton_, LV_STATE_DISABLED);
+  if (stopRecordButton_) {
+    if ((!recording && !armed) || fitSaving_ || recordingRequested_)
+      lv_obj_add_state(stopRecordButton_, LV_STATE_DISABLED);
+    else lv_obj_clear_state(stopRecordButton_, LV_STATE_DISABLED);
+  }
   if (recordLabel_)
     lv_label_set_text(recordLabel_,
-                      recording ? localized(LV_SYMBOL_STOP " STOP", LV_SYMBOL_STOP " 停止")
-                                : localized(LV_SYMBOL_PLAY " RECORD", LV_SYMBOL_PLAY " 记录"));
+                      armed ? localized("WAITING", "等待数据")
+                            : localized(LV_SYMBOL_PLAY " START", LV_SYMBOL_PLAY " 开始"));
 }
 
 void DisplayLcd::updateRideLog(const char *path, bool recording, uint32_t samples,
-                              uint32_t dropped, float power, float cadence, float speed) {
+                              uint32_t dropped, float power, float cadence, float speed,
+                              uint32_t durationMs, uint32_t skipped) {
   if (!rideLogText_) return;
+  if (rideDurationLabel_) {
+    const uint32_t seconds = durationMs / 1000;
+    char duration[40];
+    snprintf(duration, sizeof(duration), "%s  %02lu:%02lu:%02lu",
+             recordingArmed_ ? "WAITING" : "TIME",
+             (unsigned long)(seconds / 3600), (unsigned long)(seconds / 60 % 60),
+             (unsigned long)(seconds % 60));
+    lv_label_set_text(rideDurationLabel_, duration);
+  }
   if (samples < rideLastSample_) rideHistory_[0] = '\0';
   if (samples != rideLastSample_) {
     char row[64];
@@ -255,9 +276,10 @@ void DisplayLcd::updateRideLog(const char *path, bool recording, uint32_t sample
   }
   char text[800];
   snprintf(text, sizeof(text),
-           "%s\n%s\n\nSamples: %lu\nDropped: %lu\n\nPower: %.0f W\nCadence: %.0f rpm\nSpeed: %.1f km/h\n\nRecent samples:\n%s\nSAVE FIT ends recording.\nOriginal CSV is retained.",
+           "%s\n%s\n\nSamples: %lu\nDropped: %lu\nSkipped invalid: %lu\n\nPower: %.0f W\nCadence: %.0f rpm\nSpeed: %.1f km/h\n\nRecent samples:\n%s\nSTOP saves FIT automatically.\nOriginal CSV is retained.",
            recording ? "RECORDING" : "STOPPED", path && path[0] ? path : "No recording yet",
-           (unsigned long)samples, (unsigned long)dropped, power, cadence, speed * 3.6f, rideHistory_);
+           (unsigned long)samples, (unsigned long)dropped, (unsigned long)skipped,
+           power, cadence, speed * 3.6f, rideHistory_);
   lv_label_set_text(rideLogText_, text);
 }
 
@@ -1449,20 +1471,34 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_center(fitSaveLabel_);
   // 开始/停止记录按钮（本地入口，无需依赖网页）。
   recordButton_ = lv_btn_create(rideLogPanel_);
-  lv_obj_set_size(recordButton_, 224, 30);
+  lv_obj_set_size(recordButton_, 108, 34);
   lv_obj_set_style_pad_all(recordButton_, 4, 0);
   lv_obj_set_style_radius(recordButton_, 6, 0);
   lv_obj_set_style_bg_color(recordButton_, lv_color_make(22, 163, 74), 0);
   lv_obj_align(recordButton_, LV_ALIGN_TOP_LEFT, 8, 50);
-  lv_obj_add_event_cb(recordButton_, onRecordToggle, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(recordButton_, onRecordToggle, LV_EVENT_CLICKED, (void *)1);
   recordLabel_ = lv_label_create(recordButton_);
-  lv_label_set_text(recordLabel_, LV_SYMBOL_PLAY " RECORD");
+  lv_label_set_text(recordLabel_, LV_SYMBOL_PLAY " START");
   lv_obj_set_style_text_color(recordLabel_, lv_color_white(), 0);
   lv_obj_set_style_text_font(recordLabel_, &lv_font_montserrat_14, 0);
   lv_obj_center(recordLabel_);
+  stopRecordButton_ = lv_btn_create(rideLogPanel_);
+  lv_obj_set_size(stopRecordButton_, 108, 34);
+  lv_obj_align(stopRecordButton_, LV_ALIGN_TOP_LEFT, 124, 50);
+  lv_obj_set_style_pad_all(stopRecordButton_, 4, 0);
+  lv_obj_set_style_bg_color(stopRecordButton_, lv_color_make(220, 38, 38), 0);
+  lv_obj_add_event_cb(stopRecordButton_, onRecordToggle, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *stopLabel = lv_label_create(stopRecordButton_);
+  lv_label_set_text(stopLabel, LV_SYMBOL_STOP " STOP");
+  lv_obj_set_style_text_font(stopLabel, &lv_font_montserrat_14, 0);
+  lv_obj_center(stopLabel);
+  lv_obj_add_state(stopRecordButton_, LV_STATE_DISABLED);
+  rideDurationLabel_ = lv_label_create(rideLogPanel_);
+  lv_obj_align(rideDurationLabel_, LV_ALIGN_TOP_LEFT, 12, 90);
+  lv_obj_set_style_text_font(rideDurationLabel_, &lv_font_montserrat_14, 0);
   lv_obj_t *scroll = lv_obj_create(rideLogPanel_);
-  lv_obj_set_size(scroll, 224, 220);
-  lv_obj_align(scroll, LV_ALIGN_TOP_LEFT, 8, 84);
+  lv_obj_set_size(scroll, 224, 192);
+  lv_obj_align(scroll, LV_ALIGN_TOP_LEFT, 8, 112);
   lv_obj_set_style_pad_all(scroll, 6, 0);
   lv_obj_set_scroll_dir(scroll, LV_DIR_VER);
   rideLogText_ = lv_label_create(scroll);
@@ -1761,7 +1797,7 @@ void DisplayLcd::refreshLanguage() {
   const lv_font_t *titleFont = chinese_ ? &lv_font_noto_sans_sc_14
                                         : &lv_font_montserrat_16;
   lv_obj_set_style_text_font(cdaTitleLabel_, font, 0);
-  lv_label_set_text(cdaTitleLabel_, localized("EST. CdA", "估算 CdA"));
+  lv_label_set_text(cdaTitleLabel_, localized("AERO ZONE", "气动区间"));
   lv_label_set_text(windLabelTitle_, localized("WIND", "风速"));
   lv_obj_set_style_text_font(windLabelTitle_, font, 0);
   lv_label_set_text(avg3Label_, localized("POWER", "功率"));
@@ -2097,37 +2133,37 @@ void DisplayLcd::begin() {
   lv_obj_set_style_border_width(cdaCard, 0, 0);
 
   cdaTitleLabel_ = lv_label_create(cdaCard);
-  lv_label_set_text(cdaTitleLabel_, "EST. CdA");
+  lv_label_set_text(cdaTitleLabel_, "AERO ZONE");
+  lv_obj_set_width(cdaTitleLabel_, 84);
+  lv_label_set_long_mode(cdaTitleLabel_, LV_LABEL_LONG_DOT);
   lv_obj_align(cdaTitleLabel_, LV_ALIGN_TOP_LEFT, 0, 7);
   lv_obj_set_style_text_font(cdaTitleLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(cdaTitleLabel_, lv_color_make(100, 116, 139), 0);
-  lv_obj_t *cdaUnit = lv_label_create(cdaCard);
-  lv_label_set_text(cdaUnit, "m2");
-  lv_obj_align(cdaUnit, LV_ALIGN_TOP_LEFT, 0, 32);
-  lv_obj_set_style_text_font(cdaUnit, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(cdaUnit, lv_color_make(100, 116, 139), 0);
 
   cdaLabel_ = lv_label_create(cdaCard);
-  lv_label_set_text(cdaLabel_, "--");
-  lv_obj_set_width(cdaLabel_, 132);
+  lv_label_set_text(cdaLabel_, "CdA -- m2");
+  lv_obj_set_width(cdaLabel_, 116);
   lv_label_set_long_mode(cdaLabel_, LV_LABEL_LONG_CLIP);
-  lv_obj_align(cdaLabel_, LV_ALIGN_TOP_RIGHT, 0, 10);
+  lv_obj_align(cdaLabel_, LV_ALIGN_BOTTOM_RIGHT, 0, -3);
   lv_obj_set_style_text_align(cdaLabel_, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_set_style_text_font(cdaLabel_, &lv_font_montserrat_40, 0);
-  lv_obj_set_style_text_color(cdaLabel_, lv_color_make(23, 32, 51), 0);
+  lv_obj_set_style_text_font(cdaLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(cdaLabel_, lv_color_make(100, 116, 139), 0);
 
   postureLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(postureLabel_, "WAITING FOR DATA");
-  lv_obj_set_width(postureLabel_, 180);
-  lv_label_set_long_mode(postureLabel_, LV_LABEL_LONG_CLIP);
+  lv_obj_set_width(postureLabel_, 96);
+  lv_label_set_long_mode(postureLabel_, LV_LABEL_LONG_DOT);
   lv_obj_align(postureLabel_, LV_ALIGN_BOTTOM_LEFT, 0, -3);
   lv_obj_set_style_text_font(postureLabel_, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(postureLabel_, lv_color_make(100, 116, 139), 0);
 
   zoneLabel_ = lv_label_create(cdaCard);
   lv_label_set_text(zoneLabel_, "Z--");
-  lv_obj_align(zoneLabel_, LV_ALIGN_BOTTOM_RIGHT, 0, -3);
-  lv_obj_set_style_text_font(zoneLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_width(zoneLabel_, 132);
+  lv_label_set_long_mode(zoneLabel_, LV_LABEL_LONG_CLIP);
+  lv_obj_set_style_text_align(zoneLabel_, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_align(zoneLabel_, LV_ALIGN_TOP_RIGHT, 0, 10);
+  lv_obj_set_style_text_font(zoneLabel_, &lv_font_montserrat_40, 0);
   lv_obj_set_style_text_color(zoneLabel_, lv_color_make(37, 99, 235), 0);
 
   lv_obj_t *cdaDivider = lv_obj_create(screen_);
@@ -2451,12 +2487,11 @@ void DisplayLcd::update(const WindVector &w, bool windValid, float powerW,
   else if (zone == 6) { posture = "RACE TT"; postureChinese = "竞赛 TT"; }
   else if (zone == 7) { posture = "ELITE TT"; postureChinese = "精英 TT"; }
   if (cda >= 0.0f) {
-    snprintf(buf, sizeof(buf), "%.2f", cda);
+    snprintf(buf, sizeof(buf), "CdA %.2f m2", cda);
     lv_label_set_text(cdaLabel_, buf);
   } else {
-    lv_label_set_text(cdaLabel_, "--");
+    lv_label_set_text(cdaLabel_, "CdA -- m2");
   }
-  lv_obj_set_style_text_font(cdaLabel_, cda >= 10 ? &lv_font_montserrat_28 : &lv_font_montserrat_40, 0);
   lv_label_set_text(postureLabel_, localized(posture, postureChinese));
   if (zone > 0) {
     snprintf(buf, sizeof(buf), "Z%d", zone);

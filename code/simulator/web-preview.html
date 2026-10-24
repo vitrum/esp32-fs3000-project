@@ -89,6 +89,15 @@
         check(backend.requests.some(req=>req.path==='/api/control'&&req.cmd==='start'&&req.method==='POST'),'Start uses the actual POST control endpoint');
         await win.ctl('stop');
         check(text('logstate')==='已停止','Stop command updates recording state');
+        backend.send({log:false,armed:true,saving:false,duration:0});
+        check(doc.getElementById('start').disabled&&!doc.getElementById('stop').disabled&&text('logstate').includes('等待'),
+          'Waiting state disables START and enables cancellation');
+        backend.send({log:true,armed:false,duration:125000});
+        check(text('record-duration')==='00:02:05','Web displays recorder duration');
+        backend.send({log:false,saving:true,duration:125000});
+        check(doc.getElementById('start').disabled&&doc.getElementById('stop').disabled&&text('logstate')==='保存中',
+          'Saving locks both recording controls');
+        backend.send({log:false,armed:false,saving:false,duration:125000});
         doc.getElementById('settings-button').click();
         check(doc.getElementById('controls-panel').hidden,'Settings gear collapses controls');
         doc.getElementById('settings-button').click();

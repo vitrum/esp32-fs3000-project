@@ -42,7 +42,8 @@ public:
   void broadcastTelemetry(uint32_t tMs, float powerW, float cadRpm, float vgMps,
                           float vAirMps, bool windValid, float yawDeg,
                           float postureDeg, float rho, int powerSrc, bool logging,
-                          float cda = -1, uint32_t utc = 0);
+                          float cda = -1, uint32_t utc = 0, bool armed = false,
+                          bool saving = false, uint32_t durationMs = 0, uint32_t skipped = 0);
 
   void startSmartConfig();     // 主动触发配网
   void clearCredentials();     // 清除已存凭据

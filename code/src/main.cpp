@@ -16,11 +16,13 @@
 #include <errno.h>
 #include <time.h>
 #include <esp_heap_caps.h>
+#include <esp_system.h>
 
 #include "config.h"
 #include "runtime_log.h"
 #include "ble_diagnostics.h"
 #include "fit_export.h"
+#include "ride_recorder.h"
 #include "fs3000.h"
 #include "wind_probe.h"
 #include "ble_power.h"
@@ -42,6 +44,8 @@ BlePosture   posture;
 BleManager   bleManager(powerMeter, posture);
 EnvSensor    env;
 CsvLogger    logger;
+RecordingJournal recordingJournal;
+RideRecorder recorder(logger, fitExport, recordingJournal);
 DisplayLcd   lcd;
 PowerKey     powerKey;
 GpsTime      gps;
@@ -49,6 +53,7 @@ GpsTime      gps;
 // ---- 1s 窗口统计 ----
 struct Window {
   uint32_t n = 0;
+  uint32_t powerSamples = 0;
   float sumPower = 0;
   float sumVg    = 0;
   float sumVAir  = 0;
@@ -146,6 +151,14 @@ static float pmCadence() {
   return powerMeter.cadence();
 }
 
+static void armRecording() {
+  if (recorder.recording() || recorder.waiting()) return;
+  if (!recorder.requestStart()) return;
+  win = Window();
+  windWindowSamples = 0;
+  lastLogMs = lastSampleMs = millis();
+}
+
 void setup() {
   // 电源开关管理：尽早初始化以锁定供电（开机需按电池开关）
   powerKey.begin();
@@ -182,6 +195,7 @@ void setup() {
   if (!beginSdCardMutex())
     AppLog.println("[SD] Could not create SD card mutex; SD access is unavailable");
   logger.begin();                    // TF 卡（可选，失败不阻塞）
+  if (!recorder.begin()) AppLog.println("[REC] Flash cache unavailable; recording disabled");
   lcd.begin();                       // 屏幕
 
   // 音频 + 保存的音量设置
@@ -210,27 +224,34 @@ void loop() {
   bleManager.tick();
 
   // 电源开关：长按 5 秒关机（非阻塞）
-  powerKey.tick();
   static bool shutdownPending = false;
-  if (powerKey.takeShutdownRequest()) shutdownPending = true;
-  if (shutdownPending && !fitExport.busy()) {
-    static uint32_t lastLogStopAttemptMs = 0;
-    const uint32_t shutdownAttemptMs = millis();
-    if (logger.ok() && lastLogStopAttemptMs != 0 &&
-        shutdownAttemptMs - lastLogStopAttemptMs < 1000)
-      return;
-    if (!logger.stop()) {
-      lastLogStopAttemptMs = shutdownAttemptMs;
-      AppLog.println("[SD] log could not be fully synced before shutdown");
-      return;
-    }
-    lastLogStopAttemptMs = 0;
-    // 关机提示音已关闭；完成日志收尾后直接断电。
+  if (!shutdownPending) powerKey.tick();
+  if (powerKey.takeShutdownRequest() && !shutdownPending) {
+    shutdownPending = true;
+    recorder.requestShutdown(now);
+  }
+  recorder.poll(now);
+  lcd.setRecording(recorder.recording(), recorder.waiting());
+  lcd.setFitSaving(recorder.busy());
+  char recorderMessage[160];
+  if (recorder.takeMessage(recorderMessage, sizeof(recorderMessage))) {
+    AppLog.printf("[REC] %s\n", recorderMessage);
+    if (!recorder.waiting()) lcd.showFitResult(recorderMessage);
+  }
+  if (recorder.readyToPowerOff()) {
     audio.playShutdownChime();
     powerKey.shutdown();
     return;
   }
   if (powerKey.shuttingDown()) return;
+  if (shutdownPending) {
+    if (lcd.takeFitSaveRequest()) recorder.requestSave(now);
+    bool ignored;
+    lcd.takeRecordingRequest(ignored);
+    lcd.tick();
+    delay(1);
+    return;
+  }
 
   // 音频解码/播放泵 + 状态回显
   audio.tick();
@@ -243,48 +264,35 @@ void loop() {
   }
   // 回填检测结果，供 GPS 页面显示或提示未找到模块。
   lcd.setGpsModulePresent(gps.modulePresent(), gps.presenceChecked());
-  if (!fitExport.busy() && gps.timeValid())
+  if (!recorder.busy() && gps.timeValid())
     logger.setUtcReference(gps.unixSec(), now);
 #if WIFI_WEB_ENABLE
-  if (!fitExport.busy() && wifiWeb.unixSec() != 0)
+  if (!recorder.busy() && wifiWeb.unixSec() != 0)
     logger.setNetworkUtcReference(wifiWeb.unixSec(), now);
 #endif
   // 测试阶段兜底：拿不到 GPS 授时就用开机默认时间做 FIT 锚点。
   // 样本时间轴来自 millis()，相对时间正确，仅绝对日期不准。
   // 放在 GPS 之后，确保真实授时优先（useFallback 不会覆盖已存在的 GPS 时间）。
-  if (!fitExport.busy() && logger.ok() && FIT_DEFAULT_UTC != 0)
+  if (!recorder.busy() && logger.ok() && FIT_DEFAULT_UTC != 0)
     logger.useFallbackUtcReference(FIT_DEFAULT_UTC, now);
   if (lcd.takeFitSaveRequest()) {
     if (audio.playing())
       lcd.showFitResult("Stop audio before saving FIT.");
-    else if (!fitExport.busy())
-      fitExport.start(logger, gps.timeValid());
+    else recorder.requestSave(now);
   }
-  lcd.setFitSaving(fitExport.busy());
-  lcd.setRecording(logger.ok());
-  bool fitSaved;
-  char fitResult[160];
-  if (fitExport.takeResult(fitSaved, fitResult, sizeof(fitResult)))
-    lcd.showFitResult(fitResult);
 
   // 本地"开始/停止记录"入口（日志页 RECORD/STOP 按钮）。
   bool localStartRecording = false;
   if (lcd.takeRecordingRequest(localStartRecording)) {
-    if (fitExport.busy()) {
+    if (recorder.busy()) {
       AppLog.println("[FIT] recording control rejected during export");
       lcd.showFitResult("Wait for FIT export to finish.");
     } else if (localStartRecording) {
-      if (logger.start())
-        AppLog.println("[UI] recording started");
-      else
-        lcd.showFitResult("Recording could not start; check SD card.");
+      armRecording();
     } else {
-      if (logger.stop())
-        AppLog.println("[UI] recording stopped");
-      else
-        lcd.showFitResult("Recording could not stop; SD card is busy.");
+      recorder.requestStop(now);
     }
-    lcd.setRecording(logger.ok());
+    lcd.setRecording(recorder.recording(), recorder.waiting());
   }
 
   // 播放音频时暂停提交新的 CSV 批次；已排队批次仍由后台任务完成。
@@ -321,7 +329,8 @@ void loop() {
   if (lcd.takeSdListRequest(sdDirectory, sizeof(sdDirectory))) {
     static SdFileEntry files[12];
     int readError = 0;
-    size_t count = listSdFiles(sdDirectory, files, 12, &readError);
+    size_t count = recorder.busy() ? 0 : listSdFiles(sdDirectory, files, 12, &readError);
+    if (recorder.busy()) readError = EBUSY;
     char status[64] = {};
     if (readError == EOVERFLOW)
       snprintf(status, sizeof(status), "Partial list: %u item(s)", (unsigned)count);
@@ -332,7 +341,7 @@ void loop() {
   char sdPlayPath[256] = {};
   if (lcd.takeSdPlayRequest(sdPlayPath, sizeof(sdPlayPath))) {
 #if AUDIO_ENABLE
-    if (fitExport.busy()) {
+    if (recorder.busy()) {
       lcd.showFitResult("Wait for FIT export before playing audio.");
     } else {
       const bool wirelessReady = suspendWirelessForAudio();
@@ -374,18 +383,12 @@ void loop() {
 
   bool startRecording = false;
   if (wifiWeb.takeRecordingRequest(startRecording)) {
-    if (fitExport.busy()) {
+    if (recorder.busy()) {
       AppLog.println("[FIT] recording control rejected during export");
     } else if (startRecording) {
-      if (logger.start())
-        AppLog.println("[WEB] recording started");
-      else
-        AppLog.println("[WEB] recording could not start; check SD card");
+      armRecording();
     } else {
-      if (logger.stop())
-        AppLog.println("[WEB] recording stopped");
-      else
-        AppLog.println("[WEB] recording could not stop; SD card is busy");
+      recorder.requestStop(now);
     }
   }
 
@@ -409,6 +412,7 @@ void loop() {
       lastWindValidMs = now;
       ++windWindowSamples;
       win.n++;
+      if (powerMode == 3 || powerMeter.measurementValid(now)) ++win.powerSamples;
       win.sumPower   += pmPower();
       win.sumVg      += powerMeter.speed();
       win.sumVAir    += wv.vAir;
@@ -437,20 +441,26 @@ void loop() {
     }
 #endif
 
-    if (!fitExport.busy()) {
-      logger.log(now, power, pmCadence(), vg, vAir, yaw, post, rho, src);
-      lcd.updateRideLog(logger.fileName(), logger.ok(), logger.sampleCount(),
-                        logger.droppedCount(), power, pmCadence(), vg);
-    }
-
     const bool windValid = lastWindValidMs != 0 &&
                            now - lastWindValidMs <= 2000;
+    if (!recorder.busy()) {
+      const bool powerValid = win.n > 0 && win.powerSamples == win.n &&
+                              (powerMode == 3 || powerMeter.measurementValid(now));
+      FitSample sample{now, power, pmCadence(), vg, vAir, yaw, post, rho, (unsigned)src};
+      recorder.accept(sample, powerValid, windValid && win.n > 0,
+                      recorder.waiting() ? (esp_random() | 1u) : 1u);
+      lcd.setRecording(recorder.recording(), recorder.waiting());
+      lcd.updateRideLog(logger.fileName(), recorder.recording(), logger.sampleCount(),
+                        logger.droppedCount(), power, pmCadence(), vg, recorder.duration(now), recorder.skipped());
+    }
+
   lcd.update(wv, windValid, pmPower(), pmCadence(), powerMeter.speed(),
-         posture.pitchDeg(), env.rhoKgM3(), pmSrc(), logger.ok());
+         posture.pitchDeg(), env.rhoKgM3(), pmSrc(), recorder.recording());
 #if WIFI_WEB_ENABLE
     wifiWeb.broadcastTelemetry(now, power, pmCadence(), vg, vAir, windValid,
-                 yaw, post, rho, src, logger.ok(), lcd.estimatedCda(),
-                 gps.timeValid() ? gps.unixSec() : wifiWeb.unixSec());
+                 yaw, post, rho, src, recorder.recording(), lcd.estimatedCda(),
+                 gps.timeValid() ? gps.unixSec() : wifiWeb.unixSec(), recorder.waiting(),
+                 recorder.busy(), recorder.duration(now), recorder.skipped());
 #endif
 
     const char *sourceName = src == 3 ? "VIRTUAL" : (src == 1 ? "BLE" : "--");
@@ -533,7 +543,7 @@ void loop() {
       if (clockUtc == 0) clockUtc = wifiWeb.unixSec();
     #endif
       lcd.updateClock(clockUtc);
-      if (!fitExport.busy() && clockUtc != 0) {
+      if (!recorder.busy() && clockUtc != 0) {
         const time_t localTime = (time_t)((uint64_t)clockUtc + 8 * 3600);
         struct tm date;
         if (gmtime_r(&localTime, &date)) {
