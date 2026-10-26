@@ -5,6 +5,7 @@
 #include <atomic>
 
 class BleCancellation;
+static constexpr size_t kBleDeviceCapacity = 16;
 
 struct BlePowerDevice {
   char name[32];
@@ -18,6 +19,7 @@ struct BlePowerDevice {
   // 否则「用 PUBLIC 去连 RANDOM 地址」会导致对端不应答、8s 后 ETIMEOUT(code 13)。
   uint8_t addressType;
   bool postureSensor;
+  bool favorite;
 };
 
 // BLE GATT Central supporting Cycling Power, FTMS trainers, and CSC sensors.
@@ -37,6 +39,7 @@ public:
   void clearScanResults();
   void disconnect();
   bool connected() const { return s_connected; }
+  bool hasPowerService() const { return s_connected && (s_hasCyclingPower || s_hasFitnessMachine); }
   const char *lastError() const { return s_lastError; }
   float power()   const { return s_connected ? s_power.load() : 0; }
   float cadence() const { return s_connected ? s_cadence.load() : 0; }   // rpm（需功率计发送曲柄数据）

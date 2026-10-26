@@ -37,6 +37,8 @@ public:
   void showBleConnectFailure(const char *error);
   void setBleDevices(const BlePowerDevice *devices, size_t count, const char *status);
   void closePowerMeterPanels();
+  void setConnectedBle(const char *address, uint8_t type, bool powerService);
+  void updateBleFavoriteAvailability(bool connected);
   bool takeWifiEnableRequest(bool &enabled);
   bool takeWifiSetupRequest() { const bool requested = wifiSetupRequested_; wifiSetupRequested_ = false; return requested; }
   void updateWifiStatus(bool enabled, bool connected, bool provisioning,
@@ -228,7 +230,18 @@ private:
   lv_obj_t *bleLoadingBackLabel_ = nullptr;
   lv_obj_t *bleConfirmNameLabel_ = nullptr;
   lv_obj_t *bleConfirmAddressLabel_ = nullptr;
-  lv_obj_t *bleDeviceButtons_[4] = {};
+  lv_obj_t *bleDeviceButtons_[kBleDeviceCapacity] = {};
+  lv_obj_t *bleDeviceList_ = nullptr;
+  lv_obj_t *bleFavoriteButton_ = nullptr;
+  lv_obj_t *bleFavoriteLabel_ = nullptr;
+  lv_obj_t *bleFavoriteStar_ = nullptr;
+  char connectedBleAddress_[18] = {};
+  char connectedBleName_[32] = {};
+  uint8_t connectedBleType_ = 0;
+  bool connectedBlePower_ = false;
+  TouchBuffer bleFavoriteTouch_{BLE_UI_TOUCH_GUARD_MS};
+  static void onBleFavorite(lv_event_t *event);
+  void buildBleFavoriteButton();
   lv_obj_t *windLabelTitle_ = nullptr;
 
   int powerHistorySize_ = 3;
@@ -259,7 +272,7 @@ private:
   bool wifiSetupRequested_ = false;
   bool bleOperationActive_ = false;
   char requestedBleAddress_[18] = {};
-  BlePowerDevice bleDevices_[4] = {};
+  BlePowerDevice bleDevices_[kBleDeviceCapacity] = {};
   size_t bleDeviceCount_ = 0;
   size_t selectedBleDevice_ = 0;
   bool touchReady_ = false;

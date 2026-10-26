@@ -44,6 +44,7 @@ BlePowerMeter powerMeter;
 BlePosture   posture;
 BleManager   bleManager(powerMeter, posture);
 StartupConnections startupConnections;
+StartupConnections scanFavoriteConnections;
 EnvSensor    env;
 CsvLogger    logger;
 RecordingJournal recordingJournal;
@@ -162,8 +163,9 @@ static void armRecording() {
 }
 
 static void cancelStartupConnections(bool stopWifiAttempt = false) {
-  if (startupConnections.waiting()) bleManager.cancel();
+  if (startupConnections.waiting() || scanFavoriteConnections.waiting()) bleManager.cancel();
   startupConnections.cancel();
+  scanFavoriteConnections.cancel();
 #if WIFI_WEB_ENABLE
   if (stopWifiAttempt && wifiWeb.connecting()) wifiWeb.setEnabled(false);
 #else
@@ -601,6 +603,7 @@ void loop() {
 #endif
 
   if (lcd.takeBleCancelRequest()) {
+    scanFavoriteConnections.cancel();
     if (bleManager.busy()) {
       requestBleCancel();
       AppLog.println("[BLE] cancellation requested; waiting for the current operation");
@@ -614,6 +617,7 @@ void loop() {
   }
 
   if (lcd.takeBleScanRequest()) {
+    scanFavoriteConnections.cancel();
     cancelStartupConnections(true);
     manualPairingActive = true;
     powerMode = 1;
@@ -636,6 +640,7 @@ void loop() {
   bool selectedPosture = false;
   if (lcd.takeBleConnectRequest(selectedAddress, sizeof(selectedAddress),
                                 &selectedAddressType, &selectedPosture)) {
+    scanFavoriteConnections.cancel();
                   cancelStartupConnections(true);
     AppLog.printf("[BLE] user confirmed connection to %s (addressType=%u)\n",
                   selectedAddress, (unsigned)selectedAddressType);
@@ -656,6 +661,9 @@ void loop() {
 
   BleOutcome outcome;
   if (takeBleOutcome(outcome)) {
+    if (outcome.kind == BleOpKind::Connect && outcome.success && !outcome.cancelled)
+      lcd.setConnectedBle(outcome.address, outcome.addressType, powerMeter.hasPowerService());
+    if (scanFavoriteConnections.waiting()) scanFavoriteConnections.complete();
     if (startupConnections.waiting()) {
       startupConnections.complete();
       powerConnected = powerMeter.connected();
@@ -685,6 +693,7 @@ void loop() {
         snprintf(status, sizeof(status), "%u device(s) found",
                  (unsigned)outcome.deviceCount);
         lcd.setBleDevices(outcome.devices, outcome.deviceCount, status);
+        scanFavoriteConnections.beginScan(outcome.devices, outcome.deviceCount);
       } else {
         powerConnected = powerMeter.connected();
         manualPairingActive = false;
@@ -703,6 +712,7 @@ void loop() {
   uint32_t bleDisconnects = powerMeter.disconnectCount();
   if (bleDisconnects != lastBleDisconnectCount) {
     lastBleDisconnectCount = bleDisconnects;
+    if (!powerMeter.connected()) lcd.updateBleFavoriteAvailability(false);
     AppLog.printf("[BLE] power meter disconnected (total %lu)\n",
                   (unsigned long)bleDisconnects);
   }
@@ -747,6 +757,18 @@ void loop() {
                              entry.address, entry.addressType)) {
         startupConnections.complete();
         AppLog.println("[STARTUP] BLE attempt unavailable; waiting for next saved entry/manual setup");
+      }
+    }
+  }
+  if (bleAvailable && !recorder.busy()) {
+    SavedConnections::Ble entry;
+    if (scanFavoriteConnections.takeNext(wifiBusy, bleManager.busy(), powerMeter.connected(),
+                                         posture.connected(), entry)) {
+      if (enqueueBleCommand(BleOpKind::Connect, entry.address, entry.addressType)) {
+        manualPairingActive = true;
+        lcd.showBleLoading("Connecting to favorite...");
+      } else {
+        scanFavoriteConnections.complete();
       }
     }
   }

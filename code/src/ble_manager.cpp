@@ -97,7 +97,7 @@ void BleManager::work() {
       switch (command.kind) {
         case BleOpKind::Scan:
           state_.store(BleManagerState::Scanning);
-          out.success = power_.scanDevices(out.devices, 4, out.deviceCount,
+          out.success = power_.scanDevices(out.devices, kBleDeviceCapacity, out.deviceCount,
                                             BLE_OP_SCAN_DURATION_MS, &cancellation);
           if (!out.success) snprintf(out.error, sizeof(out.error), "%s", power_.lastError());
           break;

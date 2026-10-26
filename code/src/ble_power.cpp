@@ -4,6 +4,8 @@
 #include <NimBLEDevice.h>
 #include "ble_inbox.h"
 #include "ble_scan.h"
+#include "saved_connections.h"
+#include <algorithm>
 
 namespace {
 BleInbox<12> powerInbox;
@@ -347,8 +349,21 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
   };
   static Candidate candidates[32];
   size_t candidateCount = 0;
+  SavedConnections saved;
+  if (!saved.loadFavorites()) {
+    scan->clearResults();
+    setError("Could not load BLE favorites");
+    return false;
+  }
+  auto preferred = [&saved](const Candidate &left, const Candidate &right) {
+    const bool leftFavorite = saved.isFavorite(left.address, left.addressType);
+    const bool rightFavorite = saved.isFavorite(right.address, right.addressType);
+    if (leftFavorite != rightFavorite) return leftFavorite;
+    if (left.supported != right.supported) return left.supported;
+    return left.rssi > right.rssi;
+  };
 
-  for (int i = 0; i < results.getCount() && candidateCount < 32; ++i) {
+  for (int i = 0; i < results.getCount(); ++i) {
     const NimBLEAdvertisedDevice *ad = results.getDevice(i);
     if (!ad || !ad->isConnectable()) continue;
 
@@ -362,16 +377,21 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     if (name.empty() && !supported) continue;
 
     const std::string address = ad->getAddress().toString();
+    std::string lowerName = name;
+    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+             [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    if (lowerName.find("bike") != std::string::npos &&
+      !saved.isFavorite(address.c_str(), ad->getAddress().getType())) continue;
     bool alreadyAdded = false;
     for (size_t j = 0; j < candidateCount; ++j) {
-      if (address == candidates[j].address) {
+      if (address == candidates[j].address && ad->getAddress().getType() == candidates[j].addressType) {
         alreadyAdded = true;
         break;
       }
     }
     if (alreadyAdded) continue;
 
-    Candidate &c = candidates[candidateCount++];
+    Candidate c{};
     snprintf(c.name, sizeof(c.name), "%s",
              name.empty() ? "Unnamed BLE device" : name.c_str());
     snprintf(c.address, sizeof(c.address), "%s", address.c_str());
@@ -383,13 +403,14 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     c.supported = supported;
     // 关键：记录真实地址类型，供后续 connect 使用（见 BlePowerDevice 注释）。
     c.addressType = (uint8_t)ad->getAddress().getType();
+    if (candidateCount < 32) candidates[candidateCount++] = c;
+    else if (preferred(c, candidates[candidateCount - 1])) candidates[candidateCount - 1] = c;
+    std::stable_sort(candidates, candidates + candidateCount, preferred);
   }
   scan->clearResults();
 
-  for (int pass = 0; pass < 2 && count < capacity; ++pass) {
     for (size_t i = 0; i < candidateCount && count < capacity; ++i) {
       const Candidate &c = candidates[i];
-      if ((pass == 0 && !c.supported) || (pass == 1 && c.supported)) continue;
 
       BlePowerDevice &device = devices[count++];
       snprintf(device.name, sizeof(device.name), "%s", c.name);
@@ -400,8 +421,8 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
       device.speedCadence = c.speedCadence;
       device.postureSensor = c.postureSensor;
       device.addressType = c.addressType;
+      device.favorite = saved.isFavorite(c.address, c.addressType);
     }
-  }
 
   AppLog.printf("[BLE] scan complete: %u connectable device(s)\n",
                 (unsigned)count);

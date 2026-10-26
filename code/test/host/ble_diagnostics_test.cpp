@@ -342,10 +342,60 @@ static void controlTests() {
   std::cout << "PASS BLE manager/data: initialization recovery, queued cancel, queue bounds, sensor data during diagnostics pause, CPS/FTMS/CSC/posture parsing, random address, disconnect, backoff, suspend/restart, no fixed gap\n";
 }
 
+static void favoriteTests() {
+  SavedConnections saved;
+  assert(saved.loadFavorites() && saved.favoriteCount() == 0);
+  assert(!saved.setFavorite("invalid", 0, "bad", true));
+  assert(saved.setFavorite("AA:22:33:44:55:66", 1, "My Bike Power", true));
+  SavedConnections reboot;
+  assert(reboot.loadFavorites() && reboot.isFavorite("aa:22:33:44:55:66", 1));
+  assert(!reboot.isFavorite("aa:22:33:44:55:66", 0));
+  Preferences::failWrite = true;
+  assert(!reboot.setFavorite("aa:22:33:44:55:66", 1, "My Bike Power", false));
+  assert(reboot.favoriteCount() == 1);
+  Preferences::failWrite = false;
+  BlePowerMeter power;
+  power.begin("favorites-test", 2.1f);
+  auto &devices = NimBLEDevice::scan.results.devices;
+  for (unsigned index = 0; index < 48; ++index) {
+    NimBLEAdvertisedDevice device;
+    device.name = index % 2 ? "Shared bIkE" : "Sensor";
+    char address[18];
+    snprintf(address, sizeof(address), "11:22:33:44:55:%02x", index);
+    device.address = NimBLEAddress(address, 0);
+    device.services = {"0x1818"};
+    devices.push_back(device);
+  }
+  NimBLEAdvertisedDevice favorite;
+  favorite.name = "My BIKE Power";
+  favorite.address = NimBLEAddress("AA:22:33:44:55:66", 1);
+  devices.push_back(favorite);
+  BlePowerDevice output[kBleDeviceCapacity]{};
+  size_t count = 0;
+  assert(power.scanDevices(output, kBleDeviceCapacity, count, 1));
+  assert(count == kBleDeviceCapacity && output[0].favorite && output[0].addressType == 1);
+  for (size_t index = 1; index < count; ++index) assert(!strcmp(output[index].name, "Sensor"));
+  auto &bytes = Preferences::bytes["aero-links/favorites"];
+  bytes.back() ^= 1;
+  assert(!saved.loadFavorites());
+  bytes.back() ^= 1;
+  assert(reboot.setFavorite("aa:22:33:44:55:66", 1, "My Bike Power", false));
+  assert(saved.loadFavorites() && saved.favoriteCount() == 0);
+  assert(saved.setFavorite("11:22:33:44:55:01", 0, "One", true));
+  assert(saved.setFavorite("11:22:33:44:55:02", 0, "Two", true));
+  assert(saved.setFavorite("11:22:33:44:55:03", 0, "Three", true));
+  assert(saved.setFavorite("11:22:33:44:55:04", 0, "Four", true));
+  assert(!saved.setFavorite("11:22:33:44:55:05", 0, "Five", true));
+  Preferences::bytes.erase("aero-links/favorites");
+  NimBLEDevice::initialized = false;
+  std::cout << "PASS BLE favorites: reboot, CRC, write failure, capacity, typed address, bike filtering, favorite priority beyond scan capacity\n";
+}
+
 int main() {
   bufferTests();
   inboxTests();
   scannerTests();
+  favoriteTests();
   AppLog.println("history before BLE init");
   assert(!bleDiagnostics.begin());
   NimBLEDevice::initialized = true;

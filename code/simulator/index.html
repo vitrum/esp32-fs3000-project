@@ -101,6 +101,11 @@
     .dialog-close { min-height: 30px; border: 1px solid #cbd5e1; border-radius: 0; padding: 4px 8px; color: #334155; background: #e2e8f0; font-size: 11px; }
     .dialog-heading { color: #2563eb; }
     .dialog-list { display: flex; flex: 1; flex-direction: column; }
+    #ble-device-list { height: 180px; flex: none; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
+    #ble-device-list button { min-height: 44px; flex-shrink: 0; white-space: pre-line; }
+    #ble-favorite { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; text-align: left; border-radius: 0; }
+    #ble-favorite span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #ble-favorite[aria-pressed="true"] { color: #b45309; }
     .dialog-confirm { display: none; flex: 1; flex-direction: column; }
     .dialog-confirm.open { display: flex; }
     .confirm-device-name { margin: 22px 0 8px; color: #172033; font-size: 15px; font-weight: 700; }
@@ -259,6 +264,7 @@
             <button type="button" class="device-option" id="scan-again"><strong>SCAN BLE DEVICES</strong><span>Find power meters and smart trainers</span></button>
             <button type="button" class="device-option" id="virtual-source"><strong>VIRTUAL POWER METER</strong><span>Set live power and cadence</span></button>
             <button type="button" class="device-option" id="auto-source"><strong>AUTO SELECT</strong><span>Use the connected BLE power meter</span></button>
+            <button type="button" id="ble-favorite" aria-label="Favorite connected power meter" aria-pressed="false" title="Favorite connected power meter" disabled><b id="ble-favorite-star">☆</b><span id="ble-favorite-name">--</span></button>
             <p class="dialog-note">Select a device to confirm. Use the top-left back button to return.</p>
           </div>
           <div class="dialog-confirm" id="dialog-confirm">
@@ -367,7 +373,7 @@
         <input id="cadence-input" type="range" min="0" max="180" step="1" value="88">
         <label for="ble-speed-input">BLE ground speed (km/h, if provided)</label><input id="ble-speed-input" type="range" min="0" max="72" step=".1" value="0">
         <label for="ble-result">BLE operation result</label>
-        <select id="ble-result"><option value="success">Success (CPS / FTMS)</option><option value="empty">No devices found</option><option value="failure">Connection / GATT failure</option></select>
+        <select id="ble-result"><option value="success">Success (CPS / FTMS)</option><option value="crowded">Crowded scan + bike names</option><option value="empty">No devices found</option><option value="failure">Connection / GATT failure</option></select>
         <p class="help">BLE inputs are separate from virtual sliders. Connect BLE injects a connection; the screen picker performs a timed scan and confirmation. No ANT support.</p>
       </div>
       <div class="panel wide">

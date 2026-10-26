@@ -24,9 +24,11 @@
   const originalAnchorClick = HTMLAnchorElement.prototype.click;
   const originalVolume = localStorage.getItem("aero-volume");
   const originalLanguage = localStorage.getItem('aero-language');
+  const originalFavorites = localStorage.getItem('aero-ble-favorites');
   const downloads = [];
   HTMLAnchorElement.prototype.click = function () { downloads.push(this.download); };
   try {
+    localStorage.removeItem('aero-ble-favorites');
     sim.setLanguage('en');
     assert(snapshot().language === "en" && snapshot().powerSrc === 0 && !snapshot().recording, "Default: English, AUTO/no source, recording off");
     const metricRights = ["zone-reading", "wind-reading", "power-reading"].map((id) => $(id).getBoundingClientRect().right);
@@ -303,6 +305,30 @@
     sim.step(1);
     assert(snapshot().fitBytes && snapshot().duration===2 && !snapshot().fitSaving,
       "Automatic FIT completion preserves the stopped duration");
+    sim.connect();
+    sim.openMeterDialog();
+    assert(!$('ble-favorite').disabled && $('ble-favorite').getAttribute('aria-pressed') === 'false', 'Connected power meter exposes an unstarred favorite control');
+    $('ble-favorite').click();
+    assert($('ble-favorite').getAttribute('aria-pressed') === 'true' && JSON.parse(localStorage.getItem('aero-ble-favorites'))[0].address === 'C0:00:00:00:00:01', 'Starring persists the connected meter identity');
+    sim.disconnect();
+    assert($('ble-favorite').disabled, 'Disconnected device cannot be newly starred');
+    $('scan-again').click();
+    sim.step(6);
+    assert(snapshot().operation === 'connect' && $('ble-device-list').firstElementChild.textContent.startsWith('★'), 'Scan sorts the favorite first and automatically starts its connection');
+    sim.step(1);
+    assert(snapshot().bleConnected && snapshot().page === 'dashboard', 'Favorite automatically reconnects without confirmation');
+    sim.openMeterDialog();
+    $('ble-favorite').click();
+    assert(JSON.parse(localStorage.getItem('aero-ble-favorites')).length === 0, 'Unstarring removes the persisted favorite');
+    sim.disconnect();
+    change('ble-result', 'crowded');
+    $('scan-again').click();
+    sim.step(6);
+    const deviceList = $('ble-device-list');
+    assert(deviceList.children.length > 4 && deviceList.scrollHeight > deviceList.clientHeight && getComputedStyle(deviceList).overflowY === 'auto', 'BLE results show multiple rows in a bounded scrollable list');
+    assert([...deviceList.children].every((button) => !/bike/i.test(button.textContent)), 'Mixed-case bike names are filtered before the result limit');
+    deviceList.scrollTop = deviceList.scrollHeight;
+    assert(deviceList.scrollTop > 0, 'BLE list can scroll to devices beyond the first four');
     window.simulatorTestResult = { passed: results.length, failures: [], checks: results };
     output.textContent = `PASS: ${results.length} checks\n` + results.join("\n");
   } catch (error) {
@@ -314,5 +340,6 @@
     if (originalVolume === null) localStorage.removeItem("aero-volume");
     else localStorage.setItem("aero-volume", originalVolume);
     if(originalLanguage===null)localStorage.removeItem('aero-language');else localStorage.setItem('aero-language',originalLanguage);
+    if(originalFavorites===null)localStorage.removeItem('aero-ble-favorites');else localStorage.setItem('aero-ble-favorites',originalFavorites);
   }
 })();

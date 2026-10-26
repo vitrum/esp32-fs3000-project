@@ -43,6 +43,8 @@ Use other existing scenario names with `-k` as needed. Check
 | Real LVGL aero layout, Chinese glyph coverage, language-switch rendering and heap/pixels | `test/host/ui_language_test.cpp`, native build under `test/host/ui/` |
 | FS3000 calibration, wind vector, BME280, power key, disabled audio | `test/host/sensors_power_test.cpp` |
 | BLE scanning, manager, CPS/FTMS/CSC/posture parsing, diagnostics and log queues | `test/host/ble_diagnostics_test.cpp` |
+| Explicit BLE favorites, CRC persistence, name filtering and crowded-scan priority | `test/host/ble_diagnostics_test.cpp` (`ble_runtime`) |
+| Favorite-first startup/visible-scan queues, cancellation and connected-role skipping | `test/host/system_coexistence_test.cpp` (`system_storage`) |
 | GPS receiver, download pacing/errors and navigation guard | `test/host/concurrency_test.cpp` |
 | Real GPS/BLE/Wi-Fi/SD overlap, network lifecycle/routes, CSV failures and raw measurements to FIT | `test/host/system_coexistence_test.cpp` |
 | FIT export failures and session handling | `test/host/fit_export_test.cpp` |

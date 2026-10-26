@@ -37,6 +37,44 @@ Subsequent builds use Docker layers and the pip download cache.
 
 ## Coverage And Boundaries
 
+### BLE Favorites And Discovery
+
+The POWER SOURCE panel exposes a star toggle for the current, successfully
+connected CPS/FTMS device. CSC-only and disconnected devices cannot be added.
+Up to four explicit favorites persist in the separate CRC-checked
+`aero-links/favorites` NVS key; existing `profiles` Wi-Fi/BLE history is unchanged.
+Full storage or a write failure preserves previous favorites and reports failure.
+Opening POWER SOURCE again allows the connected device to be unstarred.
+
+Startup tries favorites before connection history, without duplicate attempts.
+Manual discovery returns up to 16 devices in a vertically scrollable region
+with fixed header/actions. Favorites sort before supported sensor services,
+then RSSI. Each visible favorite gets one automatic connection attempt if no
+power device is connected; cancellation stops the queue. Already-connected
+power devices are never replaced merely because a scan completed.
+
+Three filtering approaches were evaluated: name-only blocking (simple but
+false positives), service-only admission (misses incomplete advertisements),
+and explicit favorites plus name filtering and service priority (selected).
+Non-favorite connectable advertisements containing ASCII `bike`, ignoring case,
+are hidden before result truncation. Explicit favorites override this rule.
+Named unknown devices remain manually selectable for compatibility.
+
+Sources: [Bluetooth SIG Assigned Numbers](https://www.bluetooth.com/specifications/assigned-numbers/)
+and [NimBLE 2.5.1 advertised-device API](https://h2zero.github.io/NimBLE-Arduino/class_nim_b_l_e_advertised_device.html).
+Service UUIDs identify profiles, not shared-bike ownership; local names are
+self-declared and may be absent. This is a noise filter, not a complete or
+authenticated shared-bike detector. No speculative manufacturer/MAC blacklist
+is applied. Unbonded devices that rotate private addresses may need rediscovery.
+
+`ble_runtime` tests production NVS/scan behavior for reboot, CRC corruption,
+write failure, capacity, typed addresses, mixed-case names and a favorite after
+48 other advertisements. `system_storage` covers startup priority, serialized
+scan favorites, already-connected skipping and cancellation. Browser regression
+adds star persistence, automatic reconnect, unstar, filtering and list scrolling.
+RF discovery, physical touch scrolling and actual NVS power cycling still need
+a board; no automatic flashing is performed.
+
 ### Dashboard And Live Web UI
 
 The 240x320 dashboard uses unframed metric rows, horizontal separators and a

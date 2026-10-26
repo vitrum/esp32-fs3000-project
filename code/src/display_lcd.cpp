@@ -2,6 +2,7 @@
 #include "runtime_log.h"
 #include "config.h"
 #include <cstring>
+#include "saved_connections.h"
 
 extern const lv_font_t lv_font_noto_sans_sc_14;
 
@@ -387,6 +388,47 @@ void DisplayLcd::refreshWifiStatus() {
     lv_label_set_text(settingsWifiStatus_, status);
 }
 
+void DisplayLcd::onBleFavorite(lv_event_t *) {
+  if (!g_display || !g_display->connectedBlePower_ ||
+      !g_display->bleFavoriteTouch_.accept(millis())) return;
+  SavedConnections saved;
+  if (!saved.loadFavorites() || !saved.setFavorite(g_display->connectedBleAddress_,
+      g_display->connectedBleType_, g_display->connectedBleName_,
+      !saved.isFavorite(g_display->connectedBleAddress_, g_display->connectedBleType_))) {
+    g_display->showBleConnectFailure("Could not save favorite (limit 4). Existing favorites retained.");
+    return;
+  }
+  g_display->updateBleFavoriteAvailability(true);
+}
+
+void DisplayLcd::setConnectedBle(const char *address, uint8_t type, bool powerService) {
+  snprintf(connectedBleAddress_, sizeof(connectedBleAddress_), "%s", address);
+  snprintf(connectedBleName_, sizeof(connectedBleName_), "%s", address);
+  connectedBleType_ = type;
+  for (size_t index = 0; index < bleDeviceCount_; ++index)
+    if (!strcasecmp(bleDevices_[index].address, address) && bleDevices_[index].addressType == type)
+      snprintf(connectedBleName_, sizeof(connectedBleName_), "%s", bleDevices_[index].name);
+  SavedConnections saved;
+  if (saved.loadFavorites())
+    for (uint8_t index = 0; index < saved.favoriteCount(); ++index)
+      if (!strcasecmp(saved.favorite(index)->device.address, address) && saved.favorite(index)->device.addressType == type)
+        snprintf(connectedBleName_, sizeof(connectedBleName_), "%s", saved.favorite(index)->name);
+  connectedBlePower_ = powerService;
+  updateBleFavoriteAvailability(powerService);
+}
+
+void DisplayLcd::updateBleFavoriteAvailability(bool connected) {
+  if (!bleFavoriteButton_) return;
+  connectedBlePower_ = connectedBlePower_ && connected;
+  if (connectedBlePower_) lv_obj_clear_state(bleFavoriteButton_, LV_STATE_DISABLED);
+  else lv_obj_add_state(bleFavoriteButton_, LV_STATE_DISABLED);
+  lv_label_set_text(bleFavoriteLabel_, connectedBleAddress_[0] ? connectedBleName_ : "--");
+  SavedConnections saved;
+  const bool favorite = saved.loadFavorites() && saved.isFavorite(connectedBleAddress_, connectedBleType_);
+  lv_obj_set_style_line_color(bleFavoriteStar_, favorite ? lv_color_make(217, 119, 6) : lv_color_make(100, 116, 139), 0);
+  lv_obj_set_style_line_width(bleFavoriteStar_, favorite ? 4 : 2, 0);
+}
+
 void DisplayLcd::onBleSelected(lv_event_t *) {
   if (!g_display) return;
   if (!g_display->bleScanTouch_.accept(millis())) return;
@@ -760,6 +802,28 @@ void DisplayLcd::showGpsPanel() {
   lv_obj_clear_flag(gpsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
+void DisplayLcd::buildBleFavoriteButton() {
+  bleFavoriteButton_ = lv_btn_create(powerSourcePanel_);
+  lv_obj_set_size(bleFavoriteButton_, 208, 44);
+  lv_obj_align(bleFavoriteButton_, LV_ALIGN_TOP_LEFT, 16, 244);
+  lv_obj_set_style_radius(bleFavoriteButton_, 0, 0);
+  lv_obj_set_style_pad_all(bleFavoriteButton_, 8, 0);
+  lv_obj_set_style_bg_color(bleFavoriteButton_, lv_color_make(226, 232, 240), 0);
+  lv_obj_add_event_cb(bleFavoriteButton_, onBleFavorite, LV_EVENT_CLICKED, nullptr);
+  bleFavoriteStar_ = lv_line_create(bleFavoriteButton_);
+  static const lv_point_t starPoints[] = {{12, 0}, {15, 8}, {24, 9}, {17, 15}, {20, 24},
+                                         {12, 19}, {4, 24}, {7, 15}, {0, 9}, {9, 8}, {12, 0}};
+  lv_line_set_points(bleFavoriteStar_, starPoints, 11);
+  lv_obj_align(bleFavoriteStar_, LV_ALIGN_LEFT_MID, 0, 0);
+  bleFavoriteLabel_ = lv_label_create(bleFavoriteButton_);
+  lv_obj_set_width(bleFavoriteLabel_, 150);
+  lv_label_set_long_mode(bleFavoriteLabel_, LV_LABEL_LONG_DOT);
+  lv_obj_align(bleFavoriteLabel_, LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_set_style_text_font(bleFavoriteLabel_, &lv_font_noto_sans_sc_14, 0);
+  lv_obj_set_style_text_color(bleFavoriteLabel_, lv_color_make(30, 41, 59), 0);
+  updateBleFavoriteAvailability(false);
+}
+
 void DisplayLcd::showSettings() {
   if (!settingsPanel_) return;
   if (rideLogPanel_) lv_obj_add_flag(rideLogPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -1121,6 +1185,7 @@ void DisplayLcd::buildPowerSourcePanel() {
     lv_obj_center(powerSourceOptions_[i]);
     y += heights[i] + 6;
   }
+  buildBleFavoriteButton();
   lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
 
   buildVirtualPowerPanel();
@@ -1167,12 +1232,20 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_text_color(bleStatusLabel_, lv_color_make(37, 99, 235), 0);
   lv_obj_align(bleStatusLabel_, LV_ALIGN_TOP_LEFT, 12, 116);
 
-  for (size_t i = 0; i < 4; ++i) {
-    bleDeviceButtons_[i] = lv_btn_create(bleDevicePanel_);
-    lv_obj_set_size(bleDeviceButtons_[i], 216, 38);
+  bleDeviceList_ = lv_obj_create(bleDevicePanel_);
+  lv_obj_set_size(bleDeviceList_, 224, 180);
+  lv_obj_align(bleDeviceList_, LV_ALIGN_TOP_LEFT, 8, 136);
+  lv_obj_set_style_pad_all(bleDeviceList_, 0, 0);
+  lv_obj_set_style_border_width(bleDeviceList_, 0, 0);
+  lv_obj_set_style_bg_opa(bleDeviceList_, LV_OPA_TRANSP, 0);
+  lv_obj_set_scroll_dir(bleDeviceList_, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(bleDeviceList_, LV_SCROLLBAR_MODE_AUTO);
+  for (size_t i = 0; i < kBleDeviceCapacity; ++i) {
+    bleDeviceButtons_[i] = lv_btn_create(bleDeviceList_);
+    lv_obj_set_size(bleDeviceButtons_[i], 212, 44);
     lv_obj_set_style_radius(bleDeviceButtons_[i], 0, LV_PART_MAIN);
-    lv_obj_align(bleDeviceButtons_[i], LV_ALIGN_TOP_LEFT, 12,
-                 (lv_coord_t)(136 + i * 40));
+    lv_obj_align(bleDeviceButtons_[i], LV_ALIGN_TOP_LEFT, 4,
+           (lv_coord_t)(i * 48));
     lv_obj_set_style_bg_color(bleDeviceButtons_[i], lv_color_make(239, 244, 248), 0);
     lv_obj_set_style_pad_all(bleDeviceButtons_[i], 1, 0);
     lv_obj_set_style_border_color(bleDeviceButtons_[i], lv_color_make(203, 213, 225), 0);
@@ -1181,6 +1254,7 @@ void DisplayLcd::buildPowerSourcePanel() {
                         LV_EVENT_CLICKED, (void *)(uintptr_t)i);
     lv_obj_t *deviceLabel = lv_label_create(bleDeviceButtons_[i]);
     lv_obj_set_width(deviceLabel, 196);
+    lv_obj_set_height(deviceLabel, 38);
     lv_label_set_long_mode(deviceLabel, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_font(deviceLabel, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(deviceLabel, lv_color_make(30, 41, 59), 0);
@@ -1793,7 +1867,9 @@ void DisplayLcd::setLanguage(bool chinese) {
 }
 
 void DisplayLcd::refreshBleDeviceButtons() {
-  for (size_t i = 0; i < 4; ++i) {
+  SavedConnections saved;
+  saved.loadFavorites();
+  for (size_t i = 0; i < kBleDeviceCapacity; ++i) {
     lv_obj_t *button = bleDeviceButtons_[i];
     lv_obj_t *label = lv_obj_get_child(button, 0);
     if (i >= bleDeviceCount_) {
@@ -1810,8 +1886,9 @@ void DisplayLcd::refreshBleDeviceButtons() {
                                             ? localized("CSC cadence only", "CSC 仅踏频")
                                             : localized("BLE device", "蓝牙设备")));
     char text[64];
-    snprintf(text, sizeof(text), "%s\n%s  %d dBm",
-             bleDevices_[i].name, profile, bleDevices_[i].rssi);
+    bleDevices_[i].favorite = saved.isFavorite(bleDevices_[i].address, bleDevices_[i].addressType);
+    snprintf(text, sizeof(text), "%s%s\n%s  %d dBm",
+         bleDevices_[i].favorite ? "* " : "", bleDevices_[i].name, profile, bleDevices_[i].rssi);
     lv_label_set_text(label, text);
     lv_obj_clear_flag(button, LV_OBJ_FLAG_HIDDEN);
   }
@@ -1893,7 +1970,7 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_set_style_text_font(bleLoadingTitle_, titleFont, 0);
   lv_obj_set_style_text_font(bleLoadingBackLabel_, font, 0);
   lv_obj_set_style_text_font(bleLoadingLabel_, font, 0);
-  for (size_t i = 0; i < 4; ++i)
+  for (size_t i = 0; i < kBleDeviceCapacity; ++i)
     lv_obj_set_style_text_font(lv_obj_get_child(bleDeviceButtons_[i], 0), font, 0);
   AppLog.println("[LANG] 4 ble2 done");
 
@@ -2392,7 +2469,8 @@ void DisplayLcd::setBleDevices(const BlePowerDevice *devices, size_t count,
   bleDeviceTouch_.reset(millis());
   bleScanTouch_.reset(millis());
   bleScanCompleted_ = true;
-  bleDeviceCount_ = min(count, (size_t)4);
+  bleDeviceCount_ = min(count, kBleDeviceCapacity);
+  lv_obj_scroll_to_y(bleDeviceList_, 0, LV_ANIM_OFF);
   if (devices)
     for (size_t i = 0; i < bleDeviceCount_; ++i) bleDevices_[i] = devices[i];
   (void)status;

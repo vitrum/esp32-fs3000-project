@@ -23,7 +23,7 @@ struct BleOutcome {
   char address[18] = {};
   uint8_t addressType = 0xFF;
   size_t deviceCount = 0;
-  BlePowerDevice devices[4] = {};
+  BlePowerDevice devices[kBleDeviceCapacity] = {};
   char error[320] = {};
 };
 

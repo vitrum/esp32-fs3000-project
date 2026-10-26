@@ -18,9 +18,17 @@
     ["/readme.txt", {}]
   ]);
   const savedVolume = Number(localStorage.getItem("aero-volume") ?? 55);
+  function favorites() {
+    try {
+      const values = JSON.parse(localStorage.getItem('aero-ble-favorites') || '[]');
+      return Array.isArray(values) ? values.slice(0, 4) : [];
+    } catch { return []; }
+  }
+  const isFavorite = (device) => Boolean(device && favorites().some((entry) =>
+    entry.address.toLowerCase() === device.address.toLowerCase() && (entry.addressType || 0) === (device.addressType || 0)));
   const state = {
     language: localStorage.getItem('aero-language') === 'zh' ? 'zh' : 'en',
-    mode: 0, bleConnected: false, bleName: "", power: 230, cadence: 88, bleSpeed: 0,
+    mode: 0, bleConnected: false, bleName: "", connectedDevice: null, autoFavorites: [], power: 230, cadence: 88, bleSpeed: 0,
     virtualPower: 0, virtualCadence: 0, wind: 9.5, windValid: true,
     samples: [], seconds: 0, running: false, page: "dashboard",
     wifiEnabled: false, wifi: "off", wifiEnvironment: "unconfigured", wifiDeadline: 0,
@@ -121,6 +129,11 @@
     $("wind-value").textContent = `${(state.wind * 3.6).toFixed(1)} km/h`;
   }
   function render() {
+    const favorite = isFavorite(state.connectedDevice);
+    $('ble-favorite').disabled = !state.bleConnected || !state.connectedDevice || state.connectedDevice.profile.startsWith('CSC');
+    $('ble-favorite').setAttribute('aria-pressed', String(favorite));
+    $('ble-favorite-star').textContent = favorite ? '★' : '☆';
+    $('ble-favorite-name').textContent = state.connectedDevice?.name || '--';
     const cda = estimateCda();
     const zone = zoneFor(cda);
     $("power-reading").textContent = String(Math.round(power()));
@@ -290,6 +303,7 @@
   function beginBle(kind, device = null) {
     if (state.audio) return notice("BLE is suspended for audio playback. Stop playback first.");
     if (state.operation) return notice("BLE is busy. Wait for the current scan/connection, then retry.");
+    if (kind === 'scan') state.autoFavorites = [];
     state.operation = { kind, device, deadline: now() + (kind === "scan" ? 6000 : kind === "posture" ? 1500 : 900) };
     if (kind !== "posture") {
       state.manualPairing = true;
@@ -309,8 +323,9 @@
     for (const device of found) {
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = `${device.name}\n${device.profile}  ${device.rssi} dBm`;
+      button.textContent = `${isFavorite(device) ? '★ ' : ''}${device.name}\n${device.profile}  ${device.rssi} dBm`;
       button.addEventListener("click", () => {
+        state.autoFavorites = [];
         $("confirm-device-name").textContent = device.name;
         $("confirm-device-details").textContent = `${device.address}\n${device.profile}`;
         $("dialog-list").hidden = true;
@@ -333,6 +348,7 @@
   function connect() {
     if (state.audio || state.operation) return notice("BLE is busy or suspended; stop playback/wait and retry.");
     state.bleConnected = true; state.bleName = "Assioma Duo"; state.mode = 1;
+    state.connectedDevice = devices[0];
     state.manualPairing = false;
     showPage();
   }
@@ -427,13 +443,22 @@
       const operation = state.operation;
       state.operation = null;
       if (operation.cancelled) {
+        state.autoFavorites = [];
         state.manualPairing = false;
         $("loading-back").disabled = false;
         $("loading-back").textContent = "‹ BACK";
         renderDevices();
       } else if (operation.kind === "scan") {
-        state.discoveredDevices = state.bleResult === "empty" ? [] : devices;
+        const nearby = state.bleResult === 'crowded' ? [...devices, ...Array.from({length: 20}, (_, index) => ({
+          name: index % 2 ? 'Shared bIkE ' + index : 'Power Sensor ' + index,
+          profile: 'CPS', address: 'D0:00:00:00:00:' + index.toString(16).padStart(2, '0'), rssi: -65-index
+        }))] : devices;
+        state.discoveredDevices = state.bleResult === "empty" ? [] : nearby
+          .filter((device) => isFavorite(device) || !/bike/i.test(device.name))
+          .sort((left, right) => Number(isFavorite(right))-Number(isFavorite(left)) || right.rssi-left.rssi).slice(0, 16);
         renderDevices();
+        state.autoFavorites = state.bleConnected ? [] : state.discoveredDevices.filter(isFavorite);
+        if (state.autoFavorites.length) beginBle('connect', state.autoFavorites.shift());
       }
       else if (operation.kind === "connect") {
         if (state.bleResult === "failure" || operation.device.profile.startsWith("CSC")) {
@@ -442,8 +467,12 @@
           $("loading-message").textContent = operation.device.profile.startsWith("CSC")
             ? "CSC provides cadence/speed, not power. Choose a CPS or FTMS device."
             : "BLE connection/GATT discovery failed. Return to the list and retry.";
+          if (state.autoFavorites.length) beginBle('connect', state.autoFavorites.shift());
+          else state.manualPairing = false;
         } else {
           state.bleConnected = true; state.bleName = operation.device.name;
+          state.connectedDevice = operation.device;
+          state.autoFavorites = [];
           state.manualPairing = false;
           showPage();
         }
@@ -536,11 +565,24 @@
   $("scan-again").onclick = $("ble-scan-again").onclick = () => beginBle("scan");
   $("ble-result").onchange = (event) => { state.bleResult = event.target.value; };
   $("confirm-connect").onclick = () => { if (selectedDevice) beginBle("connect", selectedDevice); };
+  $('ble-favorite').onclick = () => {
+    if ($('ble-favorite').disabled) return;
+    const entries = favorites();
+    const favorite = isFavorite(state.connectedDevice);
+    if (!favorite && entries.length === 4) return notice('Favorite limit is 4.');
+    try {
+      localStorage.setItem('aero-ble-favorites', JSON.stringify(favorite
+        ? entries.filter((entry) => entry.address !== state.connectedDevice.address || (entry.addressType || 0) !== (state.connectedDevice.addressType || 0))
+        : [...entries, state.connectedDevice]));
+    } catch { return notice('Could not save favorite.'); }
+    render();
+  };
   $("dialog-close").onclick = () => {
     if ($("dialog-confirm").classList.contains("open")) renderDevices();
     else { state.manualPairing = false; showPage("settings-dialog"); }
   };
   $("loading-back").onclick = () => {
+    state.autoFavorites = [];
     if (state.operation) {
       state.operation.cancelled = true;
       state.operation.deadline = now() + 200;

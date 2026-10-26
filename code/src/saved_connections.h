@@ -4,6 +4,7 @@
 #include <esp_rom_crc.h>
 #include <cstring>
 #include <cctype>
+#include <strings.h>
 
 class SavedConnections {
 public:
@@ -11,6 +12,69 @@ public:
   enum class Role : uint8_t { Power, Posture };
   struct Wifi { char ssid[33]; char password[65]; };
   struct Ble { char address[18]; uint8_t addressType; Role role; };
+  struct Favorite { Ble device; char name[32]; };
+
+  bool loadFavorites() {
+    Preferences prefs;
+    if (!prefs.begin("aero-links", false)) return false;
+    Favorites next{};
+    const size_t length = prefs.getBytesLength("favorites");
+    const bool read = length == 0 || (length == sizeof(next) &&
+        prefs.getBytes("favorites", &next, sizeof(next)) == sizeof(next));
+    prefs.end();
+    if (!read) return false;
+    if (length && (next.magic != kMagic || next.count > kCapacity ||
+        next.crc != esp_rom_crc32_le(0, reinterpret_cast<const uint8_t *>(&next), offsetof(Favorites, crc)))) return false;
+    for (uint8_t index = 0; index < next.count; ++index)
+      if (!validBle(next.entries[index].device) || next.entries[index].device.role != Role::Power ||
+          !terminated(next.entries[index].name)) return false;
+    favorites_ = next;
+    return true;
+  }
+  uint8_t favoriteCount() const { return favorites_.count; }
+  const Favorite *favorite(uint8_t index) const {
+    return index < favoriteCount() ? &favorites_.entries[index] : nullptr;
+  }
+  bool isFavorite(const char *address, uint8_t type) const {
+    if (!address) return false;
+    for (uint8_t index = 0; index < favoriteCount(); ++index)
+      if (favorites_.entries[index].device.addressType == type &&
+          !strcasecmp(favorites_.entries[index].device.address, address)) return true;
+    return false;
+  }
+  bool setFavorite(const char *address, uint8_t type, const char *name, bool enabled) {
+    if (!address || !name || strlen(address) != 17 || strlen(name) >= 32) return false;
+    Favorite entry{};
+    snprintf(entry.device.address, sizeof(entry.device.address), "%s", address);
+    entry.device.addressType = type;
+    entry.device.role = Role::Power;
+    snprintf(entry.name, sizeof(entry.name), "%s", name);
+    if (!validBle(entry.device)) return false;
+    Favorites next = favorites_;
+    uint8_t found = next.count;
+    for (uint8_t index = 0; index < next.count; ++index)
+      if (next.entries[index].device.addressType == type &&
+          !strcasecmp(next.entries[index].device.address, address)) { found = index; break; }
+    if (enabled) {
+      if (found == next.count) {
+        if (next.count == kCapacity) return false;
+        ++next.count;
+      }
+      next.entries[found] = entry;
+    } else {
+      if (found == next.count) return true;
+      for (uint8_t index = found; index + 1 < next.count; ++index) next.entries[index] = next.entries[index + 1];
+      next.entries[--next.count] = Favorite{};
+    }
+    next.magic = kMagic;
+    next.crc = esp_rom_crc32_le(0, reinterpret_cast<const uint8_t *>(&next), offsetof(Favorites, crc));
+    Preferences prefs;
+    if (!prefs.begin("aero-links", false)) return false;
+    const bool written = prefs.putBytes("favorites", &next, sizeof(next)) == sizeof(next);
+    prefs.end();
+    if (written) favorites_ = next;
+    return written;
+  }
 
   bool load() {
     Preferences prefs;
@@ -82,6 +146,14 @@ public:
   }
 
 private:
+  struct Favorites {
+    uint32_t magic;
+    uint8_t count;
+    uint8_t reserved[3];
+    Favorite entries[kCapacity];
+    uint32_t crc;
+  };
+  Favorites favorites_{};
   struct Store {
     uint32_t magic, version;
     uint8_t wifiCount, bleCount;
