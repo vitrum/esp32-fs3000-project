@@ -45,6 +45,7 @@ Use other existing scenario names with `-k` as needed. Check
 | BLE scanning, manager, CPS/FTMS/CSC/posture parsing, diagnostics and log queues | `test/host/ble_diagnostics_test.cpp` |
 | Explicit BLE favorites, CRC persistence, name filtering and crowded-scan priority | `test/host/ble_diagnostics_test.cpp` (`ble_runtime`) |
 | Favorite-first startup/visible-scan queues, cancellation and connected-role skipping | `test/host/system_coexistence_test.cpp` (`system_storage`) |
+| USB SD read-only controller, sector bounds, eject and FATFS ownership exclusion | `test/host/system_coexistence_test.cpp` (`system_usb_storage`, `system_storage`) |
 | GPS receiver, download pacing/errors and navigation guard | `test/host/concurrency_test.cpp` |
 | Real GPS/BLE/Wi-Fi/SD overlap, network lifecycle/routes, CSV failures and raw measurements to FIT | `test/host/system_coexistence_test.cpp` |
 | FIT export failures and session handling | `test/host/fit_export_test.cpp` |

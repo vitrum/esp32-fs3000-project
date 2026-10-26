@@ -1528,16 +1528,28 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_center(settingsGpsButtonLabel_);
 
   lv_obj_t *logs = lv_btn_create(settingsPanel_);
-  lv_obj_set_size(logs, 208, 42);
+  lv_obj_set_size(logs, 96, 52);
   lv_obj_align(logs, LV_ALIGN_TOP_LEFT, 16, 246);
   lv_obj_set_style_radius(logs, 8, 0);
   lv_obj_set_style_bg_color(logs, lv_color_make(51, 65, 85), 0);
   lv_obj_add_event_cb(logs, onRideLogButton, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *logsLabel = lv_label_create(logs);
   rideLogEntryLabel_ = logsLabel;
-  lv_label_set_text(logsLabel, LV_SYMBOL_LIST " RIDE LOG");
+  lv_label_set_text(logsLabel, LV_SYMBOL_LIST "\nLOG");
   lv_obj_set_style_text_color(logsLabel, lv_color_white(), 0);
   lv_obj_center(logsLabel);
+
+  lv_obj_t *usb = lv_btn_create(settingsPanel_);
+  lv_obj_set_size(usb, 96, 52);
+  lv_obj_align(usb, LV_ALIGN_TOP_LEFT, 128, 246);
+  lv_obj_set_style_radius(usb, 8, 0);
+  lv_obj_set_style_bg_color(usb, lv_color_make(15, 118, 110), 0);
+  lv_obj_add_event_cb(usb, onUsbStorageButton, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *usbLabel = lv_label_create(usb);
+  lv_label_set_text(usbLabel, LV_SYMBOL_USB "\nUSB");
+  lv_obj_set_style_text_font(usbLabel, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(usbLabel, lv_color_white(), 0);
+  lv_obj_center(usbLabel);
 
   rideLogPanel_ = lv_obj_create(screen_);
   lv_obj_set_size(rideLogPanel_, 240, 320);
@@ -2046,7 +2058,7 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_set_style_text_font(fitSaveLabel_, font, 0);
   lv_label_set_text(rideLogTitle_, localized("LOG", "日志"));
   lv_obj_set_style_text_font(rideLogTitle_, font, 0);
-  lv_label_set_text(rideLogEntryLabel_, localized(LV_SYMBOL_LIST " RIDE LOG", LV_SYMBOL_LIST " 记录日志"));
+  lv_label_set_text(rideLogEntryLabel_, localized(LV_SYMBOL_LIST "\nLOG", LV_SYMBOL_LIST "\n记录日志"));
   lv_obj_set_style_text_font(rideLogEntryLabel_, font, 0);
   lv_label_set_text(wifiSetupLabel_, localized("SET UP WI-FI", "配置网络"));
   lv_obj_set_style_text_font(wifiSetupLabel_, font, 0);
@@ -2478,6 +2490,70 @@ void DisplayLcd::setBleDevices(const BlePowerDevice *devices, size_t count,
   lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onUsbStorageButton(lv_event_t *) {
+  if (!g_display) return;
+  g_display->showUsbStorage(false, false, false, false);
+}
+
+void DisplayLcd::onUsbStorageBack(lv_event_t *) {
+  if (!g_display || g_display->usbStorageActive_) return;
+  lv_obj_add_flag(g_display->usbStoragePanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onUsbStorageMode(lv_event_t *event) {
+  if (!g_display || !g_display->usbStorageTouch_.accept(millis())) return;
+  const bool enabled = (uintptr_t)lv_event_get_user_data(event) == 1;
+  if (enabled == g_display->usbStorageActive_) return;
+  g_display->usbStorageError_ = false;
+  g_display->usbStorageRequested_ = enabled;
+  g_display->usbStorageRequestPending_ = true;
+}
+
+void DisplayLcd::showUsbStorage(bool ready, bool ejected, bool hostConnected, bool enabled) {
+  if (!screen_) return;
+  usbStorageActive_ = enabled;
+  if (!usbStoragePanel_) {
+    usbStoragePanel_ = lv_obj_create(screen_);
+    lv_obj_set_size(usbStoragePanel_, 240, 320);
+    lv_obj_center(usbStoragePanel_);
+    lv_obj_clear_flag(usbStoragePanel_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_radius(usbStoragePanel_, 0, 0);
+    lv_obj_set_style_border_width(usbStoragePanel_, 0, 0);
+    lv_obj_set_style_pad_all(usbStoragePanel_, 0, 0);
+    lv_obj_set_style_bg_color(usbStoragePanel_, lv_color_make(248, 250, 252), 0);
+    buildPanelHeader(usbStoragePanel_, "USB STORAGE", onUsbStorageBack);
+    usbStorageStatus_ = lv_label_create(usbStoragePanel_);
+    lv_obj_set_width(usbStorageStatus_, 216);
+    lv_obj_set_style_text_font(usbStorageStatus_, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(usbStorageStatus_, lv_color_make(30, 41, 59), 0);
+    lv_obj_align(usbStorageStatus_, LV_ALIGN_TOP_LEFT, 12, 76);
+    for (unsigned index = 0; index < 2; ++index) {
+      usbStorageButtons_[index] = lv_btn_create(usbStoragePanel_);
+      lv_obj_set_size(usbStorageButtons_[index], 100, 44);
+      lv_obj_align(usbStorageButtons_[index], LV_ALIGN_TOP_LEFT, 16 + index * 108, 240);
+      lv_obj_add_event_cb(usbStorageButtons_[index], onUsbStorageMode, LV_EVENT_CLICKED, (void *)(uintptr_t)index);
+      usbStorageButtonLabels_[index] = lv_label_create(usbStorageButtons_[index]);
+      lv_obj_center(usbStorageButtonLabels_[index]);
+    }
+  }
+  const char *status = !enabled ? "USB STORAGE OFF\n\nRIDING MODE" :
+      ejected ? "SD EJECTED\nREAD ONLY\n\nRECORDING OFF" :
+      !ready ? "SD UNAVAILABLE\nNO MEDIUM\n\nRECORDING OFF" :
+      hostConnected ? "SD READY\nREAD ONLY\n\nUSB CONNECTED\nRECORDING OFF" :
+                      "SD READY\nREAD ONLY\n\nUSB DISCONNECTED\nRECORDING OFF";
+  if (!usbStorageError_ && strcmp(lv_label_get_text(usbStorageStatus_), status)) lv_label_set_text(usbStorageStatus_, status);
+  for (unsigned index = 0; index < 2; ++index) {
+    lv_label_set_text(usbStorageButtonLabels_[index], index ? localized("ON", "开启") : localized("OFF", "关闭"));
+    lv_obj_set_style_text_font(usbStorageButtonLabels_[index], chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
+    if (enabled == (index == 1)) lv_obj_add_state(usbStorageButtons_[index], LV_STATE_DISABLED);
+    else lv_obj_clear_state(usbStorageButtons_[index], LV_STATE_DISABLED);
+  }
+  if (enabled) lv_obj_add_state(lv_obj_get_child(usbStoragePanel_, 0), LV_STATE_DISABLED);
+  else lv_obj_clear_state(lv_obj_get_child(usbStoragePanel_, 0), LV_STATE_DISABLED);
+  lv_obj_clear_flag(usbStoragePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(usbStoragePanel_);
 }
 
 void DisplayLcd::closePowerMeterPanels() {

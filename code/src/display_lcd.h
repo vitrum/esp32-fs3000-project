@@ -37,6 +37,17 @@ public:
   void showBleConnectFailure(const char *error);
   void setBleDevices(const BlePowerDevice *devices, size_t count, const char *status);
   void closePowerMeterPanels();
+  void showUsbStorage(bool ready, bool ejected, bool hostConnected, bool active = true);
+  void showUsbStorageError(const char *message) {
+    usbStorageError_ = true;
+    if (usbStorageStatus_) lv_label_set_text(usbStorageStatus_, message);
+  }
+  bool takeUsbStorageRequest(bool &enabled) {
+    if (!usbStorageRequestPending_) return false;
+    enabled = usbStorageRequested_;
+    usbStorageRequestPending_ = false;
+    return true;
+  }
   void setConnectedBle(const char *address, uint8_t type, bool powerService);
   void updateBleFavoriteAvailability(bool connected);
   bool takeWifiEnableRequest(bool &enabled);
@@ -103,6 +114,18 @@ private:
   Arduino_GFX     *_gfx = nullptr;
 
   lv_obj_t *screen_ = nullptr;
+  lv_obj_t *usbStoragePanel_ = nullptr;
+  lv_obj_t *usbStorageStatus_ = nullptr;
+  lv_obj_t *usbStorageButtons_[2] = {};
+  lv_obj_t *usbStorageButtonLabels_[2] = {};
+  bool usbStorageRequestPending_ = false;
+  bool usbStorageRequested_ = false;
+  bool usbStorageActive_ = false;
+  bool usbStorageError_ = false;
+  TouchBuffer usbStorageTouch_{BLE_UI_TOUCH_GUARD_MS};
+  static void onUsbStorageButton(lv_event_t *event);
+  static void onUsbStorageBack(lv_event_t *event);
+  static void onUsbStorageMode(lv_event_t *event);
   float estimatedCda_ = -1;
   AeroZoneView aeroZone_;
   lv_obj_t *windLabel_ = nullptr;

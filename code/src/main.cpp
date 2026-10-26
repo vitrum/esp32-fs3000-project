@@ -35,9 +35,12 @@
 #include "power_key.h"
 #include "audio.h"
 #include "gps_time.h"
+#include "usb_sd_storage.h"
 #if WIFI_WEB_ENABLE
 #include "wifi_web.h"
 #endif
+
+extern "C" bool tud_msc_is_writable_cb(uint8_t) { return false; }
 
 FS3000       windSensor;
 BlePowerMeter powerMeter;
@@ -45,6 +48,7 @@ BlePosture   posture;
 BleManager   bleManager(powerMeter, posture);
 StartupConnections startupConnections;
 StartupConnections scanFavoriteConnections;
+UsbSdStorage usbSdStorage;
 EnvSensor    env;
 CsvLogger    logger;
 RecordingJournal recordingJournal;
@@ -173,11 +177,39 @@ static void cancelStartupConnections(bool stopWifiAttempt = false) {
 #endif
 }
 
+static void changeUsbStorageMode(bool enabled) {
+  if (enabled) {
+    if (!recorder.safeToRestartForUsb() || fitExport.busy() || audio.playing()) {
+      lcd.showUsbStorageError("Stop recording and finish SAVE FIT/audio before enabling USB.");
+      return;
+    }
+    if (logger.ok() && !logger.stop()) {
+      lcd.showUsbStorageError("SD sync failed. USB mode unchanged.");
+      return;
+    }
+  } else {
+    const bool hadMedium = usbSdStorage.ready();
+    usbSdStorage.eject();
+    if (hadMedium && !lockSdCard(pdMS_TO_TICKS(2000))) {
+      lcd.showUsbStorageError("USB read still active. Retry OFF.");
+      return;
+    }
+    if (hadMedium) unlockSdCard();
+  }
+  if (!UsbSdSetting::save(enabled)) {
+    lcd.showUsbStorageError("Could not save USB mode. Retry.");
+    return;
+  }
+  AppLog.printf("[USB-SD] manual mode %s; restarting with exclusive SD ownership\n", enabled ? "ON" : "OFF");
+  ESP.restart();
+}
+
 void setup() {
   // 电源开关管理：尽早初始化以锁定供电（开机需按电池开关）
   powerKey.begin();
 
   Serial.begin(115200);
+  Serial.enableReboot(true);
   if (!AppLog.begin()) Serial.println("[LOG] output task unavailable");
   delay(200);
   AppLog.println("\n== Aero Probe (single FS3000 + touch UI + BLE PM) ==");
@@ -187,6 +219,13 @@ void setup() {
                 (unsigned)ESP.getPsramSize(),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+
+  pinMode(PIN_BOOT_KEY, INPUT_PULLUP);
+  if (usbSdStorage.beginAtBoot()) {
+    lcd.begin();
+    lcd.showUsbStorage(usbSdStorage.ready(), usbSdStorage.ejected(), usbSdStorage.hostConnected());
+    return;
+  }
 
   // GPS UART 先启动并进行限时、非阻塞探测；不等待定位。
   // 放在可能耗时的 SD 初始化之前，避免错过模块输出的 NMEA 数据。
@@ -240,6 +279,21 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
+  if (usbSdStorage.exclusive()) {
+    bool enabled;
+    if (lcd.takeUsbStorageRequest(enabled)) changeUsbStorageMode(enabled);
+    powerKey.tick();
+    if (powerKey.takeShutdownRequest()) {
+      usbSdStorage.eject();
+      powerKey.shutdown();
+    }
+    if (!powerKey.shuttingDown()) {
+      lcd.showUsbStorage(usbSdStorage.ready(), usbSdStorage.ejected(), usbSdStorage.hostConnected());
+      lcd.tick();
+    }
+    delay(5);
+    return;
+  }
   bleManager.tick();
 
   // 电源开关：长按 5 秒关机（非阻塞）
@@ -263,6 +317,8 @@ void loop() {
     return;
   }
   if (powerKey.shuttingDown()) return;
+  bool usbEnabled;
+  if (!shutdownPending && lcd.takeUsbStorageRequest(usbEnabled)) changeUsbStorageMode(usbEnabled);
   if (shutdownPending) {
     if (lcd.takeFitSaveRequest()) recorder.requestSave(now);
     bool ignored;

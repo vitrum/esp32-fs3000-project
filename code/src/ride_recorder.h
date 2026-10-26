@@ -144,6 +144,7 @@ public:
   bool restoring() const { return phase_ == Phase::Restoring; }
   bool busy() const { return restoring() || phase_ == Phase::Saving; }
   bool readyToPowerOff() const { return shutdown_ && phase_ == Phase::Idle && !journal_.pending(); }
+  bool safeToRestartForUsb() const { return !waiting() && !recording() && !busy() && !journal_.pending(); }
   uint32_t duration(uint32_t now) const { return recording() ? now - startedMs_ : restoring() ? 0 : duration_; }
   uint32_t skipped() const { return skipped_; }
   bool takeMessage(char *out, size_t size) {

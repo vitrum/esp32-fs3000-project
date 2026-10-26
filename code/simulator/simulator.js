@@ -27,6 +27,7 @@
   const isFavorite = (device) => Boolean(device && favorites().some((entry) =>
     entry.address.toLowerCase() === device.address.toLowerCase() && (entry.addressType || 0) === (device.addressType || 0)));
   const state = {
+    usbStorage: localStorage.getItem('aero-usb-mode') === '1',
     language: localStorage.getItem('aero-language') === 'zh' ? 'zh' : 'en',
     mode: 0, bleConnected: false, bleName: "", connectedDevice: null, autoFavorites: [], power: 230, cadence: 88, bleSpeed: 0,
     virtualPower: 0, virtualCadence: 0, wind: 9.5, windValid: true,
@@ -85,7 +86,7 @@
     for(const [selector,en,cn] of [
       ['.cda-title','AERO ZONE','气动区间'],['#wind-title','WIND','风速'],['.avg3','POWER','功率'],
       ['#language-page p','Choose interface language','选择界面语言'],
-      ['#settings-log','☷ RIDE LOG','☷ 记录日志'],['#settings-meter','⏻ POWER','⏻ 功率'],
+      ['#settings-log','☷\nLOG','☷\n记录日志'],['#settings-meter','⏻ POWER','⏻ 功率'],
       ['#settings-language','☷ LANG','☷ 语言'],['#settings-sound','♫ SOUND','♫ 声音'],
       ['#settings-sd','▣ SD/MUSIC','▣ SD/音乐'],['#wifi-setup','SET UP WI-FI','配置网络']
     ]){const element=document.querySelector(selector);if(element)element.textContent=zh?cn:en;}
@@ -129,6 +130,12 @@
     $("wind-value").textContent = `${(state.wind * 3.6).toFixed(1)} km/h`;
   }
   function render() {
+    $('usb-on').disabled = state.usbStorage;
+    $('usb-off').disabled = !state.usbStorage;
+    $('usb-back').disabled = state.usbStorage;
+    $('usb-on').textContent = state.language === 'zh' ? '开启' : 'ON';
+    $('usb-off').textContent = state.language === 'zh' ? '关闭' : 'OFF';
+    $('usb-status').textContent = state.usbStorage ? 'SD READY\nREAD ONLY\n\nUSB CONNECTED\nRECORDING OFF' : 'USB STORAGE OFF\n\nRIDING MODE';
     const favorite = isFavorite(state.connectedDevice);
     $('ble-favorite').disabled = !state.bleConnected || !state.connectedDevice || state.connectedDevice.profile.startsWith('CSC');
     $('ble-favorite').setAttribute('aria-pressed', String(favorite));
@@ -231,6 +238,7 @@
     state.sessionRecords.push(record);
   }
   function recording(enabled, local = false) {
+    if (state.usbStorage) return notice('Recording unavailable in USB storage mode.');
     if (state.fitSaving) return notice("Wait for FIT export before recording control.");
     if (!local && state.wifi !== "connected") return notice("Web command unavailable: connect Wi-Fi first.");
     if (!state.sdReady || state.sdBusy) return notice("SD card unavailable or busy. Recording state unchanged.");
@@ -508,6 +516,20 @@
     $(`settings-${button}`).onclick = () => showPage(page);
   $("settings-sd").onclick = () => browse("/");
   $("settings-log").onclick = () => showPage("ride-log-page");
+  $('settings-usb').onclick = () => showPage('usb-page');
+  const changeUsbMode = (enabled) => {
+    if (enabled && (state.recording || state.armed || state.fitSaving || state.audio))
+      return notice('Stop recording and finish SAVE FIT/audio before enabling USB.');
+    try { localStorage.setItem('aero-usb-mode', enabled ? '1' : '0'); }
+    catch { return notice('Could not save USB mode.'); }
+    state.usbStorage = enabled;
+    state.bleConnected = false; state.postureConnected = false;
+    state.wifiEnabled = false; state.wifi = 'off'; state.operation = null;
+    state.autoFavorites = []; state.running = false;
+    showPage(enabled ? 'usb-page' : 'dashboard');
+  };
+  $('usb-on').onclick = () => changeUsbMode(true);
+  $('usb-off').onclick = () => changeUsbMode(false);
   $("log-status").onclick = () => showPage("ride-log-page");
   function saveFit(auto = false) {
     if (state.fitSaving) return;
@@ -631,7 +653,7 @@
         power: power(), cadence: cadence(), wind: state.wind * 3.6, windMps: state.wind, windValid: state.windValid,
         cda: estimateCda(), zone: zoneFor(estimateCda())?.zone ?? null,
         average3: average(state.samples.slice(-3)), average60: average(state.samples), sampleCount: state.samples.length,
-        seconds: state.seconds, page: state.page, language: state.language, volume: state.volume,
+        seconds: state.seconds, page: state.page, language: state.language, volume: state.volume, usbStorage: state.usbStorage,
         wifi: state.wifi, gps: state.gps, gpsSpeedMps: state.gpsSpeed, audio: state.audio,
         networkTime: state.networkTime, trustedTime: state.trustedTime,
         bleConnected: state.bleConnected, postureConnected: state.postureConnected, operation: state.operation?.kind ?? null,
@@ -647,4 +669,5 @@
   applyLanguage();
   syncInputs();
   render();
+  if (state.usbStorage) showPage('usb-page');
 })();

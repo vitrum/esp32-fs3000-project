@@ -9,6 +9,7 @@
 #include <atomic>
 
 bool beginSdCardMutex();
+bool claimSdCardForUsb();
 bool lockSdCard(TickType_t timeout = pdMS_TO_TICKS(1000));
 void unlockSdCard();
 

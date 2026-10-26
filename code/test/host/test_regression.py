@@ -60,6 +60,7 @@ SUITES = {
     ),
 }
 for scenario, marker in {"wifi": "PASS WiFi:", "storage": "PASS CSV storage:",
+                         "usb_storage": "PASS USB ownership:",
                          "fit": "PASS recording FIT:", "wind_power_fit": "PASS recording FIT:",
                          "stage1_ble_wind_fit": "PASS recording FIT:",
                          "stage2_gps_ble_wind_fit": "PASS recording FIT:"}.items():

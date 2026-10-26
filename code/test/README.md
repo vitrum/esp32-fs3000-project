@@ -13,7 +13,7 @@ From the workspace root:
 sh test/run.sh all
 ```
 
-This builds the test image, runs fourteen native C++ regression groups through
+This builds the test image, runs fifteen native C++ regression groups through
 `pytest-embedded`, builds the ESP32-S3 Unity firmware, and executes its ten cases
 using Espressif QEMU's ESP32-S3 machine and `pytest-embedded`'s `idf,qemu` services.
 No board is discovered, flashed, or reset by this command.
@@ -36,6 +36,91 @@ The first image build downloads tool dependencies and needs Internet access.
 Subsequent builds use Docker layers and the pip download cache.
 
 ## Coverage And Boundaries
+
+### Type-C SD Export
+
+The Waveshare schematic routes Type-C data to ESP32-S3 GPIO19/20, so its native
+USB-OTG controller can expose the SD card as a USB Mass Storage Class device.
+The production build now selects `ARDUINO_USB_MODE=0` (TinyUSB), retaining CDC
+serial alongside MSC. Arduino-ESP32 stays at 2.0.14; partition offsets do not change.
+
+Three approaches were evaluated: concurrent FATFS/host access (unsafe due to
+independent filesystem caches), exclusive read/write MSC (allows accidental
+deletion/formatting), and exclusive read-only MSC (selected for record export).
+The firmware never shares a mounted FATFS volume with the host.
+
+Usage after installing the firmware:
+
+1. USB storage defaults OFF, even with a computer connected. Open SETTINGS > USB
+  and select ON after stopping recording and completing FIT save/recovery.
+  Active/waiting recording, FIT export, pending recovery or audio prevents
+  switching. Successful SD sync and persistence trigger a restart into export.
+2. The LCD shows `USB STORAGE`, `READ ONLY` and the medium/host state. Copy existing
+  CSV/FIT files using Finder/Explorer. Host writes, deletes and formatting are
+  rejected. If the OS offers to initialize/repair an unreadable card, cancel it.
+3. Eject the disk in the computer, then select OFF on the USB settings screen.
+  Firmware hides the medium, drains an active read, saves OFF and restarts into
+  normal riding. Turning OFF is also available with no card/host connected.
+4. The explicit setting persists under `aero-ui/usb-msc`; reconnecting a cable
+  does not enable it. Ejection/read failure hides the medium but leaves USB mode
+  selected until OFF is pressed. Do not hold BOOT before reset/power-on unless
+  intentionally entering the ESP32 ROM downloader.
+
+Normal riding never switches SD ownership on cable insertion. It exposes an
+empty MSC drive (no medium) while CDC remains usable. Mode changes intentionally
+use a safe restart rather than hot-unmounting the live FATFS/writer. There is no
+automatic host detection window or BOOT override for mode selection anymore.
+
+In export mode, SD is initialized only as a raw SDSPI block device: FATFS, logger
+writer, Flash-journal recovery, recording, BLE, Wi-Fi and audio never start.
+Unreplayed Flash records remain pending until a normal riding boot. Raw reads
+use a bounded internal DMA sector buffer, handle byte offsets/cross-sector
+requests and reject out-of-range access. There is no SD write callback path.
+SCSI write protection is supplied by a strong `tud_msc_is_writable_cb` override
+in the entry point (outside TinyUSB's weak callback declarations), and WRITE10
+also returns DATA PROTECT. No automatic card formatting is used.
+
+TinyUSB CDC can acquire a different serial device name. First deployment may
+require BOOT+RESET to enter the ROM downloader, then selecting the newly
+enumerated serial port; don't erase Flash/NVS or update the partition table for
+this change. USB-Serial/JTAG debugging is not simultaneous with USB-OTG on the
+same internal PHY. The USB full-speed and SDSPI link are not USB 3.x storage.
+
+Upload recovery: `No serial data received` after a successful build means the
+ROM handshake failed, not that Flash was written or the build is corrupt.
+On the pinned PlatformIO platform the actual reset keys are
+`board_upload.before_reset`/`after_reset`, not `upload_resetmethod`. The default
+upload now performs a 1200bps CDC touch, waits for the new ROM port and uses
+`no_reset` before transfer. `Serial.enableReboot(true)` preserves that mechanism.
+A disappearing application port during the touch is expected; the ROM port has
+a different name. Verify the same chip MAC before writing.
+
+If CDC is unresponsive, hold BOOT, press/release RESET, then release BOOT and
+re-enumerate serial ports. Use the ESP32-S3 ROM with `--before no_reset --no-stub`
+at 115200. After comparing the on-device partition table with the build, an
+application-only `write_flash 0x10000 .pio/build/esp32s3/firmware.bin` preserves
+bootloader, partition table, NVS and ridecache; verify Flash afterwards. Never
+use chip erase, guessed offsets, another USB device's port or `--force` to bypass
+security checks. A ROM port already entered manually does not need another
+1200bps touch.
+
+`system_usb_storage` exercises the production export controller and real
+CsvLogger ownership guard: boot-only selection, no-medium/failed media, rejected
+writes, partial/cross-sector reads, last-byte bounds, 32-bit-overflow inputs,
+ejection, persisted ON/OFF/default/corrupt/write-failure settings, and refusal
+to mount/start recording while USB owns SD. Recording lifecycle tests also
+verify that pending recording/saving blocks USB restart.
+`system_storage` reruns the block-controller cases with ordinary storage tests.
+Production builds verify TinyUSB/SDSPI integration, but mocks/QEMU cannot prove
+USB enumeration, Mac/Windows mounting, throughput, physical SD removal or cable
+and power behavior. Hardware acceptance must verify read-only mounting, copy
+and compare file hashes, eject/unplug/replug, missing card, manual ON/OFF and
+unchanged recording after a normal boot. No board is auto-flashed.
+
+Sources: [Waveshare board schematic](https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-2.8/ESP32-S3-Touch-LCD-2.8.pdf),
+[Espressif USB MSC API](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/usb_msc.html),
+and the installed Arduino-ESP32 2.0.14 USBMSC/TinyUSB implementation (the pinned
+version's actual callbacks take precedence over newer API examples).
 
 ### BLE Favorites And Discovery
 
@@ -133,8 +218,8 @@ Unity failures, and timeouts all fail the corresponding pytest test.
 ## Functional Coverage
 
 The native groups execute production `.cpp` files, not copies of their algorithms.
-Each group includes multiple assertions and scenarios; fourteen groups do not mean
-only fourteen individual behaviors are checked. This is a coverage inventory, not a
+Each group includes multiple assertions and scenarios; fifteen groups do not mean
+only fifteen individual behaviors are checked. This is a coverage inventory, not a
 claim of 100% line/branch or end-to-end hardware coverage.
 
 | Group | Scenarios |
@@ -143,6 +228,7 @@ claim of 100% line/branch or end-to-end hardware coverage.
 | `system_coexistence` | GPS UART receiver and BLE scan/notifications stay active while an HTTP callback thread submits 64 control requests, 64 WebSocket telemetry frames are produced and 64 CSV samples are written; continued recording during paced HTTP download; SD lock contention, competing/missing downloads, Wi-Fi loss/reconnect, scan cancellation and clean GPS/BLE shutdown |
 | `system_wifi` | No credentials, preferences failure, STA initialization/start failure, low contiguous heap, mDNS failure, saved-network ordering, immediate failure/timeout progression, stop-after-list, manual reconnect, successful-connection persistence, SmartConfig timeout/manual retry/save failure, enable/disable, credential clearing, invalid controls/paths, escaped JSON and nonfinite telemetry |
 | `system_storage` | SPI/mount/task failure and startup worker retry/reuse, bounded CMD13 timeout recovery (no write-command or non-timeout retries), no automatic formatting, recording-directory file conflicts, GPS-over-fallback UTC priority, paused buffer overflow, date rollover, unique filenames, blocked writer recovery, short write/fsync recovery, session limits, repeated parent/child directory reads, empty versus missing directories, partial-list errors and recovery |
+| `system_usb_storage` | Read-only USB export controller, boot-only ownership, partial/cross-sector reads, bounds/overflow, failures/eject and real CsvLogger mount/start exclusion |
 | `system_recording_lifecycle` | Production RideRecorder and raw Flash journal: validity-gated start, valid zero samples, duplicate START, skipped windows/duration, torn session/sample/ack writes, CRC corruption, full cache, SD recovery retry, four-sample and 65-sample reboot replay, shutdown FIT and delayed cache acknowledgement; three retained CSV/FIT pairs independently decoded |
 | `system_fit` | HTTP start request, real CSV recording and writer, 65 fixed samples split at UTC midnight, asynchronous FIT export, automatic stop/flush, overwrite protection, malformed CSV rejection, retained output and independent strict FIT decoding |
 | `system_wind_power_fit` | Real FS3000 frames and CPS/FTMS notification parsing feed CSV and FIT; every wind/power value is checked independently; power boundaries, quiet/full-scale wind, checksum/short packet protection, disconnect/reconnect and protocol switch |

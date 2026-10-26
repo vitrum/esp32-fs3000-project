@@ -178,7 +178,9 @@
     .settings-grid button:nth-child(4) { background: #7c3aed; }
     .settings-grid button:nth-child(5) { background: #0f766e; }
     .settings-grid button:nth-child(6) { background: #15803d; }
-    .settings-grid #settings-log { grid-column: 1 / -1; height: 42px; background: #334155; }
+    .settings-grid #settings-log { background: #334155; }
+    .settings-grid #settings-usb { background: #0f766e; }
+    #usb-status { white-space: pre-line; }
     #fit-save { position: absolute; right: 10px; top: 12px; width: 78px; min-height: 30px; padding: 2px; background: #2563eb; color: white; }
     #ride-log-data { position: absolute; top: 112px; left: 8px; width: 224px; height: 192px; overflow: auto; padding: 6px; white-space: pre-wrap; overflow-wrap: anywhere; color: #334155; font-size: 13px; line-height: 1.5; border: 1px solid #cbd5e1; margin: 0; }
     #ride-start,#ride-stop{position:absolute;top:50px;width:108px;height:34px;min-height:0;padding:4px;color:#fff;border:0;}
@@ -301,8 +303,14 @@
             <button id="settings-sound" type="button">♫<br>SOUND</button>
             <button id="settings-sd" type="button">▣<br>SD/MUSIC</button>
             <button id="settings-gps" type="button">⌖<br>GPS</button>
-            <button id="settings-log" type="button">☷ RIDE LOG</button>
+            <button id="settings-log" type="button">☷<br>LOG</button>
+            <button id="settings-usb" type="button">↔<br>USB</button>
           </div>
+        </section>
+        <section class="screen-page" id="usb-page" hidden>
+          <header class="page-header"><button id="usb-back" data-back="settings-dialog" type="button">‹ BACK</button>USB STORAGE</header>
+          <p id="usb-status">USB STORAGE OFF</p>
+          <div class="language-choices"><button id="usb-off" type="button">OFF</button><button id="usb-on" type="button">ON</button></div>
         </section>
         <section class="screen-page" id="language-page" hidden>
           <header class="page-header"><button data-back="settings-dialog" type="button">‹ BACK</button>LANGUAGE</header>

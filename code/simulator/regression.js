@@ -25,9 +25,11 @@
   const originalVolume = localStorage.getItem("aero-volume");
   const originalLanguage = localStorage.getItem('aero-language');
   const originalFavorites = localStorage.getItem('aero-ble-favorites');
+  const originalUsbMode = localStorage.getItem('aero-usb-mode');
   const downloads = [];
   HTMLAnchorElement.prototype.click = function () { downloads.push(this.download); };
   try {
+    if (snapshot().usbStorage) $('usb-off').click();
     localStorage.removeItem('aero-ble-favorites');
     sim.setLanguage('en');
     assert(snapshot().language === "en" && snapshot().powerSrc === 0 && !snapshot().recording, "Default: English, AUTO/no source, recording off");
@@ -52,7 +54,7 @@
     change('gps-input','searching');
     assert(!/[a-z]/i.test($("power-reading").textContent) && $("screen-meter-button").getAttribute("aria-label") === "Settings", "Values have separate units and the settings icon has an accessible name");
     $("boot-key").click();
-    assert(snapshot().page === "settings-dialog" && document.querySelectorAll(".settings-grid button").length === 7, "BOOT opens six settings entries plus RIDE LOG");
+    assert(snapshot().page === "settings-dialog" && document.querySelectorAll(".settings-grid button").length === 8, "BOOT opens eight settings entries including USB");
     const cadenceBeforeLanguageChange = $("cadence-reading").textContent;
     $("settings-language").click();
     $("language-zh").click();
@@ -329,6 +331,16 @@
     assert([...deviceList.children].every((button) => !/bike/i.test(button.textContent)), 'Mixed-case bike names are filtered before the result limit');
     deviceList.scrollTop = deviceList.scrollHeight;
     assert(deviceList.scrollTop > 0, 'BLE list can scroll to devices beyond the first four');
+    sim.showPage('settings-dialog');
+    $('settings-usb').click();
+    assert(snapshot().page === 'usb-page' && !snapshot().usbStorage && $('usb-off').disabled, 'USB settings default OFF with explicit ON/OFF controls');
+    $('usb-on').click();
+    assert(snapshot().usbStorage && $('usb-back').disabled && localStorage.getItem('aero-usb-mode') === '1', 'Manual ON persists and switches to exclusive USB mode');
+    sim.recording(true, true);
+    assert(!snapshot().recording && snapshot().error.includes('USB storage'), 'USB mode rejects recording');
+    dismiss();
+    $('usb-off').click();
+    assert(!snapshot().usbStorage && snapshot().page === 'dashboard' && localStorage.getItem('aero-usb-mode') === '0', 'Manual OFF persists and returns to riding mode');
     window.simulatorTestResult = { passed: results.length, failures: [], checks: results };
     output.textContent = `PASS: ${results.length} checks\n` + results.join("\n");
   } catch (error) {
@@ -341,5 +353,6 @@
     else localStorage.setItem("aero-volume", originalVolume);
     if(originalLanguage===null)localStorage.removeItem('aero-language');else localStorage.setItem('aero-language',originalLanguage);
     if(originalFavorites===null)localStorage.removeItem('aero-ble-favorites');else localStorage.setItem('aero-ble-favorites',originalFavorites);
+    if(originalUsbMode===null)localStorage.removeItem('aero-usb-mode');else localStorage.setItem('aero-usb-mode',originalUsbMode);
   }
 })();

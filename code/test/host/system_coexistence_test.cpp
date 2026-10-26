@@ -454,7 +454,75 @@ static void savedConnectionTests() {
   Preferences::bytes.clear();
 }
 
+#include "usb_sd_export.h"
+#include "usb_sd_storage.h"
+
+static void usbStorageTests() {
+  bool enabled = true;
+  assert(UsbSdSetting::load(enabled) && !enabled);
+  assert(UsbSdSetting::save(true));
+  assert(UsbSdSetting::load(enabled) && enabled);
+  Preferences::failWrite = true;
+  assert(!UsbSdSetting::save(false));
+  Preferences::failWrite = false;
+  assert(UsbSdSetting::load(enabled) && enabled);
+  Preferences::bytes["aero-ui/usb-msc"][0] ^= 1;
+  assert(!UsbSdSetting::load(enabled) && !enabled);
+  assert(UsbSdSetting::save(false));
+  assert(UsbSdSetting::load(enabled) && !enabled);
+  UsbSdExport ride;
+  ride.selectAtBoot(false);
+  ride.selectAtBoot(true);
+  assert(ride.mode() == UsbSdExport::Mode::Ride && !ride.exclusive());
+  uint8_t data[2048];
+  for (size_t index = 0; index < sizeof(data); ++index) data[index] = (index * 7 + index / 512) & 255;
+  const auto reader = [](void *context, uint32_t sector, void *buffer) {
+    if (sector >= 4) return false;
+    memcpy(buffer, static_cast<uint8_t *>(context) + sector * 512, 512);
+    return true;
+  };
+  assert(!ride.attach(4, 512, reader, data));
+  UsbSdExport disk;
+  disk.selectAtBoot(true);
+  disk.selectAtBoot(false);
+  assert(disk.exclusive() && !disk.ready());
+  uint8_t output[1100]{};
+  assert(disk.read(0, 0, output, 1) == -1);
+  assert(!disk.attach(0, 512, reader, data));
+  assert(!disk.attach(uint64_t(UINT32_MAX) + 1, 512, reader, data));
+  assert(!disk.attach(4, 1024, reader, data));
+  assert(disk.attach(4, 512, reader, data) && disk.ready());
+  assert(disk.read(1, 123, output, sizeof(output)) == sizeof(output));
+  assert(!memcmp(output, data + 635, sizeof(output)));
+  assert(disk.read(0, 513, output, 512) == 512 && !memcmp(output, data + 513, 512));
+  assert(disk.read(3, 511, output, 1) == 1 && output[0] == data[2047]);
+  assert(disk.read(3, 511, output, 2) == -1);
+  assert(disk.read(UINT32_MAX, UINT32_MAX, output, 1) == -1);
+  assert(disk.read(0, 0, nullptr, 1) == -1);
+  assert(disk.write(0, 0, output, 512) == -1);
+  assert(disk.attach(4, 512, [](void *, uint32_t, void *) { return false; }, nullptr));
+  assert(disk.read(0, 0, output, 512) == -1);
+  disk.mediaFailed();
+  assert(!disk.ready() && disk.exclusive());
+  disk.eject();
+  assert(disk.exclusive() && !disk.ready());
+  assert(disk.read(0, 0, output, 1) == -1 && !disk.attach(4, 512, reader, data));
+  std::cout << "PASS USB SD: boot-only selection, exclusive ownership, read-only, partial/cross-sector reads, bounds, media failure, latched eject\n";
+}
+
+static void usbOwnershipTests() {
+  usbStorageTests();
+  assert(beginSdCardMutex() && claimSdCardForUsb());
+  assert(!claimSdCardForUsb() && !sdCardReady());
+  const auto previousHost = hostMountedConfig;
+  CsvLogger blocked;
+  assert(!blocked.begin() && !blocked.ok() && !blocked.start());
+  assert(!sdCardReady() && hostMountedConfig.slot == previousHost.slot && !hostFormatRequested);
+  std::cout << "PASS USB ownership: FATFS/logger cannot acquire exported SD, no formatting\n";
+}
+
 static void storageTests() {
+  usbStorageTests();
   savedConnectionTests();
   journalTests();
   assert(beginSdCardMutex());
@@ -1056,6 +1124,7 @@ static void recordingLifecycleTests() {
   assert(recovered.requestSave(millis()));
   await([&] { recovered.poll(millis()); return !recovered.busy(); });
   assert(!recoveredJournal.pending() && recoveredLogger.sampleCount() == 4);
+  assert(recovered.safeToRestartForUsb());
   assert(recoveredLogger.droppedCount() == 0 && recovered.duration(millis()) == 5000);
   auto recoveredCsv = std::filesystem::path(sdMountPoint()) / (recoveredLogger.fileName() + 1);
   auto recoveredFit = recoveredCsv; recoveredFit.replace_extension(".fit");
@@ -1064,6 +1133,7 @@ static void recordingLifecycleTests() {
   std::filesystem::copy_file(recoveredFit, artifacts / "recovered.fit");
 
   assert(recovered.requestStart());
+  assert(!recovered.safeToRestartForUsb());
   recoveredLogger.setUtcReference(1792483300, 20000);
   sample = FitSample{20000, 250, 90, 8, 10, 0, -15, 1.225f, 1};
   assert(recovered.accept(sample, true, true, 456));
@@ -1073,6 +1143,7 @@ static void recordingLifecycleTests() {
   auto shutdownFit = shutdownCsv; shutdownFit.replace_extension(".fit");
   recovered.requestShutdown(21000);
   assert(!recovered.readyToPowerOff() && recovered.busy());
+  assert(!recovered.safeToRestartForUsb());
   hostFlashWriteBudget = 0;
   await([&] { recovered.poll(millis()); return !recoveredExporter.busy() && std::filesystem::exists(shutdownFit); });
   recovered.poll(millis());
@@ -1080,6 +1151,7 @@ static void recordingLifecycleTests() {
   hostFlashWriteBudget = -1;
   recovered.poll(millis() + 1001);
   assert(recovered.readyToPowerOff() && !recoveredJournal.pending());
+  assert(recovered.safeToRestartForUsb());
   assert(recovered.duration(99999) == 1000);
   std::filesystem::copy_file(shutdownCsv, artifacts / "shutdown.csv");
   std::filesystem::copy_file(shutdownFit, artifacts / "shutdown.fit");
@@ -1115,6 +1187,7 @@ int main(int argc, char **argv) {
   const std::string mode = argc > 1 ? argv[1] : "coexistence";
   if (mode == "wifi") wifiTests();
   else if (mode == "storage") storageTests();
+  else if (mode == "usb_storage") usbOwnershipTests();
   else if (mode == "fit") recordingFitTests();
   else if (mode == "wind_power_fit") recordingFitTests(true);
   else if (mode == "stage1_ble_wind_fit") recordingFitTests(true, false, true);

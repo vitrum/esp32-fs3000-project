@@ -37,6 +37,7 @@ public:
 VfsFs  g_sdFs;
 sdmmc_card_t *g_sdCard = nullptr;
 bool    g_sdMounted = false;
+bool    g_sdUsbExclusive = false;
 
 esp_err_t sdTransaction(int slot, sdmmc_command_t *command) {
   esp_err_t result;
@@ -81,9 +82,18 @@ void unlockSdCard() {
   if (g_sdMutex) xSemaphoreGive(g_sdMutex);
 }
 
+bool claimSdCardForUsb() {
+  if (!beginSdCardMutex() || !lockSdCard()) return false;
+  const bool available = !g_sdMounted && !g_sdUsbExclusive;
+  if (available) g_sdUsbExclusive = true;
+  unlockSdCard();
+  return available;
+}
+
 // 挂载 SD（SDSPI，走 ESP-IDF 原生 FATFS，比 Arduino SD 驱动更稳健：
 // 不会因一次 CMD13 假失败就永久把卡标成 STA_NOINIT）。
 static bool mountSdCard() {
+  if (g_sdUsbExclusive) return false;
   if (g_sdMounted) return true;
 
   AppLog.printf("[SD] mounting via IDF SDSPI (SCLK=%d MISO=%d MOSI=%d CS=%d @ %luHz)...\n",
