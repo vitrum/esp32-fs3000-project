@@ -488,6 +488,7 @@ static void usbStorageTests() {
   assert(disk.exclusive() && !disk.ready());
   uint8_t output[1100]{};
   assert(disk.read(0, 0, output, 1) == -1);
+  assert(disk.senseKey() == 0x02 && disk.senseCode() == 0x3a);
   assert(!disk.attach(0, 512, reader, data));
   assert(!disk.attach(uint64_t(UINT32_MAX) + 1, 512, reader, data));
   assert(!disk.attach(4, 1024, reader, data));
@@ -497,11 +498,17 @@ static void usbStorageTests() {
   assert(disk.read(0, 513, output, 512) == 512 && !memcmp(output, data + 513, 512));
   assert(disk.read(3, 511, output, 1) == 1 && output[0] == data[2047]);
   assert(disk.read(3, 511, output, 2) == -1);
+  assert(disk.ready() && disk.senseKey() == 0x05 && disk.senseCode() == 0x21);
+  assert(disk.read(0, 0, output, 512) == 512 && disk.readError() == UsbSdExport::ReadError::None);
   assert(disk.read(UINT32_MAX, UINT32_MAX, output, 1) == -1);
   assert(disk.read(0, 0, nullptr, 1) == -1);
+  assert(disk.senseKey() == 0x05 && disk.senseCode() == 0x24);
   assert(disk.write(0, 0, output, 512) == -1);
   assert(disk.attach(4, 512, [](void *, uint32_t, void *) { return false; }, nullptr));
   assert(disk.read(0, 0, output, 512) == -1);
+  assert(disk.ready() && disk.senseKey() == 0x03 && disk.senseCode() == 0x11);
+  assert(disk.attach(4, 512, reader, data));
+  assert(disk.read(0, 0, output, 512) == 512 && !memcmp(output, data, 512));
   disk.mediaFailed();
   assert(!disk.ready() && disk.exclusive());
   disk.eject();

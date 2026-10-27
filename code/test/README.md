@@ -62,8 +62,9 @@ Usage after installing the firmware:
   Firmware hides the medium, drains an active read, saves OFF and restarts into
   normal riding. Turning OFF is also available with no card/host connected.
 4. The explicit setting persists under `aero-ui/usb-msc`; reconnecting a cable
-  does not enable it. Ejection/read failure hides the medium but leaves USB mode
-  selected until OFF is pressed. Do not hold BOOT before reset/power-on unless
+  does not enable it. Ejection hides the medium but leaves USB mode selected
+  until OFF is pressed. A failed read returns a SCSI error without permanently
+  withdrawing the medium. Do not hold BOOT before reset/power-on unless
   intentionally entering the ESP32 ROM downloader.
 
 Normal riding never switches SD ownership on cable insertion. It exposes an
@@ -79,6 +80,22 @@ requests and reject out-of-range access. There is no SD write callback path.
 SCSI write protection is supplied by a strong `tud_msc_is_writable_cb` override
 in the entry point (outside TinyUSB's weak callback declarations), and WRITE10
 also returns DATA PROTECT. No automatic card formatting is used.
+
+MSC revision `1.1` logs `firmware=ro-msc-1.1` and its build time. Read errors
+distinguish NOT READY/medium absent (02/3a), invalid field (05/24), out-of-range
+LBA (05/21), and read failure (03/11). Invalid host requests and transient read
+failures do not latch the disk offline; a subsequent valid read can succeed.
+
+Mac validation on 2026-10-27: this build was flashed and independently verified;
+its startup identifier matched, and `diskutil info` reported `SD READ ONLY` and
+`Media Read-Only: Yes`. `diskutil verifyVolume` ran `fsck_msdos -n` through all
+three FAT phases, returning 0 with only an unset FSInfo free-count warning.
+No MSC read error was captured during that check. Nevertheless,
+`diskutil mount readOnly` returned `SUIS premount dissented`. This is not a
+successful mount, nor proof that host writes are required. The local `diskutil`
+manual explicitly supports read-only mounting. Next diagnosis is a direct
+read-only FAT mount with user-controlled administrator access; do not silently
+switch to writable export, repair the FAT or reformat the card.
 
 TinyUSB CDC can acquire a different serial device name. First deployment may
 require BOOT+RESET to enter the ROM downloader, then selecting the newly

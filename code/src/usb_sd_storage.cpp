@@ -73,9 +73,10 @@ bool beginRawCard() {
 int32_t readBlocks(uint32_t sector, uint32_t offset, void *buffer, uint32_t size) {
   const int32_t result = session.read(sector, offset, buffer, size);
   if (result < 0) {
-    session.mediaFailed();
-    massStorage.mediaPresent(false);
-    tud_msc_set_sense(0, SCSI_SENSE_MEDIUM_ERROR, 0x11, 0);
+    tud_msc_set_sense(0, session.senseKey(), session.senseCode(), 0);
+    AppLog.printf("[USB-SD] READ failed lba=%lu offset=%lu size=%lu sense=%02x/%02x\n",
+                  (unsigned long)sector, (unsigned long)offset, (unsigned long)size,
+                  session.senseKey(), session.senseCode());
   }
   return result;
 }
@@ -95,9 +96,10 @@ bool startStop(uint8_t, bool start, bool loadEject) {
 }
 
 bool UsbSdStorage::beginAtBoot() {
+  AppLog.println("[USB-SD] firmware=ro-msc-1.1 built=" __DATE__ " " __TIME__);
   massStorage.vendorID("AEROPROB");
   massStorage.productID("SD READ ONLY");
-  massStorage.productRevision("1.0");
+  massStorage.productRevision("1.1");
   massStorage.onRead(readBlocks);
   massStorage.onWrite(writeBlocks);
   massStorage.onStartStop(startStop);
