@@ -82,6 +82,9 @@ public:
     if (distance >= MoveThresholdPx && now - pressMs_ >= DragMinMs) dragging_ = true;
     return dragging_;
   }
+  bool dragReady(uint32_t now) const {
+    return pressed_ && now - pressMs_ >= DragMinMs && (!moved_ || dragging_);
+  }
   bool release(int coordinate, uint32_t now, int horizontal = 12) {
     if (!pressed_) return false;
     motion(coordinate, now, horizontal);

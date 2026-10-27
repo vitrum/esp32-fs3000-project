@@ -2322,6 +2322,29 @@ void DisplayLcd::closePowerMeterPanels() {
   lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
+bool DisplayLcd::saveDashboardSettings(bool force) {
+  const auto failed = [this, force]() {
+    if (force && !dashboardSaveNoticeShown_) {
+      showNotice("Could not save dashboard settings. Shutdown/restart paused; retrying.");
+      dashboardSaveNoticeShown_ = true;
+    }
+    return false;
+  };
+  if (dashboardSaveFailed_ && millis() - dashboardSaveFailedAt_ < 1000) return failed();
+  DashboardLayout::Settings layout;
+  if (!dashboard_.takeSettings(layout, force)) return true;
+  if (!DashboardSettings::save(layout)) {
+    dashboard_.retrySave();
+    dashboardSaveFailed_ = true;
+    dashboardSaveFailedAt_ = millis();
+    AppLog.println("[UI] Could not save dashboard layout; pending settings retained");
+    return failed();
+  }
+  dashboardSaveFailed_ = false;
+  dashboardSaveNoticeShown_ = false;
+  return true;
+}
+
 void DisplayLcd::tick() {
   static uint32_t lastTick = 0;
   uint32_t now = millis();
@@ -2331,11 +2354,7 @@ void DisplayLcd::tick() {
   }
   lastTick = now;
   lv_tick_inc(dt);
-  DashboardLayout::Settings layout;
-  if (dashboard_.takeSettings(layout) && !DashboardSettings::save(layout)) {
-    dashboard_.retrySave();
-    AppLog.println("[UI] Could not save dashboard layout");
-  }
+  saveDashboardSettings(false);
   if (statusLabel_) dashboard_.storage(sdActivity.state(sdCardReady(), now), now);
   lv_timer_handler();
 }

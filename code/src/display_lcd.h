@@ -19,6 +19,7 @@ class DisplayLcd {
 public:
   void begin();
   void tick();
+  bool saveDashboardSettings(bool force = true);
   void update(const WindVector &w, bool windValid, float powerW, float cadRpm,
               float vgMps, float postureDeg, float rho, int pmSrc, bool logOk);
   bool takePowerSourceRequest(int &mode);
@@ -129,6 +130,9 @@ private:
   static void onUsbStorageMode(lv_event_t *event);
   float estimatedCda_ = -1;
   DashboardView dashboard_;
+  bool dashboardSaveFailed_ = false;
+  bool dashboardSaveNoticeShown_ = false;
+  uint32_t dashboardSaveFailedAt_ = 0;
   lv_obj_t *windLabel_ = nullptr;
   lv_obj_t *powerLabel_ = nullptr;
   lv_obj_t *avg3Label_ = nullptr;

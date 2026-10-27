@@ -537,13 +537,30 @@ static void storageTests() {
   assert(DashboardSettings::load(dashboardSettings));
   dashboard.move(0, 4);
   dashboard.cycle(2);
-  assert(DashboardSettings::save(dashboard.settings()));
+  const auto expectedDashboard = dashboard.settings();
+  assert(DashboardSettings::save(expectedDashboard));
   assert(DashboardSettings::load(dashboardSettings) && dashboardSettings.order[4] == 0);
+  assert(!memcmp(&expectedDashboard, &dashboardSettings, sizeof(dashboardSettings)));
+  DashboardLayout rebootedDashboard;
+  assert(rebootedDashboard.load(dashboardSettings));
+  for (unsigned index = 0; index < DashboardLayout::Count; ++index) {
+    assert(rebootedDashboard.id(index) == dashboard.id(index));
+    assert(rebootedDashboard.level(index) == dashboard.level(index));
+  }
   Preferences::failWrite = true;
   dashboard.reset();
   assert(!DashboardSettings::save(dashboard.settings()));
   Preferences::failWrite = false;
   assert(DashboardSettings::load(dashboardSettings) && dashboardSettings.order[4] == 0);
+  assert(!memcmp(&expectedDashboard, &dashboardSettings, sizeof(dashboardSettings)));
+  Preferences::failOpen = true;
+  assert(!DashboardSettings::save(dashboard.settings()));
+  Preferences::failOpen = false;
+  assert(DashboardSettings::load(dashboardSettings));
+  assert(!memcmp(&expectedDashboard, &dashboardSettings, sizeof(dashboardSettings)));
+  assert(DashboardSettings::save(dashboard.settings()));
+  assert(DashboardSettings::load(dashboardSettings));
+  assert(!memcmp(&dashboard.settings(), &dashboardSettings, sizeof(dashboardSettings)));
   Preferences::bytes["aero-ui/dashboard"].back() ^= 1;
   assert(!DashboardSettings::load(dashboardSettings));
   Preferences::bytes.erase("aero-ui/dashboard");

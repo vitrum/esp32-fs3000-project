@@ -12,6 +12,13 @@
 
 static lv_color_t framebuffer[240 * 320];
 static unsigned flushes = 0;
+static bool pointerPressed = false;
+static lv_point_t pointerPoint = {180, 60};
+
+static void readPointer(lv_indev_drv_t *, lv_indev_data_t *data) {
+  data->point = pointerPoint;
+  data->state = pointerPressed ? LV_INDEV_STATE_PR : LV_INDEV_STATE_REL;
+}
 
 static void flush(lv_disp_drv_t *driver, const lv_area_t *area, lv_color_t *colors) {
   for (int y = area->y1; y <= area->y2; ++y)
@@ -130,9 +137,12 @@ int main() {
   layout.press(0, 60, 680);
   assert(layout.release(60, 760) && layout.level(0) == 1);
   layout.press(0, 60, 1200);
+  assert(!layout.dragReady(1799));
+  assert(layout.dragReady(1800));
   assert(!layout.motion(285, 1799));
   assert(layout.motion(285, 1800));
   assert(layout.release(285, 1850) && layout.id(4) == 0);
+  assert(!layout.dragReady(1850));
   const auto unchanged = layout.settings();
   layout.press(0, 60, 3450);
   assert(!layout.release(100, 3800));
@@ -143,8 +153,10 @@ int main() {
   assert(layout.level(layout.id(0)) == heldLevel % 4 + 1);
   assert(!layout.release(60, 6000));
   layout.press(0, 60, 6100);
+  assert(layout.dragReady(6700));
   layout.cancel();
-  assert(!layout.release(60, 6500));
+  assert(!layout.dragReady(6700));
+  assert(!layout.release(60, 6750));
   layout.press(0, 20, 6600);
   assert(!layout.release(60, 7000));
   layout.press(0, 60, UINT32_MAX - 100);
@@ -166,6 +178,7 @@ int main() {
   assert(jitter.release(71, 80, 111));
   jitter.press(0, 60, 1000, 100);
   assert(!jitter.motion(60, 1700, 112));
+  assert(!jitter.dragReady(1700));
   assert(!jitter.release(60, 1800, 112));
   lv_init();
   SdActivity activity;
@@ -280,5 +293,33 @@ int main() {
     assert(rebooted.layout().id(position) == saved.order[position]);
     assert(rebooted.layout().level(position) == saved.levels[position]);
   }
+  rebooted.reset();
+  lv_obj_update_layout(screen);
+  lv_indev_drv_t inputDriver;
+  lv_indev_drv_init(&inputDriver);
+  inputDriver.type = LV_INDEV_TYPE_POINTER;
+  inputDriver.read_cb = readPointer;
+  auto *pointer = lv_indev_drv_register(&inputDriver);
+  assert(pointer);
+  const auto pump = [pointer](uint32_t elapsed) {
+    lv_tick_inc(elapsed);
+    lv_timer_ready(pointer->driver->read_timer);
+    lv_timer_handler();
+  };
+  pointerPressed = true;
+  pump(20);
+  pump(599);
+  assert(lv_obj_get_style_bg_opa(rebooted.row(0), 0) == LV_OPA_TRANSP);
+  pump(1);
+  assert(lv_obj_get_style_bg_opa(rebooted.row(0), 0) == LV_OPA_COVER);
+  assert(lv_obj_get_style_bg_color(rebooted.row(0), 0).full == lv_color_make(219, 234, 254).full);
+  pointerPoint.y = 280;
+  pump(20);
+  assert(lv_obj_get_style_bg_color(rebooted.row(4), 0).full == lv_color_make(187, 247, 208).full);
+  pointerPressed = false;
+  pump(20);
+  assert(rebooted.layout().id(4) == 0);
+  for (unsigned index = 0; index < 5; ++index)
+    assert(lv_obj_get_style_bg_opa(rebooted.row(index), 0) == LV_OPA_TRANSP);
   std::cout << "PASS UI language: real LVGL, glyphs/icons, no overlap/clipping, values preserved, 1600 refreshes, heap integrity, nonblank pixels\n";
 }

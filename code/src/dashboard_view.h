@@ -228,12 +228,13 @@ private:
       while (position < 5 && view.layout_.id(position) != row->id) ++position;
       view.layout_.press(position, point.y, lv_tick_get(), point.x);
     } else if (code == LV_EVENT_PRESSING) {
-      if (view.layout_.motion(point.y, lv_tick_get(), point.x)) {
-        const unsigned target = view.layout_.id(view.layout_.positionAt(point.y));
-        for (auto &candidate : view.rows_) {
-          lv_obj_set_style_bg_opa(candidate.box, candidate.id == target || candidate.id == row->id ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
-          lv_obj_set_style_bg_color(candidate.box, candidate.id == target ? lv_color_make(187, 247, 208) : lv_color_make(219, 234, 254), 0);
-        }
+      const bool dragging = view.layout_.motion(point.y, lv_tick_get(), point.x);
+      const bool ready = view.layout_.dragReady(lv_tick_get());
+      const unsigned target = dragging ? view.layout_.id(view.layout_.positionAt(point.y)) : row->id;
+      for (auto &candidate : view.rows_) {
+        const bool active = (ready && candidate.id == row->id) || (dragging && candidate.id == target);
+        lv_obj_set_style_bg_opa(candidate.box, active ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_color(candidate.box, candidate.id == row->id ? lv_color_make(219, 234, 254) : lv_color_make(187, 247, 208), 0);
       }
     } else if (code == LV_EVENT_RELEASED) {
       if (view.layout_.release(point.y, lv_tick_get(), point.x)) { view.reflow(); view.retrySave(); }

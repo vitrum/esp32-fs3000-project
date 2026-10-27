@@ -196,6 +196,7 @@ static void changeUsbStorageMode(bool enabled) {
     }
     if (hadMedium) unlockSdCard();
   }
+  if (!lcd.saveDashboardSettings()) return;
   if (!UsbSdSetting::save(enabled)) {
     lcd.showUsbStorageError("Could not save USB mode. Retry.");
     return;
@@ -280,10 +281,12 @@ void setup() {
 void loop() {
   uint32_t now = millis();
   if (usbSdStorage.exclusive()) {
+    static bool usbShutdownPending = false;
     bool enabled;
     if (lcd.takeUsbStorageRequest(enabled)) changeUsbStorageMode(enabled);
     powerKey.tick();
-    if (powerKey.takeShutdownRequest()) {
+    if (powerKey.takeShutdownRequest()) usbShutdownPending = true;
+    if (usbShutdownPending && lcd.saveDashboardSettings()) {
       usbSdStorage.eject();
       powerKey.shutdown();
     }
@@ -312,6 +315,11 @@ void loop() {
     if (!recorder.waiting()) lcd.showFitResult(recorderMessage);
   }
   if (recorder.readyToPowerOff()) {
+    if (!lcd.saveDashboardSettings()) {
+      lcd.tick();
+      delay(1);
+      return;
+    }
     audio.playShutdownChime();
     powerKey.shutdown();
     return;

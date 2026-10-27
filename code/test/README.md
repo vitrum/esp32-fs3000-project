@@ -202,12 +202,23 @@ Motion under 12px is tolerated as finger jitter. Hold at least 600ms and move
 vertically at least 12px to reorder; horizontal swipes do not become drags.
 Pointer capture/press lock
 keeps the original row, a target is highlighted, and release commits one action.
+After 600ms stationary hold, the original row turns light blue immediately to
+indicate drag readiness, before any movement. While dragging, a different target
+row is light green and the source remains blue. Release, lost capture or cancel
+clears all gesture colors; a stationary hold still resizes only once on release.
 Horizontal swipes, canceled/outside drops and drag releases cannot become taps.
 Long-press the refresh icon in SETTINGS to restore the default layout.
 
 Layout order/effective levels persist after 800ms idle in CRC/version-checked
 `aero-ui/dashboard`; invalid stores fall back to defaults, failed writes retry
 without replacing the last saved blob. Language changes keep readings/order.
+Normal power-key shutdown and manual USB-mode restart force-submit any pending
+layout before removing power/restarting, without waiting for the 800ms debounce.
+An NVS error preserves the pending layout and previous stored blob; shutdown is
+paused with an error message and retries are limited to once per second.
+The saved five-row order and each row's effective size are restored at startup.
+This does not guarantee the last unsaved gesture survives an abrupt battery
+disconnect before NVS commit; normal controlled shutdown is the protected path.
 SD grey means unmounted/unavailable, green means available/idle, red plus a
 250ms toggled red dot means actual SD write activity (including CSV/FIT metadata).
 A 600ms visual hold exposes brief writes. Write failure shows a steady red

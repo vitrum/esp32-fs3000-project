@@ -85,11 +85,20 @@
   let dashboardGesture=null;
   let lastDashboardAction=null;
   const dashboardTiming={tapMin:80,dragMin:600,cooldown:180,moveMin:12};
+  let dashboardReadyTimer=null;
+  const clearDashboardFeedback=()=>{
+    clearTimeout(dashboardReadyTimer);dashboardReadyTimer=null;
+    for(const candidate of document.querySelectorAll('.metric-row'))candidate.classList.remove('drag-ready','dragging','drop-target');
+  };
   for(const row of document.querySelectorAll('.metric-row')){
     row.onpointerdown=(event)=>{
       const started=performance.now();
       if(dashboardGesture)return;
       dashboardGesture={id:Number(row.dataset.metric),pointerId:event.pointerId,x:event.clientX,y:event.clientY,started,moved:false,dragging:false};
+      const gesture=dashboardGesture;
+      dashboardReadyTimer=setTimeout(()=>{
+        if(dashboardGesture===gesture&&(!gesture.moved||gesture.dragging))row.classList.add('drag-ready');
+      },dashboardTiming.dragMin);
       row.setPointerCapture(event.pointerId);event.preventDefault();
     };
     row.onpointermove=(event)=>{
@@ -100,10 +109,11 @@
         gesture.dragging=true;
         for(const candidate of document.querySelectorAll('.metric-row')){
           const bounds=candidate.getBoundingClientRect();
-          candidate.classList.toggle('drop-target',event.clientY>=bounds.top&&event.clientY<bounds.bottom);
+          candidate.classList.toggle('drop-target',candidate!==row&&event.clientY>=bounds.top&&event.clientY<bounds.bottom);
         }
         row.classList.add('dragging');
       }
+      row.classList.toggle('drag-ready',performance.now()-gesture.started>=dashboardTiming.dragMin&&(!gesture.moved||gesture.dragging));
     };
     row.onpointerup=(event)=>{
       const gesture=dashboardGesture;
@@ -128,10 +138,14 @@
           lastDashboardAction=released;
         }
       }
-      for(const candidate of document.querySelectorAll('.metric-row'))candidate.classList.remove('dragging','drop-target');
+      clearDashboardFeedback();
       applyDashboard();
     };
-    row.onpointercancel=()=>{dashboardGesture=null;for(const candidate of document.querySelectorAll('.metric-row'))candidate.classList.remove('dragging','drop-target');};
+    row.onpointercancel=(event)=>{
+      if(!dashboardGesture||dashboardGesture.pointerId!==event.pointerId)return;
+      dashboardGesture=null;clearDashboardFeedback();
+    };
+    row.onlostpointercapture=row.onpointercancel;
   }
   let backBlockedUntil = 0;
   document.querySelector(".device").addEventListener("click", (event) => {
