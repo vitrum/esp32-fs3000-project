@@ -1,5 +1,6 @@
 #include "csv_logger.h"
 #include "runtime_log.h"
+#include "sd_activity.h"
 
 #include "config.h"
 
@@ -18,6 +19,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+
+SdActivity sdActivity;
 
 namespace {
 SemaphoreHandle_t g_sdMutex = nullptr;
@@ -40,12 +43,18 @@ bool    g_sdMounted = false;
 bool    g_sdUsbExclusive = false;
 
 esp_err_t sdTransaction(int slot, sdmmc_command_t *command) {
+  const bool write = command->opcode == 24 || command->opcode == 25;
+  if (write) sdActivity.beginWrite();
   esp_err_t result;
   for (unsigned attempt = 0; attempt < 3; ++attempt) {
     result = sdspi_host_do_transaction(slot, command);
-    if (result != ESP_ERR_TIMEOUT || command->opcode != MMC_SEND_STATUS)
+    if (result != ESP_ERR_TIMEOUT || command->opcode != MMC_SEND_STATUS) {
+      if (command->opcode == MMC_SEND_STATUS) sdActivity.noteStatus(result == ESP_OK);
+      if (write) sdActivity.endWrite(millis(), result == ESP_OK);
       return result;
+    }
   }
+  sdActivity.noteStatus(false);
   return result;
 }
 

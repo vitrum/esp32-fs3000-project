@@ -11,7 +11,7 @@ const sourceHash = createHash('sha256').update(readFileSync(font)).digest('hex')
 if (sourceHash !== '2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b') {
   throw new Error('Unexpected font source SHA256; review the source/version before regenerating');
 }
-const files = ['src/display_lcd.cpp', 'src/aero_zone_view.h'];
+const files = ['src/display_lcd.cpp', 'src/aero_zone_view.h', 'src/dashboard_view.h'];
 const characters = new Set();
 for (const file of files) {
   const source = readFileSync(path.join(root, file), 'utf8');

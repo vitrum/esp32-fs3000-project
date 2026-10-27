@@ -7,7 +7,8 @@
   const devices = [
     { name: "Assioma Duo", profile: "CPS", address: "C0:00:00:00:00:01", rssi: -48 },
     { name: "Smart Trainer", profile: "FTMS", address: "C0:00:00:00:00:02", rssi: -56 },
-    { name: "Cadence Sensor", profile: "CSC cadence only", address: "C0:00:00:00:00:03", rssi: -62 }
+    { name: "Cadence Sensor", profile: "CSC cadence only", address: "C0:00:00:00:00:03", rssi: -62 },
+    { name: "Heart Sensor", profile: "HRS", address: "C0:00:00:00:00:04", rssi: -64 }
   ];
   const files = new Map([
     ["/LOG", { directory: true }],
@@ -27,6 +28,7 @@
   const isFavorite = (device) => Boolean(device && favorites().some((entry) =>
     entry.address.toLowerCase() === device.address.toLowerCase() && (entry.addressType || 0) === (device.addressType || 0)));
   const state = {
+    heartRate: 150, heartValid: false, heartAt: 0, heartConnected: false, sdWriteUntil: 0, sdWriteError: false,
     usbStorage: localStorage.getItem('aero-usb-mode') === '1',
     language: localStorage.getItem('aero-language') === 'zh' ? 'zh' : 'en',
     mode: 0, bleConnected: false, bleName: "", connectedDevice: null, autoFavorites: [], power: 230, cadence: 88, bleSpeed: 0,
@@ -45,6 +47,92 @@
     sessionRecords: [], fitSaving: null, fitPath: "", fitBytes: null, trustedTime: false
   };
   const now = () => performance.now() + state.extraMs;
+  let dashboard = {order:[0,1,2,3,4],levels:[3,3,3,1,1]};
+  let priorities = [0,0,0,0,0], dashboardSerial = 0;
+  const heights = [0,36,44,56,64], fonts = [0,20,28,40,48];
+  const validDashboard = (value) => value && value.order?.length===5 && new Set(value.order).size===5 &&
+    value.order.every((id)=>Number.isInteger(id)&&id>=0&&id<5) && value.levels?.length===5 && value.levels.every((level)=>Number.isInteger(level)&&level>=1&&level<=4);
+  try { const saved=JSON.parse(localStorage.getItem('aero-dashboard'));if(validDashboard(saved))dashboard=saved; } catch {}
+  const dashboardLevels = () => {
+    const levels=[...dashboard.levels];
+    for(let iteration=0;iteration<20;++iteration){
+      const maximum=levels.filter((level)=>level===4).length;
+      if(levels.reduce((sum,level)=>sum+heights[level],8)<=272&&maximum<=3)break;
+      const candidates=[0,1,2,3,4].filter((id)=>levels[id]>1&&(maximum<=3||levels[id]===4));
+      candidates.sort((left,right)=>priorities[left]-priorities[right]||left-right);
+      if(!candidates.length)break;
+      --levels[candidates[0]];
+    }
+    return levels;
+  };
+  function applyDashboard(){
+    const levels=dashboardLevels();
+    let top=0;
+    for(const id of dashboard.order){
+      const row=document.querySelector('[data-metric="'+id+'"]');
+      row.style.top=top+'px';row.style.height=heights[levels[id]]+'px';row.dataset.level=levels[id];
+      const reading=row.querySelector('.reading');
+      reading.style.fontSize=fonts[levels[id]]+'px';
+      for(const size of [40,28,20,14])if(reading.scrollWidth>reading.clientWidth&&size<parseFloat(reading.style.fontSize))reading.style.fontSize=size+'px';
+      top+=heights[levels[id]]+2;
+    }
+  }
+  function persistDashboard(){
+    dashboard.levels=dashboardLevels();
+    try { localStorage.setItem('aero-dashboard',JSON.stringify(dashboard)); } catch { notice('Could not save dashboard layout.'); }
+  }
+  function resetDashboard(){dashboard={order:[0,1,2,3,4],levels:[3,3,3,1,1]};priorities=[0,0,0,0,0];dashboardSerial=0;applyDashboard();persistDashboard();}
+  let dashboardGesture=null;
+  let lastDashboardAction=null;
+  const dashboardTiming={tapMin:80,dragMin:600,cooldown:180,moveMin:12};
+  for(const row of document.querySelectorAll('.metric-row')){
+    row.onpointerdown=(event)=>{
+      const started=performance.now();
+      if(dashboardGesture)return;
+      dashboardGesture={id:Number(row.dataset.metric),pointerId:event.pointerId,x:event.clientX,y:event.clientY,started,moved:false,dragging:false};
+      row.setPointerCapture(event.pointerId);event.preventDefault();
+    };
+    row.onpointermove=(event)=>{
+      if(!dashboardGesture||dashboardGesture.id!==Number(row.dataset.metric)||dashboardGesture.pointerId!==event.pointerId)return;
+      const gesture=dashboardGesture;
+      if(Math.max(Math.abs(event.clientX-gesture.x),Math.abs(event.clientY-gesture.y))>=dashboardTiming.moveMin)gesture.moved=true;
+      if(Math.abs(event.clientY-gesture.y)>=dashboardTiming.moveMin&&performance.now()-gesture.started>=dashboardTiming.dragMin){
+        gesture.dragging=true;
+        for(const candidate of document.querySelectorAll('.metric-row')){
+          const bounds=candidate.getBoundingClientRect();
+          candidate.classList.toggle('drop-target',event.clientY>=bounds.top&&event.clientY<bounds.bottom);
+        }
+        row.classList.add('dragging');
+      }
+    };
+    row.onpointerup=(event)=>{
+      const gesture=dashboardGesture;
+      if(!gesture||gesture.pointerId!==event.pointerId)return;
+      dashboardGesture=null;
+      const released=performance.now(),elapsed=released-gesture.started;
+      if(Math.max(Math.abs(event.clientX-gesture.x),Math.abs(event.clientY-gesture.y))>=dashboardTiming.moveMin)gesture.moved=true;
+      if(Math.abs(event.clientY-gesture.y)>=dashboardTiming.moveMin&&elapsed>=dashboardTiming.dragMin)gesture.dragging=true;
+      const bounds=$('dashboard-rows').getBoundingClientRect();
+      const cooled=lastDashboardAction===null||released-lastDashboardAction>=dashboardTiming.cooldown;
+      if(cooled&&event.clientX>=bounds.left&&event.clientX<bounds.right&&event.clientY>=bounds.top&&event.clientY<bounds.bottom){
+        if(gesture.dragging){
+          const target=dashboard.order.find((id)=>event.clientY<document.querySelector('[data-metric="'+id+'"]').getBoundingClientRect().bottom)??dashboard.order.at(-1);
+          const from=dashboard.order.indexOf(gesture.id),to=dashboard.order.indexOf(target);
+          if(from!==to){
+            dashboard.order.splice(from,1);dashboard.order.splice(to,0,gesture.id);
+            persistDashboard();lastDashboardAction=released;
+          }
+        }else if(!gesture.moved&&elapsed>=dashboardTiming.tapMin){
+          dashboard.levels=dashboardLevels();dashboard.levels[gesture.id]=dashboard.levels[gesture.id]%4+1;
+          priorities[gesture.id]=++dashboardSerial;persistDashboard();
+          lastDashboardAction=released;
+        }
+      }
+      for(const candidate of document.querySelectorAll('.metric-row'))candidate.classList.remove('dragging','drop-target');
+      applyDashboard();
+    };
+    row.onpointercancel=()=>{dashboardGesture=null;for(const candidate of document.querySelectorAll('.metric-row'))candidate.classList.remove('dragging','drop-target');};
+  }
   let backBlockedUntil = 0;
   document.querySelector(".device").addEventListener("click", (event) => {
     if (!event.target.closest("[data-back], #settings-back, #dialog-close, #virtual-back, #loading-back")) return;
@@ -84,7 +172,7 @@
     const zh=state.language==='zh';
     document.documentElement.lang=zh?'zh-CN':'en';
     for(const [selector,en,cn] of [
-      ['.cda-title','AERO ZONE','气动区间'],['#wind-title','WIND','风速'],['.avg3','POWER','功率'],
+      ['.cda-title','ZONE','气动区间'],['#wind-title','WIND','风速'],['.avg3','POWER','功率'],['#heart-title','HEART','心率'],
       ['#language-page p','Choose interface language','选择界面语言'],
       ['#settings-log','☷\nLOG','☷\n记录日志'],['#settings-meter','⏻ POWER','⏻ 功率'],
       ['#settings-language','☷ LANG','☷ 语言'],['#settings-sound','♫ SOUND','♫ 声音'],
@@ -145,17 +233,21 @@
     const zone = zoneFor(cda);
     $("power-reading").textContent = String(Math.round(power()));
     $("power-reading").style.fontSize = Math.abs(power()) >= 10000 ? "28px" : "40px";
-    $("cadence-label").textContent = state.language==='zh'?'踏频 / rpm':'CADENCE / rpm';
+    $("cadence-label").textContent = state.language==='zh'?'踏频':'CADENCE';
     $("cadence-reading").textContent = String(Math.round(cadence()));
+    $('heart-reading').textContent=state.heartValid&&state.seconds-state.heartAt<=5 ? String(state.heartRate) : '--';
     $("wind-reading").textContent = state.windValid ? (state.wind * 3.6).toFixed(1) : "--";
     $("cda-reading").textContent = cda === null ? "--" : cda.toFixed(2);
     $("zone-reading").textContent = `Z${zone?.zone ?? "--"}`;
     $("posture-reading").textContent = zone?.posture ?? (state.language==='zh'?'等待数据':'NO DATA');
     $("clock-reading").textContent = gpsFixed() || state.networkTime
       ? formattedDate(localDate()).slice(11) : "--:--:--";
-    $("log-status").title = `${state.recording ? "Recording" : "Recording stopped"}; open ride log`;
+    const sdState=!state.sdReady?'absent':state.sdWriteError?'error':now()<state.sdWriteUntil?'writing':'ready';
+    $("log-status").title = `SD ${sdState}; open ride log`;
     $("log-status").setAttribute("aria-label", $("log-status").title);
-    $("log-status").style.color = state.recording ? "#16a34a" : "#64748b";
+    $("log-status").style.color = sdState==='absent'?'#94a3b8':sdState==='ready'?'#22c55e':'#ef4444';
+    $('sd-write-dot').hidden=sdState!=='writing'||!(Math.floor(now()/250)%2);
+    $('log-status').dataset.state=sdState;
     $("toggle-run").textContent = state.running ? "Pause Auto Sampling" : "Start Auto Sampling";
     $("connect-ble").classList.toggle("selected", state.bleConnected);
     for (const [id, enabled] of [["wifi-off", false], ["wifi-on", true]]) {
@@ -175,7 +267,7 @@
     $("gps-satellites").textContent = gpsFixed() ? "12" : "--";
     $("gps-satellites").hidden = gpsActive && !gpsFixed();
     $("gps-spinner").hidden = !gpsActive || gpsFixed();
-    $("gps-indicator").style.color = gpsFixed() ? "#16a34a" : gpsActive ? "#d97706" : "#94a3b8";
+    $("gps-indicator").style.color = '#fff';
     $("gps-fix").textContent = state.gps === "restarting" ? "Restarting GPS..." :
       gpsFixed() ? "FIX ACQUIRED" : gpsActive ? "Searching satellites..." : "GPS disabled";
     const hasTime = gpsFixed() || state.gps === "stale";
@@ -209,6 +301,7 @@
       `Speed: ${((gpsFixed() ? state.gpsSpeed : state.bleConnected ? state.bleSpeed : 0) * 3.6).toFixed(1)} km/h\n\nRecent samples (ms,W,rpm,m/s):\n` +
       recent.slice(-6).map((row) => row.trim().split(",").slice(0,4).join(",")).join("\n") +
       "\n\nSAVE FIT ends recording.\nOriginal CSV is retained." + (state.fitPath ? `\nSaved: ${state.fitPath}` : "");
+    applyDashboard();
   }
 
   function flushWriter() {
@@ -217,16 +310,19 @@
       state.writer = state.pending.splice(0, 60);
     if (!state.sdReady || state.sdBusy) return;
     if (state.writer.length) {
+      state.sdWriteUntil=now()+600;
       state.currentRecord.rows.push(...state.writer);
       state.writer = [];
     }
     if (!state.audio && state.pending.length >= 60) {
+      state.sdWriteUntil=now()+600;
       state.writer = state.pending.splice(0, 60);
       state.currentRecord.rows.push(...state.writer);
       state.writer = [];
     }
   }
   function createRecord() {
+    state.sdWriteUntil=now()+600;
     if (gpsFixed() || state.gps === "stale" || state.networkTime) state.logDate = localDate().toISOString().slice(0, 10);
     const date = state.logDate;
     const directory = date ? `/LOG/${date}` : "/LOG";
@@ -477,6 +573,9 @@
             : "BLE connection/GATT discovery failed. Return to the list and retry.";
           if (state.autoFavorites.length) beginBle('connect', state.autoFavorites.shift());
           else state.manualPairing = false;
+        } else if(operation.device.profile==='HRS'){
+          state.heartConnected=true;state.heartValid=true;state.heartAt=state.seconds;
+          state.manualPairing=false;showPage();
         } else {
           state.bleConnected = true; state.bleName = operation.device.name;
           state.connectedDevice = operation.device;
@@ -511,6 +610,7 @@
 
   $("screen-meter-button").onclick = $("boot-key").onclick = () => showPage("settings-dialog");
   $("settings-back").onclick = () => showPage();
+  $('reset-layout').onclick=resetDashboard;
   $("settings-meter").onclick = $("choose-meter").onclick = openMeterDialog;
   for (const [button, page] of [["language", "language-page"], ["wifi", "wifi-page"], ["sound", "sound-page"]])
     $(`settings-${button}`).onclick = () => showPage(page);
@@ -572,6 +672,8 @@
   $("gps-speed-input").oninput = (event) => { state.gpsSpeed = Number(event.target.value) / 3.6; render(); };
   $("ble-speed-input").oninput = (event) => { state.bleSpeed = Number(event.target.value) / 3.6; render(); };
   $("wind-valid").onchange = (event) => { state.windValid = event.target.checked; render(); };
+  $('heart-input').oninput=(event)=>{state.heartRate=Math.max(1,Math.min(65535,Math.round(Number(event.target.value)||150)));state.heartAt=state.seconds;render();};
+  $('heart-valid').onchange=(event)=>{state.heartValid=event.target.checked;state.heartAt=state.seconds;render();};
   $("posture-input").onchange = (event) => { state.postureEnvironment = event.target.value; if (event.target.value === "absent") state.postureConnected = false; render(); };
   $("sd-ready").onchange = (event) => {
     state.sdReady = event.target.checked;
@@ -637,9 +739,16 @@
   }, 20);
 
   window.aeroProbeSim = {
+    resetDashboard,
+    dashboardSettings(){return JSON.parse(JSON.stringify(dashboard));},
+    setDashboard(value){if(!validDashboard(value))return false;dashboard=JSON.parse(JSON.stringify(value));applyDashboard();persistDashboard();return true;},
     connect, disconnect, openMeterDialog, step, showPage, browse, recording, download, saveFit, setLanguage,
     reset() { state.samples = []; render(); },
     setInput(values) {
+      if('heartRate' in values){state.heartRate=Number(values.heartRate);state.heartAt=state.seconds;}
+      if('heartValid' in values){state.heartValid=Boolean(values.heartValid);state.heartAt=state.seconds;}
+      if('sdWrite' in values)state.sdWriteUntil=values.sdWrite?now()+600:0;
+      if('sdWriteError' in values)state.sdWriteError=Boolean(values.sdWriteError);
       for (const field of ["power", "cadence", "virtualPower", "virtualCadence"])
         if (field in values) state[field] = Number(values[field]);
       if ("wind" in values) state.wind = Number(values.wind) / 3.6;

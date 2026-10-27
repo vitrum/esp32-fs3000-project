@@ -35,11 +35,12 @@ public:
   }
 
   bool takeNext(bool wifiBusy, bool bleBusy, bool powerConnected, bool postureConnected,
-                SavedConnections::Ble &entry) {
+                SavedConnections::Ble &entry, bool heartConnected = false) {
     if (stopped_ || waiting_ || wifiBusy || bleBusy) return false;
     while (next_ < count_) {
       entry = entries_[next_++];
-      if (entry.role == SavedConnections::Role::Power ? powerConnected : postureConnected) continue;
+        if (entry.role == SavedConnections::Role::Power ? powerConnected :
+          entry.role == SavedConnections::Role::Posture ? postureConnected : heartConnected) continue;
       waiting_ = true;
       return true;
     }

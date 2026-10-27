@@ -9,7 +9,7 @@
 class SavedConnections {
 public:
   static constexpr uint8_t kCapacity = 4;
-  enum class Role : uint8_t { Power, Posture };
+  enum class Role : uint8_t { Power, Posture, Heart };
   struct Wifi { char ssid[33]; char password[65]; };
   struct Ble { char address[18]; uint8_t addressType; Role role; };
   struct Favorite { Ble device; char name[32]; };
@@ -168,7 +168,7 @@ private:
   }
   static bool validBle(const Ble &entry) {
     if (!terminated(entry.address) || strlen(entry.address) != 17 || entry.addressType > 3 ||
-        (entry.role != Role::Power && entry.role != Role::Posture)) return false;
+        (entry.role != Role::Power && entry.role != Role::Posture && entry.role != Role::Heart)) return false;
     for (unsigned index = 0; index < 17; ++index)
       if (index % 3 == 2 ? entry.address[index] != ':' :
           !std::isxdigit(static_cast<unsigned char>(entry.address[index]))) return false;

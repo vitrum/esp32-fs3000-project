@@ -42,7 +42,8 @@ Use other existing scenario names with `-k` as needed. Check
 | --- | --- |
 | Real LVGL aero layout, Chinese glyph coverage, language-switch rendering and heap/pixels | `test/host/ui_language_test.cpp`, native build under `test/host/ui/` |
 | FS3000 calibration, wind vector, BME280, power key, disabled audio | `test/host/sensors_power_test.cpp` |
-| BLE scanning, manager, CPS/FTMS/CSC/posture parsing, diagnostics and log queues | `test/host/ble_diagnostics_test.cpp` |
+| BLE scanning, manager, CPS/FTMS/CSC/posture/HRS parsing and log queues (phone diagnostics removed) | `test/host/ble_diagnostics_test.cpp` |
+| Dashboard layout/hit targets/gestures/rendering, SD activity and CRC layout settings | `test/host/ui_language_test.cpp`, `test/host/system_coexistence_test.cpp` |
 | Explicit BLE favorites, CRC persistence, name filtering and crowded-scan priority | `test/host/ble_diagnostics_test.cpp` (`ble_runtime`) |
 | Favorite-first startup/visible-scan queues, cancellation and connected-role skipping | `test/host/system_coexistence_test.cpp` (`system_storage`) |
 | USB SD read-only controller, sector bounds, eject and FATFS ownership exclusion | `test/host/system_coexistence_test.cpp` (`system_usb_storage`, `system_storage`) |

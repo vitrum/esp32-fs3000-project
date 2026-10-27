@@ -1,5 +1,4 @@
 #include "ble_manager.h"
-#include "ble_diagnostics.h"
 #include "csv_logger.h"
 #include "fit_export.h"
 #include "recording_journal.h"
@@ -136,6 +135,9 @@ static void wifiTests() {
     assert(socket->frames.back().find("inf") == std::string::npos);
     assert(socket->frames.back().find("\"windValid\":false") != std::string::npos);
     assert(socket->frames.back().find("\"cda\":-1.0000") != std::string::npos);
+    assert(socket->frames.back().find("\"hr\":null") != std::string::npos);
+    web.broadcastTelemetry(2, 250, 90, 8, 10, true, 0, 0, 1.225, 1, false, .3f, 1792483200, false, false, 0, 0, 165, true);
+    assert(socket->frames.back().find("\"hr\":165") != std::string::npos);
     web.broadcastTelemetry(2, 250, 90, 8, 10, true, 0, 0, 1.225, 1, true, 0.3125f, 1792483200);
     assert(socket->frames.back().find("\"cda\":0.3125") != std::string::npos);
     assert(socket->frames.back().find("\"utc\":1792483200") != std::string::npos);
@@ -456,6 +458,7 @@ static void savedConnectionTests() {
 
 #include "usb_sd_export.h"
 #include "usb_sd_storage.h"
+#include "dashboard_settings.h"
 
 static void usbStorageTests() {
   bool enabled = true;
@@ -529,6 +532,21 @@ static void usbOwnershipTests() {
 }
 
 static void storageTests() {
+  DashboardLayout dashboard;
+  DashboardLayout::Settings dashboardSettings;
+  assert(DashboardSettings::load(dashboardSettings));
+  dashboard.move(0, 4);
+  dashboard.cycle(2);
+  assert(DashboardSettings::save(dashboard.settings()));
+  assert(DashboardSettings::load(dashboardSettings) && dashboardSettings.order[4] == 0);
+  Preferences::failWrite = true;
+  dashboard.reset();
+  assert(!DashboardSettings::save(dashboard.settings()));
+  Preferences::failWrite = false;
+  assert(DashboardSettings::load(dashboardSettings) && dashboardSettings.order[4] == 0);
+  Preferences::bytes["aero-ui/dashboard"].back() ^= 1;
+  assert(!DashboardSettings::load(dashboardSettings));
+  Preferences::bytes.erase("aero-ui/dashboard");
   usbStorageTests();
   savedConnectionTests();
   journalTests();

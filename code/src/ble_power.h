@@ -20,6 +20,7 @@ struct BlePowerDevice {
   uint8_t addressType;
   bool postureSensor;
   bool favorite;
+  bool heartRate;
 };
 
 // BLE GATT Central supporting Cycling Power, FTMS trainers, and CSC sensors.

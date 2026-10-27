@@ -179,15 +179,59 @@ a board; no automatic flashing is performed.
 
 ### Dashboard And Live Web UI
 
-The 240x320 dashboard uses unframed metric rows, horizontal separators and a
-common right edge for the large Zone/wind/power readings. Zone uses 40px type.
-The aero block is a production `AeroZoneView` with fixed columns separated by
-12px: title and short posture description on the left, Zone on the right, and
-an independent CdA/unit bottom row separated by a horizontal line. Each text
-has a fixed height; long captions no longer compete with the coefficient row.
-The secondary CdA number uses 14px at the lower right. Wind/power units remain
-small on the left. Settings is a gear in the top status row. GPS hugs the left
-edge; the spinner and satellite count alternate in one slot to the icon's right.
+The 240x320 dashboard is a production `DashboardView` with a 28px black status
+bar, white 16px GPS/settings/clock content, and SD activity colors. Horizontal
+padding is 2px at the outer status edges. SD and settings each have a separate
+44x44px transparent hit target, at x=48 and x=94. These do not overlap one another.
+Data starts at y=44, outside both hit targets; the visual bar remains only 28px.
+
+Five unframed rows (Zone/CdA, wind, power, cadence, heart rate) have fixed left
+labels/units and right-aligned values. A stationary press of at least 80ms followed
+by release cycles 20/28/40/48px preferred
+number sizes, using 36/44/56/64px row heights. A 272px budget with 2px separators
+fits three largest rows and two compact rows. Most recently enlarged rows have
+priority; other effective levels shrink as needed, never hiding a data group.
+Numbers that exceed their column use a smaller font without resizing the row.
+Large aero rows show a short posture description; compact rows retain CdA.
+Touches shorter than 80ms do not resize; stationary holds have no upper cutoff
+and resize only once on release. The previous narrow 300..699ms window was
+removed because natural short taps and deliberate long presses were both lost.
+Accepted resize/reorder releases must be at least 180ms apart. A new press may
+begin inside that interval and still succeed if its release is late enough.
+Motion under 12px is tolerated as finger jitter. Hold at least 600ms and move
+vertically at least 12px to reorder; horizontal swipes do not become drags.
+Pointer capture/press lock
+keeps the original row, a target is highlighted, and release commits one action.
+Horizontal swipes, canceled/outside drops and drag releases cannot become taps.
+Long-press the refresh icon in SETTINGS to restore the default layout.
+
+Layout order/effective levels persist after 800ms idle in CRC/version-checked
+`aero-ui/dashboard`; invalid stores fall back to defaults, failed writes retry
+without replacing the last saved blob. Language changes keep readings/order.
+SD grey means unmounted/unavailable, green means available/idle, red plus a
+250ms toggled red dot means actual SD write activity (including CSV/FIT metadata).
+A 600ms visual hold exposes brief writes. Write failure shows a steady red
+warning, not a forever-blinking activity dot. Tracking uses actual SDSPI write
+commands; RAM buffering, Flash journal/NVS and SD/USB reads do not count as writes.
+Physical card removal becomes known when a subsequent status/I/O check fails.
+
+Phone BLE diagnostics, replay GATT, advertising and command reception have been
+removed. USB serial logging and bounded sensor inboxes remain. Central roles are
+power, posture and heart rate; the existing three-link budget is retained.
+Standard HRS 0x180D/0x2A37 heart notifications support uint8/uint16 bpm, contact
+flags, energy and RR bounds. Disconnect, unsupported contact and >5s stale data
+display `--`; they are not valid zero samples. Successful heart connections are
+saved with their address type/role and tried once at startup. Discover them from
+SETTINGS > POWER > SCAN BLE DEVICES; HRS rows connect to the heart client.
+This iteration adds heart rate to LCD and Web only (`hr` integer or null);
+CSV, FIT and Flash journal schemas remain unchanged. Heart-rate recording/export
+requires a separate versioned schema/recovery change; it is not claimed here.
+
+Native tests enumerate all 1024 five-row size combinations, render with actual
+LVGL in both languages, verify hitbox separation/text/heap bounds, and exercise
+gesture timing/cancel/wrap, NVS corruption/write failure, SD writes and HRS packets.
+Browser regression runs 126 checks at desktop/mobile sizes; real pointer tests
+cover tap, hold-drag and clicks in the 28..44px expanded header area.
 The live Web page keeps CdA as its primary
 aero value with the same unframed visual structure: one column on
 phones, instrument plus supporting controls/records on desktop. It has no
@@ -217,7 +261,7 @@ Actual LCD rendering/touch targets and the real network remain hardware gates.
 
 | Layer | Production code exercised | Hardware dependencies |
 | --- | --- | --- |
-| Native regression | BLE scanner/manager/decoders/diagnostics, GPS, Wi-Fi lifecycle/routes, real CSV writer, SD download, FIT export, sensor drivers, power key, disabled audio and UI guards | Mocked hardware/RTOS, POSIX files for CSV integration |
+| Native regression | BLE scanner/manager/decoders/HRS, GPS, Wi-Fi lifecycle/routes, real CSV writer, SD download, FIT export, sensor drivers, power key, disabled audio and UI guards | Mocked hardware/RTOS, POSIX files for CSV integration |
 | Unity / ESP32-S3 QEMU | BLE inbox copy/FIFO, bounds/overflow, generation reset, cross-task transfer; log ring gaps/cursors; touch guards; FIT parser/writer and CRC | Real IDF FreeRTOS, emulated ESP32-S3 CPU/peripherals |
 | Unity / physical ESP32-S3 | Same ten Unity cases with the board's real CPU and FreeRTOS | Physical board and serial connection |
 
@@ -602,9 +646,9 @@ boot. Leave Wi-Fi off and audio disabled in both initial stages.
 
 ### Remaining Hardware Gates
 
-- Run production firmware with an actual NMEA module, both BLE sensors, Wi-Fi
-  WebSocket clients/downloads and a FAT32 SD card simultaneously. Repeat scans
-  with diagnostics disconnected, connected and RAW enabled.
+- Run production firmware with an actual NMEA module, power/posture/heart BLE
+  sensors, Wi-Fi WebSocket clients/downloads and a FAT32 SD card simultaneously.
+  Repeat scans while checking power packet continuity and heart freshness.
 - During Wi-Fi reconnect and SD contention, compare sequence/sample counts,
   GPS UART overflow statistics, BLE queue drops and CSV/FIT integrity. Record
   observed discovery latency and disconnect rate; no simulated threshold is a

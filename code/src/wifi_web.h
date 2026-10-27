@@ -44,7 +44,8 @@ public:
                           float vAirMps, bool windValid, float yawDeg,
                           float postureDeg, float rho, int powerSrc, bool logging,
                           float cda = -1, uint32_t utc = 0, bool armed = false,
-                          bool saving = false, uint32_t durationMs = 0, uint32_t skipped = 0);
+                          bool saving = false, uint32_t durationMs = 0, uint32_t skipped = 0,
+                          uint16_t heartRate = 0, bool heartValid = false);
 
   void startSmartConfig();     // 主动触发配网
   void clearCredentials();     // 清除已存凭据

@@ -29,8 +29,8 @@ SUITES = {
     ),
     "system_coexistence": (
         ["system_coexistence_test.cpp"],
-        ["gps_time.cpp", "runtime_log.cpp", "ble_diagnostics.cpp", "ble_scan.cpp",
-         "ble_power.cpp", "ble_posture.cpp", "ble_manager.cpp", "wifi_web.cpp", "csv_logger.cpp",
+        ["gps_time.cpp", "runtime_log.cpp", "ble_scan.cpp",
+         "ble_power.cpp", "ble_posture.cpp", "ble_heart_rate.cpp", "ble_manager.cpp", "wifi_web.cpp", "csv_logger.cpp",
          "fit_export.cpp", "fit_activity.cpp", "fs3000.cpp"],
         ["PASS coexistence:"],
     ),
@@ -52,11 +52,11 @@ SUITES = {
     "ble_runtime": (
         ["ble_diagnostics_test.cpp"],
         [
-            "runtime_log.cpp", "ble_diagnostics.cpp", "ble_scan.cpp",
-            "ble_power.cpp", "ble_posture.cpp", "ble_manager.cpp",
+            "runtime_log.cpp", "ble_scan.cpp",
+            "ble_power.cpp", "ble_posture.cpp", "ble_heart_rate.cpp", "ble_manager.cpp",
         ],
         ["PASS BLE scanner:", "PASS BLE inbox:", "PASS BLE manager/data:",
-         "PASS BLE diagnostics:"],
+         "PASS BLE runtime:"],
     ),
 }
 for scenario, marker in {"wifi": "PASS WiFi:", "storage": "PASS CSV storage:",

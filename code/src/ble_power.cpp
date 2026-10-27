@@ -345,6 +345,7 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     bool speedCadence;
     bool postureSensor;
     bool supported;
+    bool heartRate;
     uint8_t addressType;
   };
   static Candidate candidates[32];
@@ -373,7 +374,8 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     const std::string name = ad->getName();
     const bool postureSensor = ad->isAdvertisingService(NimBLEUUID("0xffe0")) ||
       name.compare(0, strlen(BLE_POSTURE_NAME_PREFIX), BLE_POSTURE_NAME_PREFIX) == 0;
-    const bool supported = cyclingPower || fitnessMachine || speedCadence || postureSensor;
+    const bool heartRate = ad->isAdvertisingService(NimBLEUUID("0x180d"));
+    const bool supported = cyclingPower || fitnessMachine || speedCadence || postureSensor || heartRate;
     if (name.empty() && !supported) continue;
 
     const std::string address = ad->getAddress().toString();
@@ -401,6 +403,7 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     c.speedCadence = speedCadence;
     c.postureSensor = postureSensor;
     c.supported = supported;
+    c.heartRate = heartRate;
     // 关键：记录真实地址类型，供后续 connect 使用（见 BlePowerDevice 注释）。
     c.addressType = (uint8_t)ad->getAddress().getType();
     if (candidateCount < 32) candidates[candidateCount++] = c;
@@ -422,6 +425,7 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
       device.postureSensor = c.postureSensor;
       device.addressType = c.addressType;
       device.favorite = saved.isFavorite(c.address, c.addressType);
+      device.heartRate = c.heartRate;
     }
 
   AppLog.printf("[BLE] scan complete: %u connectable device(s)\n",

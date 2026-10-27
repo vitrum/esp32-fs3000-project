@@ -54,6 +54,7 @@ static const char WIFI_WEB_INDEX_HTML[] PROGMEM = R"HTML(
     <div class="metric cda"><div class="metric-label">估算 CdA<span class="unit">m²</span></div><div class="value" id="cda">--</div><div class="metric-note"><span id="cda-state">等待有效数据</span><span id="zone">Z--</span></div></div>
     <div class="metric"><div class="metric-label">风速<span class="unit">km/h</span></div><div class="value" id="vair">--</div></div>
     <div class="metric power"><div class="metric-label">功率<span class="unit">W</span></div><div class="value" id="p">--</div></div>
+    <div class="metric"><div class="metric-label">心率<span class="unit">bpm</span></div><div class="value" id="hr">--</div></div>
     <div class="instrument-footer"><div class="cadence">踏频<span id="cad">--</span><span class="unit">rpm</span></div><button class="icon-button" id="settings-button" title="记录与连接设置" aria-label="记录与连接设置" aria-controls="controls-panel" aria-expanded="true"><span class="icon" aria-hidden="true">⚙</span></button></div>
     <section class="section"><div class="section-heading"><h2>最近 60 次采样</h2><div class="trend-legend"><span>功率</span><span>风速</span></div></div><canvas id="trend" role="img" aria-label="功率与风速变化趋势"></canvas></section>
   </section>
@@ -94,6 +95,7 @@ function setConn(ok){
     for(const id of ['p','cad','vg','vair','yaw','posture','rho','src','cda']) document.getElementById(id).textContent='--';
     document.getElementById('cda-state').textContent='等待有效数据';
     document.getElementById('zone').textContent='Z--';
+    document.getElementById('hr').textContent='--';
     document.getElementById('logstate').textContent='记录状态未知';
     document.getElementById('record-duration').textContent='--:--:--';
     document.getElementById('log-icon').className='';
@@ -112,6 +114,7 @@ function render(d){
   document.getElementById('cad').textContent    = fmt(d.cad, 0);
   document.getElementById('vg').textContent     = fmt(finite(d.vg) ? d.vg*3.6 : null, 1);
   document.getElementById('vair').textContent   = d.windValid ? fmt(finite(d.vair) ? d.vair*3.6 : null, 1) : '--';
+  document.getElementById('hr').textContent = finite(d.hr) && d.hr > 0 ? fmt(d.hr, 0) : '--';
   document.getElementById('yaw').textContent    = d.windValid ? fmt(d.yaw, 1) : '--';
   document.getElementById('posture').textContent= fmt(d.posture, 1);
   document.getElementById('rho').textContent    = fmt(d.rho, 3);

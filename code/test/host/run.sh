@@ -18,7 +18,7 @@ trap 'rm -f "$binary"' EXIT HUP INT TERM
 "$binary"
 "${CXX:-c++}" -std=c++17 -pthread \
   -Itest/host/mocks -Isrc \
-  test/host/ble_diagnostics_test.cpp src/runtime_log.cpp src/ble_diagnostics.cpp \
-  src/ble_scan.cpp src/ble_power.cpp src/ble_posture.cpp src/ble_manager.cpp \
+  test/host/ble_diagnostics_test.cpp src/runtime_log.cpp \
+  src/ble_scan.cpp src/ble_power.cpp src/ble_posture.cpp src/ble_heart_rate.cpp src/ble_manager.cpp \
   -o "$binary"
 "$binary"

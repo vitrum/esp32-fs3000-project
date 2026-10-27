@@ -440,7 +440,8 @@ void WifiWeb::broadcastTelemetry(uint32_t tMs, float powerW, float cadRpm,
                                  float vgMps, float vAirMps, bool windValid,
                                  float yawDeg, float postureDeg, float rho,
                                  int powerSrc, bool logging, float cda, uint32_t utc,
-                                 bool armed, bool saving, uint32_t durationMs, uint32_t skipped) {
+                                 bool armed, bool saving, uint32_t durationMs, uint32_t skipped,
+                                 uint16_t heartRate, bool heartValid) {
   if (!_connected || _ws.count() == 0) return;
 
   const char *srcName = powerSrc == 3 ? "VIRTUAL"
@@ -454,17 +455,19 @@ void WifiWeb::broadcastTelemetry(uint32_t tMs, float powerW, float cadRpm,
   if (!isfinite(rho)) rho = 0.0f;
   if (!isfinite(cda) || !windValid || powerSrc == 0) cda = -1;
   if (utc == 0) utc = unixSec();
-  char buf[448];
+  char heart[8] = "null";
+  if (heartValid && heartRate) snprintf(heart, sizeof(heart), "%u", heartRate);
+  char buf[512];
   snprintf(buf, sizeof(buf),
            "{\"t\":%lu,\"p\":%.1f,\"cad\":%.0f,\"vg\":%.3f,\"vair\":%.3f,"
            "\"windValid\":%s,\"yaw\":%.1f,\"posture\":%.1f,"
            "\"rho\":%.4f,\"src\":\"%s\","
-           "\"log\":%s,\"cda\":%.4f,\"utc\":%lu,\"armed\":%s,\"saving\":%s,\"duration\":%lu,\"skipped\":%lu}",
+           "\"log\":%s,\"cda\":%.4f,\"utc\":%lu,\"armed\":%s,\"saving\":%s,\"duration\":%lu,\"skipped\":%lu,\"hr\":%s}",
            (unsigned long)tMs, powerW, cadRpm, vgMps, vAirMps,
            windValid ? "true" : "false", yawDeg,
            postureDeg, rho, srcName, logging ? "true" : "false", cda,
            (unsigned long)utc, armed ? "true" : "false", saving ? "true" : "false",
-           (unsigned long)durationMs, (unsigned long)skipped);
+           (unsigned long)durationMs, (unsigned long)skipped, heart);
 
   _ws.textAll(buf);
 }

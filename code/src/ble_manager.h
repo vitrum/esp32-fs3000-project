@@ -3,10 +3,11 @@
 #include "ble_power.h"
 #include "ble_posture.h"
 #include "ble_scan.h"
+#include "ble_heart_rate.h"
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 
-enum class BleOpKind : uint8_t { Scan, Connect, Posture, Stop };
+enum class BleOpKind : uint8_t { Scan, Connect, Posture, Heart, Stop };
 enum class BleManagerState : uint8_t { Idle, Scanning, Connecting, Posture, Suspended };
 
 struct BleCommand {
@@ -29,7 +30,7 @@ struct BleOutcome {
 
 class BleManager {
 public:
-  BleManager(BlePowerMeter &power, BlePosture &posture) : power_(power), posture_(posture) {}
+  BleManager(BlePowerMeter &power, BlePosture &posture, BleHeartRate *heart = nullptr) : power_(power), posture_(posture), heart_(heart) {}
   bool begin();
   bool enqueue(BleOpKind kind, const char *address = nullptr, uint8_t type = 0xFF);
   bool takeOutcome(BleOutcome &out);
@@ -47,6 +48,7 @@ private:
   void releaseQueues();
   BlePowerMeter &power_;
   BlePosture &posture_;
+  BleHeartRate *heart_;
   QueueHandle_t commands_ = nullptr;
   QueueHandle_t outcomes_ = nullptr;
   SemaphoreHandle_t stopped_ = nullptr;

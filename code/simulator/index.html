@@ -220,6 +220,26 @@
       .wide { grid-column: auto; }
     }
   </style>
+  <style>
+    .device .top{bottom:auto;height:28px;background:#000;z-index:2;}
+    .device .badge{left:48px;top:0;width:44px;height:44px;z-index:3;}
+    .log-symbol{position:absolute;left:10px;top:4px;width:20px;height:20px;font-size:16px;line-height:20px;}
+    .sd-dot{position:absolute;left:34px;top:11px;width:6px;height:6px;border-radius:50%;background:#ef4444;}
+    .device .meter-button{left:94px;top:0;width:44px;height:44px;color:#fff;font-size:16px;z-index:3;}
+    #settings-icon{position:absolute;left:12px;top:4px;width:20px;height:20px;line-height:20px;}
+    .device .time{right:2px;top:4px;width:98px;height:20px;line-height:20px;font-size:16px;color:#fff;z-index:3;pointer-events:none;}
+    .device #gps-indicator{left:2px;top:4px;height:20px;font-size:16px;line-height:20px;color:#fff;z-index:3;pointer-events:none;}
+    .metric-stack{position:absolute;left:12px;top:44px;width:216px;height:272px;}
+    .metric-row{position:absolute;left:0;width:216px;border:0;border-bottom:1px solid #cbd5e1;border-radius:0;touch-action:none;user-select:none;}
+    .metric-row .title{position:absolute;left:0;top:0;width:72px;height:18px;font-size:14px;line-height:18px;color:#475569;white-space:nowrap;}
+    .metric-row .row-unit{position:absolute;left:0;top:18px;width:72px;height:18px;font-size:14px;line-height:18px;color:#64748b;}
+    .metric-row .reading{position:absolute;left:80px;right:auto;top:0;width:136px;height:100%;display:flex;align-items:center;justify-content:flex-end;font-size:40px;line-height:1;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;color:#172033;}
+    .metric-row #zone-reading,.metric-row #power-reading{color:#2563eb;}
+    .metric-row #cda-unit{left:0;top:18px;width:30px;height:18px;}
+    .metric-row #cda-reading{left:30px;right:auto;top:18px;width:48px;height:18px;font-size:14px;line-height:18px;text-align:left;}
+    .metric-row.dragging{background:#dbeafe;}
+    .metric-row.drop-target{background:#bbf7d0;}
+  </style>
 </head>
 <body>
 <main>
@@ -229,36 +249,15 @@
     <section aria-label="240 by 320 LCD preview">
       <div class="device-shell">
       <div class="device">
-        <div class="top"><button type="button" class="badge" id="log-status" title="Recording stopped; open ride log" aria-label="Open ride log">&#9679;</button><button type="button" class="meter-button" id="screen-meter-button" title="Settings" aria-label="Settings">⚙</button></div>
+        <div class="top"><button type="button" class="badge" id="log-status" title="SD status; open ride log" aria-label="Open ride log"><span class="log-symbol">▣</span><span class="sd-dot" id="sd-write-dot" hidden></span></button><button type="button" class="meter-button" id="screen-meter-button" title="Settings" aria-label="Settings"><span id="settings-icon">⚙</span></button></div>
         <div class="time" id="clock-reading">--:--:--</div>
         <span id="gps-indicator"><span id="gps-icon" aria-label="GPS">⌖</span><span class="gps-slot"><span id="gps-spinner" hidden></span><span id="gps-satellites">--</span></span></span>
-        <div class="rule"></div>
-        <div class="card cda-card">
-          <div class="cda-details">
-            <div class="cda-title">AERO ZONE</div>
-            <span class="cda-unit" id="cda-unit">CdA / m2</span><div class="cda-reading" id="cda-reading">--</div>
-            <div class="posture-reading" id="posture-reading">WAITING FOR DATA</div>
-            <div class="aero-rule"></div>
-          </div>
-          <div class="zone-block"><span class="zone-number" id="zone-reading">Z--</span></div>
-        </div>
-        <div class="divider divider-cda"></div>
-        <div class="card wind-card">
-          <div class="wind-row">
-            <span class="wind-title" id="wind-title">WIND</span>
-            <span class="metric-unit">km/h</span>
-            <span class="wind" id="wind-reading">34.2</span>
-          </div>
-        </div>
-        <div class="divider divider-wind"></div>
-        <div class="card power-card">
-          <div class="avg3">POWER</div>
-          <span class="metric-unit">W</span>
-          <div class="power" id="power-reading">0</div>
-        </div>
-        <div class="divider divider-power"></div>
-        <div class="bottom">
-          <div><div class="cadence-label" id="cadence-label">CADENCE / rpm</div><div class="cadence-value" id="cadence-reading">0</div></div>
+        <div class="metric-stack" id="dashboard-rows">
+          <div class="metric-row" data-metric="0"><div class="title cda-title">ZONE</div><span class="cda-unit" id="cda-unit">CdA</span><div class="cda-reading" id="cda-reading">--</div><span id="posture-reading" hidden></span><span class="reading" id="zone-reading">Z--</span></div>
+          <div class="metric-row" data-metric="1"><span class="title" id="wind-title">WIND</span><span class="row-unit">km/h</span><span class="reading" id="wind-reading">34.2</span></div>
+          <div class="metric-row" data-metric="2"><div class="title avg3">POWER</div><span class="row-unit">W</span><div class="reading" id="power-reading">0</div></div>
+          <div class="metric-row" data-metric="3"><div class="title" id="cadence-label">CADENCE</div><span class="row-unit">rpm</span><div class="reading" id="cadence-reading">0</div></div>
+          <div class="metric-row" data-metric="4"><div class="title" id="heart-title">HEART</div><span class="row-unit">bpm</span><div class="reading" id="heart-reading">--</div></div>
         </div>
         <div class="touch-dialog" id="touch-dialog" aria-hidden="true">
           <div class="dialog-heading"><button type="button" class="dialog-close" id="dialog-close" aria-label="Back">‹ BACK</button><span>POWER SOURCE</span></div>
@@ -295,7 +294,7 @@
           <div class="virtual-hint">Drag either slider to update live power and cadence.</div>
         </div>
         <section class="screen-page" id="settings-dialog" hidden>
-          <header class="page-header"><button id="settings-back" type="button">‹ BACK</button>SETTINGS</header>
+          <header class="page-header"><button id="settings-back" type="button">‹ BACK</button>SETTINGS<button id="reset-layout" type="button" title="Reset dashboard layout" aria-label="Reset dashboard layout">↻</button></header>
           <div class="settings-grid">
             <button id="settings-meter" type="button">⏻<br>POWER</button>
             <button id="settings-language" type="button">☷<br>LANG</button>
@@ -365,6 +364,9 @@
     <section class="controls" aria-label="Simulation inputs and controls">
       <div class="panel">
         <h2>Sensor Simulation</h2>
+        <label for="heart-input">Heart rate (bpm)</label>
+        <input id="heart-input" type="number" min="1" max="65535" step="1" value="150">
+        <label><input id="heart-valid" type="checkbox">Heart sensor notifications valid</label>
         <label for="wind-input">Wind Speed <span class="value" id="wind-value">34.2 km/h</span></label>
         <input id="wind-input" type="range" min="0" max="54" step="0.1" value="34.2">
       </div>

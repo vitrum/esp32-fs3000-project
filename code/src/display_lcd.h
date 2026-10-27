@@ -12,7 +12,7 @@
 #include "csv_logger.h"   // SdFileEntry
 #include "ui_navigation_guard.h"
 #include "ui_touch_buffer.h"
-#include "aero_zone_view.h"
+#include "dashboard_view.h"
 
 // ST7789 240x320 display for wind, CdA, live power, cadence, and status.
 class DisplayLcd {
@@ -28,7 +28,7 @@ public:
   // 取出用户确认连接的地址，并带回该设备在扫描时记录的真实地址类型
   // （addressType 可为 nullptr）。
   bool takeBleConnectRequest(char *address, size_t capacity,
-                             uint8_t *addressType = nullptr, bool *postureDevice = nullptr);
+                             uint8_t *addressType = nullptr, bool *postureDevice = nullptr, bool *heartDevice = nullptr);
   bool takeBleCancelRequest();
   // 主循环处理完一次 BLE 操作后调用，允许 UI 再次接受 BLE 请求。
   void clearBleRequestInFlight() { bleRequestInFlight_ = false; }
@@ -102,6 +102,7 @@ public:
   // fix=是否已定位；sat=卫星数。搜星中显示旋转动画，定位后显示绿色图标+卫星数。
   void updateGpsIndicator(bool enabled, bool fix, uint8_t sat);
   void updateClock(uint32_t utc);
+  void updateHeartRate(uint16_t bpm, bool valid) { dashboard_.heart(bpm, valid); }
   float estimatedCda() const { return estimatedCda_; }
   // 主循环回填 GPS 模块检测结果。present=是否找到；done=是否已完成一次判定。
   // 用于"点击 GPS 按钮时提示找不到模块"。
@@ -127,7 +128,7 @@ private:
   static void onUsbStorageBack(lv_event_t *event);
   static void onUsbStorageMode(lv_event_t *event);
   float estimatedCda_ = -1;
-  AeroZoneView aeroZone_;
+  DashboardView dashboard_;
   lv_obj_t *windLabel_ = nullptr;
   lv_obj_t *powerLabel_ = nullptr;
   lv_obj_t *avg3Label_ = nullptr;
@@ -292,6 +293,7 @@ private:
   uint8_t requestedBleAddressType_ = 0xFF;
   bool requestedBleCancel_ = false;
   bool requestedBlePosture_ = false;
+    bool requestedBleHeart_ = false;
   bool wifiSetupRequested_ = false;
   bool bleOperationActive_ = false;
   char requestedBleAddress_[18] = {};
@@ -333,6 +335,7 @@ private:
   static void onBackNavigation(lv_event_t *event);
   static void onPowerSourceButton(lv_event_t *event);
   static void onSettingsButton(lv_event_t *event);
+  static void onResetDashboard(lv_event_t *event);
   static void onSettingsBack(lv_event_t *event);
   static void onRideLogButton(lv_event_t *event);
   static void onRideLogBack(lv_event_t *event);

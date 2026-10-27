@@ -1,5 +1,4 @@
 #include "ble_manager.h"
-#include "ble_diagnostics.h"
 #include "config.h"
 #include "runtime_log.h"
 #include "saved_connections.h"
@@ -17,7 +16,7 @@ bool BleManager::begin() {
   if (worker_) return !stopping_;
   power_.begin(BLE_DEVICE_NAME, BLE_WHEEL_CIRC_M);
   posture_.begin(BLE_DEVICE_NAME);
-  if (!bleDiagnostics.begin()) AppLog.println("[BLE-LOG] diagnostic service unavailable");
+  if (heart_) heart_->begin(BLE_DEVICE_NAME);
   commands_ = xQueueCreate(BLE_OP_QUEUE_LEN, sizeof(BleCommand));
   outcomes_ = xQueueCreate(BLE_OP_QUEUE_LEN + 1, sizeof(BleOutcome));
   stopped_ = xSemaphoreCreateBinary();
@@ -45,10 +44,9 @@ bool BleManager::enqueue(BleOpKind kind, const char *address, uint8_t type) {
   command.addressType = type;
   command.generation = generation_.load();
   if (address) snprintf(command.address, sizeof(command.address), "%s", address);
-  if (!busy() && !bleDiagnostics.setSensorBusy(true)) return false;
   pending_.fetch_add(1);
   if (xQueueSend(commands_, &command, 0) != pdTRUE) {
-    if (pending_.fetch_sub(1) == 1) bleDiagnostics.setSensorBusy(false);
+    pending_.fetch_sub(1);
     return false;
   }
   return true;
@@ -63,12 +61,13 @@ bool BleManager::takeOutcome(BleOutcome &out) {
       lastPostureFailureMs_ = millis();
     }
   }
-  if (pending_.fetch_sub(1) == 1) bleDiagnostics.setSensorBusy(false);
+  pending_.fetch_sub(1);
   if (out.success && !out.cancelled && out.address[0] &&
-      (out.kind == BleOpKind::Connect || out.kind == BleOpKind::Posture)) {
+      (out.kind == BleOpKind::Connect || out.kind == BleOpKind::Posture || out.kind == BleOpKind::Heart)) {
     SavedConnections saved;
     if (!saved.load() || !saved.rememberBle(out.address, out.addressType,
-        out.kind == BleOpKind::Connect ? SavedConnections::Role::Power : SavedConnections::Role::Posture))
+        out.kind == BleOpKind::Connect ? SavedConnections::Role::Power :
+        out.kind == BleOpKind::Heart ? SavedConnections::Role::Heart : SavedConnections::Role::Posture))
       AppLog.println("[BLE] connected, but the device profile could not be saved");
   }
   return true;
@@ -92,7 +91,7 @@ void BleManager::work() {
     out.kind = command.kind;
     snprintf(out.address, sizeof(out.address), "%s", command.address);
     out.addressType = command.addressType == 0xFF ? 0 : command.addressType;
-    bleScanner.setConnected(power_.connected() || posture_.connected() || bleDiagnostics.connected());
+    bleScanner.setConnected(power_.connected() || posture_.connected() || (heart_ && heart_->connected()));
     if (!cancellation.cancelled()) {
       switch (command.kind) {
         case BleOpKind::Scan:
@@ -117,6 +116,11 @@ void BleManager::work() {
           }
           if (!out.success) snprintf(out.error, sizeof(out.error), "%s", posture_.lastError());
           break;
+        case BleOpKind::Heart:
+          state_.store(BleManagerState::Connecting);
+          out.success = heart_ && heart_->connectDevice(command.address, command.addressType);
+          if (!out.success) snprintf(out.error, sizeof(out.error), "%s", heart_ ? heart_->lastError() : "Heart sensor unavailable");
+          break;
         case BleOpKind::Stop: break;
       }
     }
@@ -124,6 +128,7 @@ void BleManager::work() {
     if (out.cancelled) {
       if (command.kind == BleOpKind::Connect) power_.disconnect();
       if (command.kind == BleOpKind::Posture) posture_.disconnect();
+      if (command.kind == BleOpKind::Heart && heart_) heart_->disconnect();
       out.success = false;
     }
     state_.store(BleManagerState::Idle);
@@ -149,9 +154,9 @@ bool BleManager::stopWorker() {
 
 bool BleManager::suspend() {
   if (!stopWorker()) return false;
-  bleDiagnostics.suspend();
   power_.disconnect();
   posture_.disconnect();
+  if (heart_) heart_->disconnect();
   if (NimBLEDevice::isInitialized() && !NimBLEDevice::deinit(true)) {
     begin();
     return false;
@@ -163,8 +168,7 @@ bool BleManager::suspend() {
 void BleManager::tick() {
   power_.processData();
   posture_.processData();
-  bleDiagnostics.setByteRate(power_.connected() || posture_.connected() ? 500 : 1500);
-  bleDiagnostics.tick();
+  if (heart_) heart_->processData();
   const uint32_t now = millis();
   const uint32_t drops = power_.droppedPackets() + posture_.droppedPackets() + AppLog.serialLostBytes();
   if (drops != lastDropCount_ && now - lastStatsMs_ >= 5000) {

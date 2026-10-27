@@ -3,6 +3,7 @@
 #include "config.h"
 #include <cstring>
 #include "saved_connections.h"
+#include "dashboard_settings.h"
 
 extern const lv_font_t lv_font_noto_sans_sc_14;
 
@@ -169,6 +170,12 @@ void DisplayLcd::onSettingsButton(lv_event_t *) {
   lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
+void DisplayLcd::onResetDashboard(lv_event_t *) {
+  if (!g_display) return;
+  g_display->dashboard_.reset();
+  g_display->showNotice("Dashboard layout reset.");
+}
+
 void DisplayLcd::onSettingsBack(lv_event_t *) {
   if (!g_display) return;
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -231,9 +238,6 @@ bool DisplayLcd::takeRecordingRequest(bool &start) {
 void DisplayLcd::setRecording(bool recording, bool armed) {
   recording_ = recording;
   recordingArmed_ = armed;
-  if (statusLabel_)
-    lv_obj_set_style_text_color(statusLabel_, recording ? lv_color_make(22, 163, 74)
-                                                       : lv_color_make(100, 116, 139), 0);
   if (!recordButton_) return;
   if (recording || armed || fitSaving_ || recordingRequested_)
     lv_obj_add_state(recordButton_, LV_STATE_DISABLED);
@@ -467,6 +471,11 @@ void DisplayLcd::onBleDeviceSelected(lv_event_t *event) {
     snprintf(details, sizeof(details), "%s\nPosture sensor", g_display->bleDevices_[index].address);
     lv_label_set_text(g_display->bleConfirmAddressLabel_, details);
   }
+  if (g_display->bleDevices_[index].heartRate) {
+    char details[64];
+    snprintf(details, sizeof(details), "%s\nHeart Rate (HRS)", g_display->bleDevices_[index].address);
+    lv_label_set_text(g_display->bleConfirmAddressLabel_, details);
+  }
   if (g_display->bleDevices_[index].cyclingPower ||
       g_display->bleDevices_[index].fitnessMachine) {
     const char *profile = g_display->bleDevices_[index].cyclingPower
@@ -496,6 +505,9 @@ void DisplayLcd::onBleConfirm(lv_event_t *) {
   g_display->requestedBlePosture_ = g_display->bleDevices_[g_display->selectedBleDevice_].postureSensor &&
       !g_display->bleDevices_[g_display->selectedBleDevice_].cyclingPower &&
       !g_display->bleDevices_[g_display->selectedBleDevice_].fitnessMachine;
+    g_display->requestedBleHeart_ = g_display->bleDevices_[g_display->selectedBleDevice_].heartRate &&
+        !g_display->bleDevices_[g_display->selectedBleDevice_].cyclingPower &&
+        !g_display->bleDevices_[g_display->selectedBleDevice_].fitnessMachine;
   // 连同扫描时记录的地址类型一起提交，主循环透传给 connectDevice()。
   g_display->requestedBleAddressType_ =
       g_display->bleDevices_[g_display->selectedBleDevice_].addressType;
@@ -904,7 +916,7 @@ void DisplayLcd::updateGpsIndicator(bool enabled, bool fix, uint8_t sat) {
     // GPS 关闭：灰色图标，无动画
     lv_label_set_text(gpsSatelliteLabel_, "--");
     lv_obj_clear_flag(gpsSatelliteLabel_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_make(148, 163, 184), 0);
+    lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_white(), 0);
     lv_obj_add_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);
     gpsIndicatorFixed_ = false;
   } else if (fix) {
@@ -912,13 +924,13 @@ void DisplayLcd::updateGpsIndicator(bool enabled, bool fix, uint8_t sat) {
     snprintf(text, sizeof(text), "%u", (unsigned)sat);
     lv_label_set_text(gpsSatelliteLabel_, text);
     lv_obj_clear_flag(gpsSatelliteLabel_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_make(22, 163, 74), 0);
+    lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_white(), 0);
     lv_obj_add_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);
     gpsIndicatorFixed_ = true;
   } else {
     // 搜星中：橙色图标 + 旋转动画，无卫星数
     lv_obj_add_flag(gpsSatelliteLabel_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_make(217, 119, 6), 0);
+    lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_white(), 0);
     lv_obj_clear_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);
     gpsIndicatorFixed_ = false;
   }
@@ -1432,6 +1444,14 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_bg_opa(settingsPanel_, LV_OPA_COVER, 0);
   buildPanelHeader(settingsPanel_, "SETTINGS", onSettingsBack);
   settingsTitle_ = lv_obj_get_child(settingsPanel_, 1);
+  lv_obj_set_width(settingsTitle_, 108);
+  auto *reset = lv_btn_create(settingsPanel_);
+  lv_obj_set_size(reset, 32, 30);
+  lv_obj_align(reset, LV_ALIGN_TOP_RIGHT, -10, 10);
+  lv_obj_add_event_cb(reset, onResetDashboard, LV_EVENT_LONG_PRESSED, nullptr);
+  auto *resetIcon = lv_label_create(reset);
+  lv_label_set_text(resetIcon, LV_SYMBOL_REFRESH);
+  lv_obj_center(resetIcon);
 
   // 设置主页：功能入口按“一行两个并排”排布（3 行 × 2 列）。
   // 每个按钮 104×52，列起点 16 / 128，行起点 60 / 122 / 184。
@@ -1888,7 +1908,7 @@ void DisplayLcd::refreshBleDeviceButtons() {
       lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
       continue;
     }
-    const char *profile = bleDevices_[i].cyclingPower
+    const char *profile = bleDevices_[i].heartRate ? "HRS / bpm" : bleDevices_[i].cyclingPower
                               ? (bleDevices_[i].fitnessMachine
                                      ? localized("CPS + FTMS", "功率计 + 骑行台")
                                      : localized("CPS", "功率计"))
@@ -1912,21 +1932,7 @@ void DisplayLcd::refreshLanguage() {
                                    : &lv_font_montserrat_14;
   const lv_font_t *titleFont = chinese_ ? &lv_font_noto_sans_sc_14
                                         : &lv_font_montserrat_16;
-  aeroZone_.setLanguage(chinese_);
-  lv_label_set_text(windLabelTitle_, localized("WIND", "风速"));
-  lv_obj_set_style_text_font(windLabelTitle_, font, 0);
-  lv_label_set_text(avg3Label_, localized("POWER", "功率"));
-  lv_obj_set_style_text_font(avg3Label_, font, 0);
-
-
-  lv_label_set_text(powerSourceLabel_, localized("SET", "设置"));
-  lv_obj_set_style_text_font(powerSourceLabel_, titleFont, 0);
-
-  lv_label_set_text(statusLabel_, LV_SYMBOL_SAVE);
-  lv_obj_set_style_text_font(statusLabel_, &lv_font_montserrat_14, 0);
-  lv_label_set_text(cadenceLabel_, localized("CADENCE / rpm", "踏频 / rpm"));
-  lv_obj_set_style_text_font(cadenceLabel_, font, 0);
-  lv_obj_set_style_text_font(cadenceValueLabel_, &lv_font_montserrat_20, 0);
+  dashboard_.setLanguage(chinese_);
   AppLog.println("[LANG] 1 main done");
 
   lv_label_set_text(powerSourceTitle_, localized("POWER SOURCE", "功率来源"));
@@ -1945,177 +1951,93 @@ void DisplayLcd::refreshLanguage() {
   }
   lv_obj_set_style_text_font(powerSourceTitle_, titleFont, 0);
   lv_obj_set_style_text_font(powerSourceHint_, font, 0);
-  AppLog.println("[LANG] 2 powersrc done");
-
   lv_label_set_text(bleDeviceTitle_, localized("BLE DEVICES", "蓝牙设备"));
-  lv_label_set_text(bleDeviceHint_, localized("Tap a device, then confirm",
-                                               "点击设备后确认连接"));
+  lv_label_set_text(bleDeviceHint_, localized("Tap device, then confirm", "点击设备后确认连接"));
   lv_label_set_text(bleScanLabel_, localized("SCAN AGAIN", "重新扫描"));
   lv_obj_set_style_text_font(bleDeviceTitle_, titleFont, 0);
   lv_obj_set_style_text_font(bleDeviceHint_, font, 0);
   lv_obj_set_style_text_font(bleScanLabel_, font, 0);
-  if (!bleScanCompleted_)
-    lv_label_set_text(bleStatusLabel_, localized("No scan yet", "尚未扫描"));
-  else if (bleDeviceCount_ == 0)
-    lv_label_set_text(bleStatusLabel_, localized("No connectable BLE devices found",
-                                                 "未找到可连接的蓝牙设备"));
+  if (!bleScanCompleted_) lv_label_set_text(bleStatusLabel_, localized("No scan yet", "尚未扫描"));
+  else if (!bleDeviceCount_) lv_label_set_text(bleStatusLabel_, localized("No connectable BLE devices found", "未找到可连接的蓝牙设备"));
   else {
-    char scanStatus[40];
-    snprintf(scanStatus, sizeof(scanStatus),
-             chinese_ ? "找到 %u 个设备" : "%u device(s) found",
-             (unsigned)bleDeviceCount_);
-    lv_label_set_text(bleStatusLabel_, scanStatus);
+    char status[40];
+    snprintf(status, sizeof(status), chinese_ ? "找到 %u 个设备" : "%u device(s) found", (unsigned)bleDeviceCount_);
+    lv_label_set_text(bleStatusLabel_, status);
   }
   lv_obj_set_style_text_font(bleStatusLabel_, font, 0);
   refreshBleDeviceButtons();
-  AppLog.println("[LANG] 3 ble done");
-
   lv_label_set_text(bleConfirmTitle_, localized("CONFIRM DEVICE", "确认设备"));
   lv_label_set_text(bleConfirmButtonLabel_, localized("CONNECT", "连接"));
   lv_obj_set_style_text_font(bleConfirmTitle_, titleFont, 0);
   lv_obj_set_style_text_font(bleConfirmButtonLabel_, font, 0);
   lv_obj_set_style_text_font(bleConfirmAddressLabel_, font, 0);
-  lv_label_set_text(bleLoadingTitle_,
-                    localized("LOADING", "正在加载"));
-  lv_label_set_text(bleLoadingBackLabel_,
-                    localized(LV_SYMBOL_LEFT " BACK", LV_SYMBOL_LEFT " 返回"));
+  lv_label_set_text(bleLoadingTitle_, localized("LOADING", "正在加载"));
+  lv_label_set_text(bleLoadingBackLabel_, localized(LV_SYMBOL_LEFT " BACK", LV_SYMBOL_LEFT " 返回"));
   lv_obj_set_style_text_font(bleLoadingTitle_, titleFont, 0);
   lv_obj_set_style_text_font(bleLoadingBackLabel_, font, 0);
   lv_obj_set_style_text_font(bleLoadingLabel_, font, 0);
-  for (size_t i = 0; i < kBleDeviceCapacity; ++i)
-    lv_obj_set_style_text_font(lv_obj_get_child(bleDeviceButtons_[i], 0), font, 0);
-  AppLog.println("[LANG] 4 ble2 done");
-
+  for (size_t index = 0; index < kBleDeviceCapacity; ++index)
+    lv_obj_set_style_text_font(lv_obj_get_child(bleDeviceButtons_[index], 0), font, 0);
   lv_label_set_text(virtualTitle_, localized("VIRTUAL POWER", "虚拟功率计"));
   lv_label_set_text(virtualPowerTitle_, localized("POWER", "功率"));
   lv_label_set_text(virtualCadenceTitle_, localized("CADENCE", "踏频"));
-  lv_label_set_text(virtualHint_,
-                    localized("Drag either slider to update\nlive power and cadence.",
-                              "拖动滑块设置实时功率\n和踏频。"));
+  lv_label_set_text(virtualHint_, localized("Drag either slider to update\nlive power and cadence.", "拖动滑块设置实时功率\n和踏频。"));
   lv_obj_set_style_text_font(virtualTitle_, titleFont, 0);
   lv_obj_set_style_text_font(virtualPowerTitle_, font, 0);
   lv_obj_set_style_text_font(virtualCadenceTitle_, font, 0);
   lv_obj_set_style_text_font(virtualHint_, font, 0);
-  AppLog.println("[LANG] 5 virtual done");
-
   lv_label_set_text(settingsTitle_, localized("SETTINGS", "设置"));
-  if (settingsPowerButtonLabel_)
-    lv_label_set_text(settingsPowerButtonLabel_,
-                      localized(LV_SYMBOL_POWER "\n" "POWER", LV_SYMBOL_POWER "\n" "功率"));
-  if (settingsLanguageEntryLabel_)
-    lv_label_set_text(settingsLanguageEntryLabel_,
-                      localized(LV_SYMBOL_LIST "\n" "LANG", LV_SYMBOL_LIST "\n" "语言"));
-  if (settingsWifiEntryLabel_)
-    lv_label_set_text(settingsWifiEntryLabel_,
-                      localized(LV_SYMBOL_WIFI "\n" "WI-FI", LV_SYMBOL_WIFI "\n" "WI-FI"));
-  lv_label_set_text(settingsSdButtonLabel_,
-                    localized(LV_SYMBOL_SD_CARD "\n" "SD/MUSIC", LV_SYMBOL_SD_CARD "\n" "SD/音乐"));
-  lv_label_set_text(settingsSoundButtonLabel_,
-                    localized(LV_SYMBOL_AUDIO "\n" "SOUND", LV_SYMBOL_AUDIO "\n" "声音"));
-  lv_label_set_text(settingsGpsButtonLabel_,
-                    localized(LV_SYMBOL_GPS "\n" "GPS", LV_SYMBOL_GPS "\n" "GPS"));
+  lv_label_set_text(settingsPowerButtonLabel_, localized(LV_SYMBOL_POWER "\nPOWER", LV_SYMBOL_POWER "\n功率"));
+  lv_label_set_text(settingsLanguageEntryLabel_, localized(LV_SYMBOL_LIST "\nLANG", LV_SYMBOL_LIST "\n语言"));
+  lv_label_set_text(settingsWifiEntryLabel_, LV_SYMBOL_WIFI "\nWI-FI");
+  lv_label_set_text(settingsSdButtonLabel_, localized(LV_SYMBOL_SD_CARD "\nSD/MUSIC", LV_SYMBOL_SD_CARD "\nSD/音乐"));
+  lv_label_set_text(settingsSoundButtonLabel_, localized(LV_SYMBOL_AUDIO "\nSOUND", LV_SYMBOL_AUDIO "\n声音"));
+  lv_label_set_text(settingsGpsButtonLabel_, LV_SYMBOL_GPS "\nGPS");
   lv_obj_set_style_text_font(settingsTitle_, titleFont, 0);
-  if (settingsPowerButtonLabel_) lv_obj_set_style_text_font(settingsPowerButtonLabel_, font, 0);
-  if (settingsLanguageEntryLabel_) lv_obj_set_style_text_font(settingsLanguageEntryLabel_, font, 0);
-  if (settingsWifiEntryLabel_) lv_obj_set_style_text_font(settingsWifiEntryLabel_, font, 0);
-  lv_obj_set_style_text_font(settingsSdButtonLabel_, font, 0);
-  lv_obj_set_style_text_font(settingsSoundButtonLabel_, font, 0);
-  lv_obj_set_style_text_font(settingsGpsButtonLabel_, font, 0);
-
-  // 独立「语言」页面文字
-  if (languageTitle_) {
-    lv_label_set_text(languageTitle_, localized("LANGUAGE", "语言"));
-    lv_obj_set_style_text_font(languageTitle_, titleFont, 0);
+  for (auto *label : {settingsPowerButtonLabel_, settingsLanguageEntryLabel_, settingsWifiEntryLabel_, settingsSdButtonLabel_, settingsSoundButtonLabel_, settingsGpsButtonLabel_})
+    lv_obj_set_style_text_font(label, font, 0);
+  lv_label_set_text(languageTitle_, localized("LANGUAGE", "语言"));
+  lv_label_set_text(languageHint_, localized("Choose interface language", "选择界面语言"));
+  lv_obj_set_style_text_font(languageTitle_, titleFont, 0);
+  lv_obj_set_style_text_font(languageHint_, font, 0);
+  lv_label_set_text(wifiTitle_, "WI-FI");
+  lv_obj_set_style_text_font(wifiTitle_, titleFont, 0);
+  if (settingsWifiLabel_) lv_label_set_text(settingsWifiLabel_, "Wi-Fi");
+  for (size_t index = 0; index < 2; ++index) {
+    lv_label_set_text(settingsWifiButtonLabels_[index], index ? localized("ON", "开启") : localized("OFF", "关闭"));
+    lv_obj_set_style_text_font(settingsWifiButtonLabels_[index], font, 0);
   }
-  if (languageHint_) {
-    lv_label_set_text(languageHint_, localized("Choose interface language", "选择界面语言"));
-    lv_obj_set_style_text_font(languageHint_, font, 0);
-  }
-  // 独立「Wi-Fi」页面文字
-  if (wifiTitle_) {
-    lv_label_set_text(wifiTitle_, localized("WI-FI", "WI-FI"));
-    lv_obj_set_style_text_font(wifiTitle_, titleFont, 0);
-  }
-  if (settingsWifiLabel_)
-    lv_label_set_text(settingsWifiLabel_, localized("Wi-Fi", "Wi-Fi"));
-  for (size_t i = 0; i < 2; ++i) {
-    lv_label_set_text(settingsWifiButtonLabels_[i],
-                      i == 1 ? localized("ON", "开启") : localized("OFF", "关闭"));
-    lv_obj_set_style_text_font(settingsWifiButtonLabels_[i], font, 0);
-  }
-  AppLog.println("[LANG] 6 settings+lang+wifi pages done");
-
-  // GPS 页面文字
-  lv_label_set_text(gpsTitle_, localized("GPS", "GPS"));
-  lv_label_set_text(gpsRestartLabel_,
-                    localized(LV_SYMBOL_REFRESH " RESTART GPS",
-                              LV_SYMBOL_REFRESH " 重启 GPS"));
+  lv_label_set_text(gpsTitle_, "GPS");
+  lv_label_set_text(gpsRestartLabel_, localized(LV_SYMBOL_REFRESH " RESTART GPS", LV_SYMBOL_REFRESH " 重启 GPS"));
   setRecording(recording_, recordingArmed_);
   setFitSaving(fitSaving_);
-  lv_obj_set_style_text_font(recordLabel_, font, 0);
   lv_label_set_text(stopRecordLabel_, localized(LV_SYMBOL_STOP " STOP", LV_SYMBOL_STOP " 停止"));
-  lv_obj_set_style_text_font(stopRecordLabel_, font, 0);
-  lv_obj_set_style_text_font(fitSaveLabel_, font, 0);
   lv_label_set_text(rideLogTitle_, localized("LOG", "日志"));
-  lv_obj_set_style_text_font(rideLogTitle_, font, 0);
   lv_label_set_text(rideLogEntryLabel_, localized(LV_SYMBOL_LIST "\nLOG", LV_SYMBOL_LIST "\n记录日志"));
-  lv_obj_set_style_text_font(rideLogEntryLabel_, font, 0);
   lv_label_set_text(wifiSetupLabel_, localized("SET UP WI-FI", "配置网络"));
-  lv_obj_set_style_text_font(wifiSetupLabel_, font, 0);
-  lv_obj_set_style_text_font(rideLogText_, font, 0);
-  lv_obj_set_style_text_font(rideDurationLabel_, font, 0);
-  refreshRideLog();
+  for (auto *label : {recordLabel_, stopRecordLabel_, fitSaveLabel_, rideLogTitle_, rideLogEntryLabel_, wifiSetupLabel_, rideLogText_, rideDurationLabel_, gpsRestartLabel_, gpsUtcLabel_, gpsLocalLabel_, gpsCoordLabel_, gpsSatLabel_, gpsAltLabel_, gpsSpeedLabel_})
+    lv_obj_set_style_text_font(label, font, 0);
   lv_obj_set_style_text_font(gpsTitle_, titleFont, 0);
-  lv_obj_set_style_text_font(gpsRestartLabel_, font, 0);
   lv_obj_set_style_text_font(gpsFixLabel_, titleFont, 0);
-  lv_obj_set_style_text_font(gpsUtcLabel_, font, 0);
-  lv_obj_set_style_text_font(gpsLocalLabel_, font, 0);
-  lv_obj_set_style_text_font(gpsCoordLabel_, font, 0);
-  lv_obj_set_style_text_font(gpsSatLabel_, font, 0);
-  lv_obj_set_style_text_font(gpsAltLabel_, font, 0);
-  lv_obj_set_style_text_font(gpsSpeedLabel_, font, 0);
-  AppLog.println("[LANG] 7 gps done");
-  lv_obj_set_style_text_font(settingsTitle_, titleFont, 0);
-  if (settingsWifiLabel_) lv_obj_set_style_text_font(settingsWifiLabel_, font, 0);
-  if (settingsPowerButtonLabel_) lv_obj_set_style_text_font(settingsPowerButtonLabel_, font, 0);
-  lv_obj_set_style_text_font(settingsSdButtonLabel_, font, 0);
-  lv_obj_set_style_text_font(settingsSoundButtonLabel_, font, 0);
-
-  // 声音设置页文字
+  refreshRideLog();
   lv_label_set_text(soundTitle_, localized("SOUND", "声音"));
-  lv_label_set_text(soundHint_,
-                    localized("Drag the slider to set volume.\nPreview tones are disabled.",
-                              "拖动滑块设置音量。\n试听提示音已禁用。"));
+  lv_label_set_text(soundHint_, localized("Drag the slider to set volume.\nPreview tones are disabled.", "拖动滑块设置音量。\n试听提示音已禁用。"));
   lv_obj_set_style_text_font(soundTitle_, titleFont, 0);
   lv_obj_set_style_text_font(soundHint_, font, 0);
   lv_obj_set_style_text_font(soundVolumeLabel_, font, 0);
   refreshSoundVolume();
-  AppLog.println("[LANG] 8 sound done");
-
-  // SD 浏览页文字
   lv_label_set_text(sdTitle_, localized("SD CARD", "SD 卡"));
   lv_label_set_text(sdStopLabel_, localized(LV_SYMBOL_STOP " STOP", LV_SYMBOL_STOP " 停止"));
   lv_obj_set_style_text_font(sdTitle_, titleFont, 0);
-  lv_obj_set_style_text_font(sdStatusLabel_, font, 0);
-  lv_obj_set_style_text_font(sdStopLabel_, font, 0);
-  lv_obj_set_style_text_font(sdNowPlayingLabel_, font, 0);
+  for (auto *label : {sdStatusLabel_, sdStopLabel_, sdNowPlayingLabel_}) lv_obj_set_style_text_font(label, font, 0);
   refreshSdList();
-  {
-    char text[128];
-    if (audioPlaying_ && audioTitle_[0])
-      snprintf(text, sizeof(text), localized("Playing: %s", "播放中: %s"), audioTitle_);
-    else
-      snprintf(text, sizeof(text), "%s", localized("Stopped", "已停止"));
-    lv_label_set_text(sdNowPlayingLabel_, text);
-  }
-  AppLog.println("[LANG] 9 sd done");
-  lv_obj_set_style_text_font(settingsWifiStatus_,
-                             chinese_ ? &lv_font_noto_sans_sc_14
-                                      : &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_font(settingsLanguageButtonLabels_[0],
-                             &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_font(settingsLanguageButtonLabels_[1],
-                             &lv_font_noto_sans_sc_14, 0);
+  char playing[128];
+  if (audioPlaying_ && audioTitle_[0]) snprintf(playing, sizeof(playing), localized("Playing: %s", "播放中: %s"), audioTitle_);
+  else snprintf(playing, sizeof(playing), "%s", localized("Stopped", "已停止"));
+  lv_label_set_text(sdNowPlayingLabel_, playing);
+  lv_obj_set_style_text_font(settingsWifiStatus_, font, 0);
+  lv_obj_set_style_text_font(settingsLanguageButtonLabels_[0], &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(settingsLanguageButtonLabels_[1], &lv_font_noto_sans_sc_14, 0);
   for (size_t i = 0; i < 2; ++i) {
     const bool selected = chinese_ == (i == 1);
     lv_obj_set_style_bg_color(settingsLanguageButtons_[i],
@@ -2203,183 +2125,16 @@ void DisplayLcd::begin() {
   lv_obj_set_style_bg_color(screen_, lv_color_make(248, 250, 252), 0);
   lv_obj_set_style_bg_opa(screen_, LV_OPA_COVER, 0);
 
-  // 顶部左侧：GPS 状态指示（替代原来的固定文字 "AERO PROBE"）。
-  // 用一个小旋转动画表示"搜星中"，定位后用绿色图标 + 卫星数表示。
-  gpsIndicatorSpinner_ = lv_spinner_create(screen_, 1000, 60);
-  lv_obj_set_size(gpsIndicatorSpinner_, 16, 16);
-  lv_obj_align(gpsIndicatorSpinner_, LV_ALIGN_TOP_LEFT, 22, 8);
-  lv_obj_set_style_arc_color(gpsIndicatorSpinner_, lv_color_make(219, 227, 236),
-                             LV_PART_MAIN);
-  lv_obj_set_style_arc_width(gpsIndicatorSpinner_, 3, LV_PART_MAIN);
-  lv_obj_set_style_arc_color(gpsIndicatorSpinner_, lv_color_make(217, 119, 6),
-                             LV_PART_INDICATOR);
-  lv_obj_set_style_arc_width(gpsIndicatorSpinner_, 3, LV_PART_INDICATOR);
-  lv_obj_add_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);  // 默认隐藏，查到状态后再显示
-
-  gpsIndicatorLabel_ = lv_label_create(screen_);
-  lv_label_set_text(gpsIndicatorLabel_, LV_SYMBOL_GPS);
-  lv_obj_set_style_text_font(gpsIndicatorLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_make(148, 163, 184), 0);
-  lv_obj_align(gpsIndicatorLabel_, LV_ALIGN_TOP_LEFT, 4, 8);
-  gpsSatelliteLabel_ = lv_label_create(screen_);
-  lv_label_set_text(gpsSatelliteLabel_, "--");
-  lv_obj_set_size(gpsSatelliteLabel_, 28, 20);
-  lv_obj_align(gpsSatelliteLabel_, LV_ALIGN_TOP_LEFT, 22, 8);
-  lv_obj_set_style_text_font(gpsSatelliteLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(gpsSatelliteLabel_, lv_color_make(100, 116, 139), 0);
-
-  lv_obj_t *headerLine = lv_obj_create(screen_);
-  lv_obj_set_size(headerLine, 216, 2);
-  lv_obj_align(headerLine, LV_ALIGN_TOP_LEFT, 12, 36);
-  lv_obj_set_style_bg_color(headerLine, lv_color_make(203, 213, 225), 0);
-  lv_obj_set_style_border_width(headerLine, 0, 0);
-  lv_obj_set_style_radius(headerLine, 0, 0);
-
-  aeroZone_.create(screen_);
-
-  lv_obj_t *cdaDivider = lv_obj_create(screen_);
-  lv_obj_set_size(cdaDivider, 216, 1);
-  lv_obj_align(cdaDivider, LV_ALIGN_TOP_LEFT, 12, 137);
-  lv_obj_set_style_radius(cdaDivider, 0, 0);
-  lv_obj_set_style_bg_color(cdaDivider, lv_color_make(203, 213, 225), 0);
-  lv_obj_set_style_border_width(cdaDivider, 0, 0);
-
-  lv_obj_t *windCard = lv_obj_create(screen_);
-  lv_obj_set_size(windCard, 216, 56);
-  lv_obj_align(windCard, LV_ALIGN_TOP_LEFT, 12, 145);
-  lv_obj_clear_flag(windCard, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_pad_all(windCard, 0, 0);
-  lv_obj_set_style_radius(windCard, 0, 0);
-  lv_obj_set_style_bg_color(windCard, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(windCard, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_color(windCard, lv_color_make(226, 232, 240), 0);
-  lv_obj_set_style_border_width(windCard, 0, 0);
-
-  windLabelTitle_ = lv_label_create(windCard);
-  lv_label_set_text(windLabelTitle_, "WIND");
-  lv_obj_align(windLabelTitle_, LV_ALIGN_TOP_LEFT, 0, 6);
-  lv_obj_set_style_text_font(windLabelTitle_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(windLabelTitle_, lv_color_make(100, 116, 139), 0);
-  lv_obj_t *windUnit = lv_label_create(windCard);
-  lv_label_set_text(windUnit, "km/h");
-  lv_obj_align(windUnit, LV_ALIGN_TOP_LEFT, 0, 31);
-  lv_obj_set_style_text_font(windUnit, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(windUnit, lv_color_make(100, 116, 139), 0);
-
-  windLabel_ = lv_label_create(windCard);
-  lv_label_set_text(windLabel_, "0.0");
-  lv_obj_set_width(windLabel_, 132);
-  lv_label_set_long_mode(windLabel_, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_align(windLabel_, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_align(windLabel_, LV_ALIGN_RIGHT_MID, 0, 0);
-  lv_obj_set_style_text_font(windLabel_, &lv_font_montserrat_40, 0);
-  lv_obj_set_style_text_color(windLabel_, lv_color_make(23, 32, 51), 0);
-
-  lv_obj_t *windDivider = lv_obj_create(screen_);
-  lv_obj_set_size(windDivider, 216, 1);
-  lv_obj_align(windDivider, LV_ALIGN_TOP_LEFT, 12, 208);
-  lv_obj_set_style_radius(windDivider, 0, 0);
-  lv_obj_set_style_bg_color(windDivider, lv_color_make(203, 213, 225), 0);
-  lv_obj_set_style_border_width(windDivider, 0, 0);
-
-  lv_obj_t *powerCard = lv_obj_create(screen_);
-  lv_obj_set_size(powerCard, 216, 56);
-  lv_obj_align(powerCard, LV_ALIGN_TOP_LEFT, 12, 216);
-  lv_obj_clear_flag(powerCard, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_pad_all(powerCard, 0, 0);
-  lv_obj_set_style_radius(powerCard, 0, 0);
-  lv_obj_set_style_bg_color(powerCard, lv_color_make(239, 246, 255), 0);
-  lv_obj_set_style_bg_opa(powerCard, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_color(powerCard, lv_color_make(191, 219, 254), 0);
-  lv_obj_set_style_border_width(powerCard, 0, 0);
-
-  avg3Label_ = lv_label_create(powerCard);
-  lv_label_set_text(avg3Label_, "POWER");
-  lv_obj_align(avg3Label_, LV_ALIGN_TOP_LEFT, 0, 6);
-  lv_obj_set_style_text_font(avg3Label_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(avg3Label_, lv_color_make(37, 99, 235), 0);
-  lv_obj_t *powerUnit = lv_label_create(powerCard);
-  lv_label_set_text(powerUnit, "W");
-  lv_obj_align(powerUnit, LV_ALIGN_TOP_LEFT, 0, 31);
-  lv_obj_set_style_text_font(powerUnit, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(powerUnit, lv_color_make(100, 116, 139), 0);
-
-  powerLabel_ = lv_label_create(powerCard);
-  lv_label_set_text(powerLabel_, "0");
-  lv_obj_set_width(powerLabel_, 132);
-  lv_label_set_long_mode(powerLabel_, LV_LABEL_LONG_CLIP);
-  lv_obj_align(powerLabel_, LV_ALIGN_RIGHT_MID, 0, 0);
-  lv_obj_set_style_text_align(powerLabel_, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_set_style_text_font(powerLabel_, &lv_font_montserrat_40, 0);
-  lv_obj_set_style_text_color(powerLabel_, lv_color_make(29, 78, 216), 0);
-
-  lv_obj_t *powerDivider = lv_obj_create(screen_);
-  lv_obj_set_size(powerDivider, 216, 1);
-  lv_obj_align(powerDivider, LV_ALIGN_TOP_LEFT, 12, 280);
-  lv_obj_set_style_radius(powerDivider, 0, 0);
-  lv_obj_set_style_bg_color(powerDivider, lv_color_make(203, 213, 225), 0);
-  lv_obj_set_style_border_width(powerDivider, 0, 0);
-
-  cadenceLabel_ = lv_label_create(screen_);
-  lv_label_set_text(cadenceLabel_, "CADENCE / rpm");
-  lv_obj_set_width(cadenceLabel_, 104);
-  lv_label_set_long_mode(cadenceLabel_, LV_LABEL_LONG_CLIP);
-  lv_obj_align(cadenceLabel_, LV_ALIGN_TOP_LEFT, 12, 294);
-  lv_obj_set_style_text_font(cadenceLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(cadenceLabel_, lv_color_make(51, 65, 85), 0);
-
-  cadenceValueLabel_ = lv_label_create(screen_);
-  lv_label_set_text(cadenceValueLabel_, "0");
-  lv_obj_set_size(cadenceValueLabel_, 100, 28);
-  lv_label_set_long_mode(cadenceValueLabel_, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_align(cadenceValueLabel_, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_align(cadenceValueLabel_, LV_ALIGN_TOP_RIGHT, -12, 288);
-  lv_obj_set_style_text_font(cadenceValueLabel_, &lv_font_montserrat_20, 0);
-  lv_obj_set_style_text_color(cadenceValueLabel_, lv_color_make(51, 65, 85), 0);
-
-  timeLabel_ = lv_label_create(screen_);
-  lv_label_set_text(timeLabel_, "--:--:--");
-  lv_obj_set_size(timeLabel_, 94, 20);
-  lv_label_set_long_mode(timeLabel_, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_align(timeLabel_, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_align(timeLabel_, LV_ALIGN_TOP_RIGHT, -12, 8);
-  lv_obj_set_style_text_font(timeLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(timeLabel_, lv_color_make(100, 116, 139), 0);
-
-  statusLabel_ = lv_label_create(screen_);
-  lv_label_set_text(statusLabel_, LV_SYMBOL_SAVE);
-  lv_obj_set_size(statusLabel_, 28, 24);
-  lv_obj_set_style_text_align(statusLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_pad_top(statusLabel_, 3, 0);
-  lv_obj_align(statusLabel_, LV_ALIGN_TOP_LEFT, 58, 5);
-  lv_obj_add_flag(statusLabel_, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(statusLabel_, onRideLogButton, LV_EVENT_CLICKED, nullptr);
-  lv_obj_set_style_text_font(statusLabel_, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(statusLabel_, lv_color_make(100, 116, 139), 0);
-
-  powerSourceButton_ = lv_btn_create(screen_);
-  lv_obj_set_size(powerSourceButton_, 32, 28);
-  lv_obj_align(powerSourceButton_, LV_ALIGN_TOP_LEFT, 94, 3);
-  lv_obj_set_style_radius(powerSourceButton_, 0, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(powerSourceButton_, lv_color_make(37, 99, 235), 0);
-  lv_obj_set_style_bg_opa(powerSourceButton_, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_shadow_width(powerSourceButton_, 0, 0);
-  lv_obj_add_event_cb(powerSourceButton_, onSettingsButton, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t *powerSourceIcon = lv_label_create(powerSourceButton_);
-  lv_label_set_text(powerSourceIcon, LV_SYMBOL_SETTINGS);
-  lv_obj_center(powerSourceIcon);
-  lv_obj_set_style_text_font(powerSourceIcon, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(powerSourceIcon, lv_color_make(37, 99, 235), 0);
-  powerSourceLabel_ = lv_label_create(powerSourceButton_);
-  lv_obj_add_flag(powerSourceLabel_, LV_OBJ_FLAG_HIDDEN);
-  lv_label_set_text(powerSourceLabel_, "SET");
-  lv_obj_set_width(powerSourceLabel_, 178);
-  lv_label_set_long_mode(powerSourceLabel_, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_align(powerSourceLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_color(powerSourceLabel_, lv_color_white(), 0);
-  lv_obj_align(powerSourceLabel_, LV_ALIGN_LEFT_MID, 28, 0);
-  lv_obj_set_style_text_font(powerSourceLabel_, &lv_font_montserrat_16, 0);
-
+  lv_obj_set_style_pad_all(screen_, 0, 0);
+  dashboard_.create(screen_, onRideLogButton, onSettingsButton);
+  gpsIndicatorSpinner_ = dashboard_.spinner;
+  gpsIndicatorLabel_ = dashboard_.gps;
+  gpsSatelliteLabel_ = dashboard_.satellites;
+  timeLabel_ = dashboard_.clock;
+  statusLabel_ = dashboard_.sdIcon;
+  powerSourceButton_ = dashboard_.settingsButton;
+  DashboardLayout::Settings layout;
+  if (DashboardSettings::load(layout)) dashboard_.load(layout);
   buildPowerSourcePanel();
   refreshLanguage();
   lv_scr_load(screen_);
@@ -2400,13 +2155,14 @@ bool DisplayLcd::takeBleScanRequest() {
 }
 
 bool DisplayLcd::takeBleConnectRequest(char *address, size_t capacity,
-                                       uint8_t *addressType, bool *postureDevice) {
+                                      uint8_t *addressType, bool *postureDevice, bool *heartDevice) {
   if (!requestedBleConnect_) return false;
   requestedBleConnect_ = false;
   if (!address || capacity == 0) return false;
   snprintf(address, capacity, "%s", requestedBleAddress_);
   if (addressType) *addressType = requestedBleAddressType_;
   if (postureDevice) *postureDevice = requestedBlePosture_;
+    if (heartDevice) *heartDevice = requestedBleHeart_;
   requestedBleAddress_[0] = '\0';
   requestedBleAddressType_ = 0xFF;
   return true;
@@ -2575,6 +2331,12 @@ void DisplayLcd::tick() {
   }
   lastTick = now;
   lv_tick_inc(dt);
+  DashboardLayout::Settings layout;
+  if (dashboard_.takeSettings(layout) && !DashboardSettings::save(layout)) {
+    dashboard_.retrySave();
+    AppLog.println("[UI] Could not save dashboard layout");
+  }
+  if (statusLabel_) dashboard_.storage(sdActivity.state(sdCardReady(), now), now);
   lv_timer_handler();
 }
 
@@ -2623,34 +2385,7 @@ void DisplayLcd::update(const WindVector &w, bool windValid, float powerW,
 
   estimatedCda_ = cda;
   currentZone_ = (uint32_t)zone;
-  aeroZone_.update(cda, zone);
-
-  if (windValid)
-    snprintf(buf, sizeof(buf), "%.1f", w.vAir * 3.6f);
-  else
-    snprintf(buf, sizeof(buf), "--");
-  lv_label_set_text(windLabel_, buf);
-
-  snprintf(buf, sizeof(buf), "%.0f", powerW);
-  lv_label_set_text(powerLabel_, buf);
-  lv_obj_set_style_text_font(powerLabel_, fabsf(powerW) >= 10000 ? &lv_font_montserrat_28 : &lv_font_montserrat_40, 0);
-
-  lv_label_set_text(cadenceLabel_, localized("CADENCE / rpm", "踏频 / rpm"));
-  lv_obj_set_style_text_font(cadenceLabel_,
-                             chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
-  snprintf(buf, sizeof(buf), "%.0f", cadRpm);
-  lv_label_set_text(cadenceValueLabel_, buf);
-
-  lv_label_set_text(powerSourceLabel_, localized("SET", "设置"));
-  lv_obj_set_style_text_color(powerSourceLabel_, lv_color_white(), 0);
-  const lv_color_t meterButtonColor =
-      pmSrc == 3 ? lv_color_make(217, 119, 6) : lv_color_make(37, 99, 235);
-  lv_obj_set_style_bg_color(powerSourceButton_, meterButtonColor, LV_PART_MAIN);
-  lv_obj_set_style_text_font(powerSourceLabel_,
-                             chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_16, 0);
-
-  lv_label_set_text(statusLabel_, LV_SYMBOL_SAVE);
-  lv_obj_set_style_text_color(statusLabel_, logOk ? lv_color_make(22, 163, 74) : lv_color_make(100, 116, 139), 0);
+  dashboard_.update(cda, zone, w.vAir, windValid, powerW, cadRpm);
 
   lv_obj_invalidate(screen_);
 }

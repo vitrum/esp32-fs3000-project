@@ -1,4 +1,6 @@
 #include "aero_zone_view.h"
+#include "dashboard_layout.h"
+#include "dashboard_view.h"
 #include <cassert>
 #include <cstdlib>
 #include <fstream>
@@ -65,7 +67,7 @@ static void checkView(const AeroZoneView &view) {
 static void checkGlyphs() {
   std::set<uint32_t> required;
   const std::regex literal(R"re("(?:\\.|[^"\\])*")re");
-  for (const char *name : {"/src/display_lcd.cpp", "/src/aero_zone_view.h"}) {
+  for (const char *name : {"/src/display_lcd.cpp", "/src/aero_zone_view.h", "/src/dashboard_view.h"}) {
     std::ifstream input(std::string(UI_SOURCE_ROOT) + name);
     assert(input.good());
     const std::string source{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
@@ -97,7 +99,85 @@ static void checkGlyphs() {
 }
 
 int main() {
+  DashboardLayout layout;
+  for (unsigned mask = 0; mask < 1024; ++mask) {
+    DashboardLayout::Settings settings{};
+    unsigned bits = mask;
+    for (unsigned index = 0; index < 5; ++index) {
+      settings.order[index] = index;
+      settings.levels[index] = 1 + (bits & 3);
+      bits >>= 2;
+    }
+    assert(layout.load(settings));
+    unsigned maximum = 0;
+    for (unsigned index = 0; index < 5; ++index) {
+      maximum += layout.level(index) == 4;
+      assert(layout.top(index) >= 44 && layout.top(index) + layout.height(layout.id(index)) <= 316);
+    }
+    assert(maximum <= 3);
+  }
+  layout.reset();
+  const auto previous = layout.level(0);
+  layout.press(0, 60, 100);
+  assert(!layout.release(60, 149) && layout.level(0) == previous);
+  layout.press(0, 60, 300);
+  assert(!layout.release(60, 379) && layout.level(0) == previous);
+  layout.press(0, 60, 500);
+  assert(layout.release(60, 580) && layout.level(0) == previous + 1);
+  assert(!layout.release(60, 600) && layout.level(0) == previous + 1);
+  layout.press(0, 60, 650);
+  assert(!layout.release(60, 759) && layout.level(0) == previous + 1);
+  layout.press(0, 60, 680);
+  assert(layout.release(60, 760) && layout.level(0) == 1);
+  layout.press(0, 60, 1200);
+  assert(!layout.motion(285, 1799));
+  assert(layout.motion(285, 1800));
+  assert(layout.release(285, 1850) && layout.id(4) == 0);
+  const auto unchanged = layout.settings();
+  layout.press(0, 60, 3450);
+  assert(!layout.release(100, 3800));
+  assert(!memcmp(&unchanged, &layout.settings(), sizeof(unchanged)));
+  layout.press(0, 60, 3900);
+  const auto heldLevel = layout.level(layout.id(0));
+  assert(layout.release(60, 5900));
+  assert(layout.level(layout.id(0)) == heldLevel % 4 + 1);
+  assert(!layout.release(60, 6000));
+  layout.press(0, 60, 6100);
+  layout.cancel();
+  assert(!layout.release(60, 6500));
+  layout.press(0, 20, 6600);
+  assert(!layout.release(60, 7000));
+  layout.press(0, 60, UINT32_MAX - 100);
+  assert(layout.motion(200, 600));
+  assert(!layout.release(20, 610));
+  DashboardLayout wrap;
+  wrap.press(0, 60, UINT32_MAX - 200);
+  assert(wrap.release(60, 0));
+  wrap.press(0, 60, 80);
+  assert(!wrap.release(60, 179));
+  wrap.press(0, 60, 100);
+  assert(wrap.release(60, 180));
+  wrap.press(0, 60, 500);
+  wrap.press(0, 60, 540);
+  assert(wrap.release(60, 580));
+  DashboardLayout jitter;
+  jitter.press(0, 60, 0, 100);
+  assert(!jitter.motion(71, 60, 111));
+  assert(jitter.release(71, 80, 111));
+  jitter.press(0, 60, 1000, 100);
+  assert(!jitter.motion(60, 1700, 112));
+  assert(!jitter.release(60, 1800, 112));
   lv_init();
+  SdActivity activity;
+  assert(activity.state(false, 0) == SdActivity::State::Absent);
+  assert(activity.state(true, 0) == SdActivity::State::Ready);
+  activity.beginWrite();
+  assert(activity.state(true, 100) == SdActivity::State::Writing);
+  activity.endWrite(UINT32_MAX - 100, true);
+  assert(activity.state(true, 200) == SdActivity::State::Writing);
+  assert(activity.state(true, 600) == SdActivity::State::Ready);
+  activity.beginWrite(); activity.endWrite(700, false);
+  assert(activity.state(true, 2000) == SdActivity::State::Error);
   static lv_color_t buffer[240 * 20];
   static lv_disp_draw_buf_t drawBuffer;
   lv_disp_draw_buf_init(&drawBuffer, buffer, nullptr, 240 * 20);
@@ -139,5 +219,66 @@ int main() {
   for (const auto color : framebuffer)
     if (color.full == lv_color_make(37, 99, 235).full) ++blue;
   assert(flushes > 100 && blue > 20);
+  lv_obj_clean(screen);
+  DashboardView dashboard;
+  dashboard.create(screen, [](lv_event_t *) {}, [](lv_event_t *) {});
+  lv_obj_update_layout(screen);
+  lv_area_t sdArea, settingsArea;
+  lv_obj_get_coords(dashboard.sdButton, &sdArea);
+  lv_obj_get_coords(dashboard.settingsButton, &settingsArea);
+  assert(lv_area_get_width(&sdArea) == 44 && lv_area_get_height(&sdArea) == 44);
+  assert(lv_area_get_width(&settingsArea) == 44 && lv_area_get_height(&settingsArea) == 44);
+  assert(!overlaps(sdArea, settingsArea) && sdArea.y2 < 44 && settingsArea.y2 < 44);
+  for (unsigned mask = 0; mask < 1024; ++mask) {
+    DashboardLayout::Settings settings{};
+    for (unsigned index = 0; index < 5; ++index) {
+      settings.order[index] = index;
+      settings.levels[index] = 1 + ((mask >> (index * 2)) & 3);
+    }
+    assert(dashboard.load(settings));
+    dashboard.setLanguage(mask & 1);
+    dashboard.update(.31f, 4, 9.5f, true, -32768, 255);
+    dashboard.heart(255, true);
+    lv_obj_update_layout(screen);
+    for (unsigned index = 0; index < 5; ++index) {
+      lv_area_t rowArea, valueArea;
+      lv_obj_get_coords(dashboard.row(index), &rowArea);
+      lv_obj_get_coords(dashboard.reading(index), &valueArea);
+      assert(rowArea.y1 >= 44 && rowArea.y2 < 316);
+      assert(valueArea.x1 >= rowArea.x1 && valueArea.x2 <= rowArea.x2);
+      assert(valueArea.y1 >= rowArea.y1 && valueArea.y2 <= rowArea.y2);
+      assert(!overlaps(sdArea, rowArea) && !overlaps(settingsArea, rowArea));
+      lv_point_t textSize;
+      lv_txt_get_size(&textSize, lv_label_get_text(dashboard.reading(index)),
+                      lv_obj_get_style_text_font(dashboard.reading(index), 0), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+      assert(textSize.x <= lv_obj_get_width(dashboard.reading(index)));
+    }
+    lv_refr_now(display);
+    assert(lv_mem_test() == LV_RES_OK);
+  }
+  dashboard.storage(SdActivity::State::Writing, 250);
+  lv_refr_now(display);
+  dashboard.reset();
+  dashboard.layout().move(0, 4);
+  dashboard.layout().cycle(2);
+  dashboard.retrySave();
+  DashboardLayout::Settings saved;
+  assert(!dashboard.takeSettings(saved));
+  assert(dashboard.takeSettings(saved, true));
+  assert(saved.order[4] == 0);
+  for (unsigned index = 0; index < 5; ++index) assert(saved.levels[index] == dashboard.layout().level(index));
+  assert(!dashboard.takeSettings(saved, true));
+  dashboard.retrySave();
+  assert(!dashboard.takeSettings(saved));
+  lv_tick_inc(800);
+  assert(dashboard.takeSettings(saved));
+  DashboardView rebooted;
+  lv_obj_clean(screen);
+  rebooted.create(screen, [](lv_event_t *) {}, [](lv_event_t *) {});
+  assert(rebooted.load(saved));
+  for (unsigned position = 0; position < 5; ++position) {
+    assert(rebooted.layout().id(position) == saved.order[position]);
+    assert(rebooted.layout().level(position) == saved.levels[position]);
+  }
   std::cout << "PASS UI language: real LVGL, glyphs/icons, no overlap/clipping, values preserved, 1600 refreshes, heap integrity, nonblank pixels\n";
 }
