@@ -6,6 +6,7 @@
 
 #include <SPI.h>
 #include <FS.h>
+#include <Preferences.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <vfs_api.h>
@@ -99,6 +100,26 @@ bool claimSdCardForUsb() {
   return available;
 }
 
+// 一次性自动格式化标记：NVS 命名空间 "sd-repair"，键 "fmtDone"。
+// 仅当标记未设置时才允许因"文件系统损坏"格式化一次，防止日后误删用户卡。
+namespace {
+bool shouldFormatOnce() {
+  Preferences prefs;
+  if (!prefs.begin("sd-repair", true)) return true;  // 读失败则保守允许
+  const bool done = prefs.getBool("fmtDone", false);
+  prefs.end();
+  return !done;
+}
+
+void markFormatDone() {
+  Preferences prefs;
+  if (prefs.begin("sd-repair", false)) {
+    prefs.putBool("fmtDone", true);
+    prefs.end();
+  }
+}
+}  // namespace
+
 // 挂载 SD（SDSPI，走 ESP-IDF 原生 FATFS，比 Arduino SD 驱动更稳健：
 // 不会因一次 CMD13 假失败就永久把卡标成 STA_NOINIT）。
 static bool mountSdCard() {
@@ -135,7 +156,7 @@ static bool mountSdCard() {
   slotCfg.host_id = kSpiHost;
 
   esp_vfs_fat_sdmmc_mount_config_t mountCfg = {};
-  mountCfg.format_if_mount_failed = false;   // 绝不自动格式化
+  mountCfg.format_if_mount_failed = false;   // 默认绝不自动格式化
   mountCfg.max_files = 5;
   mountCfg.allocation_unit_size = 16 * 1024;
 
@@ -143,12 +164,34 @@ static bool mountSdCard() {
                                 &g_sdCard);
   if (err != ESP_OK) {
     AppLog.printf("[SD] mount FAILED: %s\n", esp_err_to_name(err));
-    AppLog.println("[SD] hints: (1) the card must be FAT16/FAT32; a 64GB card is");
-    AppLog.println("[SD]        usually exFAT, which is NOT supported by this FW.");
-    AppLog.println("[SD]        Reformat it as FAT32 (use a PC tool for >32GB).");
-    AppLog.println("[SD]        (2) check wiring: SCLK=14 MISO=16 MOSI=17 CS=21.");
-    spi_bus_free(kSpiHost);
-    return false;
+    // 一次性修复：卡存在但文件系统损坏（如引导扇区/FSInfo 被破坏）时，
+    // 若 NVS 标记 sdFmtDone 未设置，则自动格式化为 FAT32 一次，之后永久关闭。
+    // 无卡/卡无响应（sdmmc_card_init 失败）不会走到这里，因此不会误格式化空卡槽。
+    if (shouldFormatOnce()) {
+      AppLog.println("[SD] first-boot repair: formatting card as FAT32 (one time)...");
+      // 先卸载已部分初始化的卡片句柄（若存在），再以格式化模式重新挂载。
+      if (g_sdCard) {
+        esp_vfs_fat_sdcard_unmount(kSdMountPoint, g_sdCard);
+        g_sdCard = nullptr;
+      }
+      mountCfg.format_if_mount_failed = true;
+      err = esp_vfs_fat_sdspi_mount(kSdMountPoint, &host, &slotCfg, &mountCfg,
+                                    &g_sdCard);
+      if (err == ESP_OK) {
+        markFormatDone();
+        AppLog.println("[SD] card formatted as FAT32 (auto-repair done)");
+      } else {
+        AppLog.printf("[SD] auto-format FAILED: %s\n", esp_err_to_name(err));
+      }
+    }
+    if (err != ESP_OK) {
+      AppLog.println("[SD] hints: (1) the card must be FAT16/FAT32; a 64GB card is");
+      AppLog.println("[SD]        usually exFAT, which is NOT supported by this FW.");
+      AppLog.println("[SD]        Reformat it as FAT32 (use a PC tool for >32GB).");
+      AppLog.println("[SD]        (2) check wiring: SCLK=14 MISO=16 MOSI=17 CS=21.");
+      spi_bus_free(kSpiHost);
+      return false;
+    }
   }
 
   g_sdFs.setMountPoint(kSdMountPoint);

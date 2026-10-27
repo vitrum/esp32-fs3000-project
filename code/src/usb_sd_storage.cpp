@@ -28,6 +28,14 @@ bool readSector(void *, uint32_t sector, void *buffer) {
   return success;
 }
 
+bool writeSector(void *, uint32_t sector, const void *buffer) {
+  if (!dmaSector || !lockSdCard(pdMS_TO_TICKS(2000))) return false;
+  memcpy(dmaSector, buffer, 512);
+  const bool success = sdmmc_write_sectors(&rawCard, dmaSector, sector, 1) == ESP_OK;
+  unlockSdCard();
+  return success;
+}
+
 bool beginRawCard() {
   if (!claimSdCardForUsb()) return false;
   spi_bus_config_t bus{};
@@ -60,7 +68,7 @@ bool beginRawCard() {
     return false;
   }
   dmaSector = static_cast<uint8_t *>(heap_caps_malloc(512, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
-  if (!dmaSector || !session.attach(rawCard.csd.capacity, rawCard.csd.sector_size, readSector, nullptr)) {
+  if (!dmaSector || !session.attach(rawCard.csd.capacity, rawCard.csd.sector_size, readSector, writeSector, nullptr)) {
     if (dmaSector) heap_caps_free(dmaSector);
     dmaSector = nullptr;
     sdspi_host_remove_device(handle);
@@ -82,8 +90,14 @@ int32_t readBlocks(uint32_t sector, uint32_t offset, void *buffer, uint32_t size
 }
 
 int32_t writeBlocks(uint32_t sector, uint32_t offset, uint8_t *buffer, uint32_t size) {
-  tud_msc_set_sense(0, SCSI_SENSE_DATA_PROTECT, 0x27, 0);
-  return session.write(sector, offset, buffer, size);
+  const int32_t result = session.write(sector, offset, buffer, size);
+  if (result < 0) {
+    tud_msc_set_sense(0, session.senseKey(), session.senseCode(), 0);
+    AppLog.printf("[USB-SD] WRITE failed lba=%lu offset=%lu size=%lu sense=%02x/%02x\n",
+                  (unsigned long)sector, (unsigned long)offset, (unsigned long)size,
+                  session.senseKey(), session.senseCode());
+  }
+  return result;
 }
 
 bool startStop(uint8_t, bool start, bool loadEject) {
@@ -93,13 +107,36 @@ bool startStop(uint8_t, bool start, bool loadEject) {
   }
   return !start || !loadEject || session.ready();
 }
+
+void usbEventCallback(void *, esp_event_base_t eventBase, int32_t eventId, void *eventData) {
+  if (eventBase != ARDUINO_USB_EVENTS) return;
+  switch (eventId) {
+    case ARDUINO_USB_STARTED_EVENT:
+      AppLog.println("[USB] device plugged");
+      break;
+    case ARDUINO_USB_STOPPED_EVENT:
+      AppLog.println("[USB] device unplugged");
+      break;
+    case ARDUINO_USB_SUSPEND_EVENT: {
+      auto *data = static_cast<arduino_usb_event_data_t *>(eventData);
+      AppLog.printf("[USB] suspended (remote_wakeup_en=%u)\n",
+                    data ? data->suspend.remote_wakeup_en : 0);
+      break;
+    }
+    case ARDUINO_USB_RESUME_EVENT:
+      AppLog.println("[USB] resumed");
+      break;
+    default:
+      break;
+  }
+}
 }
 
 bool UsbSdStorage::beginAtBoot() {
-  AppLog.println("[USB-SD] firmware=ro-msc-1.1 built=" __DATE__ " " __TIME__);
+  AppLog.println("[USB-SD] firmware=rw-msc-1.2 built=" __DATE__ " " __TIME__);
   massStorage.vendorID("AEROPROB");
-  massStorage.productID("SD READ ONLY");
-  massStorage.productRevision("1.1");
+  massStorage.productID("AEROPROBE SD");
+  massStorage.productRevision("1.2");
   massStorage.onRead(readBlocks);
   massStorage.onWrite(writeBlocks);
   massStorage.onStartStop(startStop);
@@ -114,11 +151,16 @@ bool UsbSdStorage::beginAtBoot() {
   const bool mediaReady = beginRawCard();
   if (mediaReady && massStorage.begin(session.sectors(), 512)) {
     massStorage.mediaPresent(true);
-    AppLog.printf("[USB-SD] exclusive read-only export: %lu sectors\n", (unsigned long)session.sectors());
+    AppLog.printf("[USB-SD] exclusive read-write export: %lu sectors\n", (unsigned long)session.sectors());
   } else {
     session.mediaFailed();
     AppLog.println("[USB-SD] SD unavailable; no medium exposed, no format attempted");
   }
+  // 启动 TinyUSB 设备栈并挂钩事件（必须在此调用，否则主机看不到任何 USB 设备，
+  // 既不会有 CDC 串口也没有 MSC 磁盘）。
+  USB.onEvent(usbEventCallback);
+  USB.begin();
+  AppLog.println("[USB] TinyUSB device stack started");
   return true;
 }
 

@@ -10,6 +10,7 @@ public:
   enum class Mode : uint8_t { Probe, Ride, Export, Ejected };
   enum class ReadError : uint8_t { None, NotReady, InvalidRequest, OutOfRange, Media };
   using ReadSector = bool (*)(void *context, uint32_t sector, void *buffer);
+  using WriteSector = bool (*)(void *context, uint32_t sector, const void *buffer);
 
   void selectAtBoot(bool hostPresent) {
     Mode expected = Mode::Probe;
@@ -17,11 +18,14 @@ public:
   }
   Mode mode() const { return mode_.load(); }
   bool exclusive() const { return mode() == Mode::Export || mode() == Mode::Ejected; }
-  bool attach(uint64_t sectors, uint32_t sectorSize, ReadSector reader, void *context) {
-    if (mode() != Mode::Export || !sectors || sectors > UINT32_MAX || sectorSize != 512 || !reader)
+  bool attach(uint64_t sectors, uint32_t sectorSize, ReadSector reader,
+              WriteSector writer, void *context) {
+    if (mode() != Mode::Export || !sectors || sectors > UINT32_MAX ||
+        sectorSize != 512 || !reader || !writer)
       return false;
     sectors_ = static_cast<uint32_t>(sectors);
     reader_ = reader;
+    writer_ = writer;
     context_ = context;
     ready_.store(true);
     return true;
@@ -51,7 +55,36 @@ public:
   void eject() {
     if (mode() == Mode::Export) mode_.store(Mode::Ejected);
   }
-  int32_t write(uint32_t, uint32_t, const void *, uint32_t) const { return -1; }
+  int32_t write(uint32_t sector, uint32_t offset, const void *buffer, uint32_t size) {
+    readError_.store(ReadError::None);
+    if (!ready()) return failRead(ReadError::NotReady);
+    if ((!buffer && size) || size > INT32_MAX) return failRead(ReadError::InvalidRequest);
+    uint64_t position = static_cast<uint64_t>(sector) * 512 + offset;
+    const uint64_t capacity = static_cast<uint64_t>(sectors_) * 512;
+    if (position > capacity || size > capacity - position) return failRead(ReadError::OutOfRange);
+    const auto *input = static_cast<const uint8_t *>(buffer);
+    uint32_t remaining = size;
+    alignas(4) uint8_t scratch[512];
+    while (remaining) {
+      const uint32_t currentSector = static_cast<uint32_t>(position / 512);
+      const uint32_t within = position % 512;
+      const uint32_t chunk = remaining < 512 - within ? remaining : 512 - within;
+      if (!ready()) return failRead(ReadError::NotReady);
+      if (within == 0 && chunk == 512) {
+        // 完全对齐的整扇区：直接写，无需读-改-写。
+        memcpy(scratch, input, 512);
+      } else {
+        // 部分扇区：先读出原内容，改动目标字节后再整体写回。
+        if (!reader_(context_, currentSector, scratch)) return failRead(ReadError::Media);
+        memcpy(scratch + within, input, chunk);
+      }
+      if (!writer_(context_, currentSector, scratch)) return failRead(ReadError::Media);
+      input += chunk;
+      position += chunk;
+      remaining -= chunk;
+    }
+    return static_cast<int32_t>(size);
+  }
   int32_t read(uint32_t sector, uint32_t offset, void *buffer, uint32_t size) {
     readError_.store(ReadError::None);
     if (!ready()) return failRead(ReadError::NotReady);
@@ -83,5 +116,6 @@ private:
   std::atomic<bool> ready_{false};
   uint32_t sectors_ = 0;
   ReadSector reader_ = nullptr;
+  WriteSector writer_ = nullptr;
   void *context_ = nullptr;
 };

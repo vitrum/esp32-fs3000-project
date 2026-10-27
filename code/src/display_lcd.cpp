@@ -2295,10 +2295,10 @@ void DisplayLcd::showUsbStorage(bool ready, bool ejected, bool hostConnected, bo
     }
   }
   const char *status = !enabled ? "USB STORAGE OFF\n\nRIDING MODE" :
-      ejected ? "SD EJECTED\nREAD ONLY\n\nRECORDING OFF" :
+      ejected ? "SD EJECTED\nREAD/WRITE\n\nRECORDING OFF" :
       !ready ? "SD UNAVAILABLE\nNO MEDIUM\n\nRECORDING OFF" :
-      hostConnected ? "SD READY\nREAD ONLY\n\nUSB CONNECTED\nRECORDING OFF" :
-                      "SD READY\nREAD ONLY\n\nUSB DISCONNECTED\nRECORDING OFF";
+      hostConnected ? "SD READY\nREAD/WRITE\n\nUSB CONNECTED\nRECORDING OFF" :
+                      "SD READY\nREAD/WRITE\n\nUSB DISCONNECTED\nRECORDING OFF";
   if (!usbStorageError_ && strcmp(lv_label_get_text(usbStorageStatus_), status)) lv_label_set_text(usbStorageStatus_, status);
   for (unsigned index = 0; index < 2; ++index) {
     lv_label_set_text(usbStorageButtonLabels_[index], index ? localized("ON", "开启") : localized("OFF", "关闭"));

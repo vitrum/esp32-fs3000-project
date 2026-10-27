@@ -39,7 +39,7 @@
 #include "wifi_web.h"
 #endif
 
-extern "C" bool tud_msc_is_writable_cb(uint8_t) { return false; }
+extern "C" bool tud_msc_is_writable_cb(uint8_t) { return true; }
 
 FS3000       windSensor;
 BlePowerMeter powerMeter;
