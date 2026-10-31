@@ -10,6 +10,12 @@ extern const lv_font_t lv_font_noto_sans_sc_14;
 
 class DashboardView {
 public:
+  // 数值区几何：从行框左侧 ValueLeft 起，可用宽度 ValueWidth。
+  static constexpr int ValueWidth = 136;
+  static constexpr int ValueLeft = 80;
+  static constexpr unsigned WindRow = 1;   // 风速行 id（整数段 + 小数段）
+  static constexpr int kTextSlack = 1;     // 标签框相对文字宽度的余量，防 CLIP 取整裁字
+
   void create(lv_obj_t *screen, lv_event_cb_t sdCallback, lv_event_cb_t settingsCallback) {
     auto *bar = lv_obj_create(screen);
     lv_obj_set_size(bar, 240, 28);
@@ -102,6 +108,7 @@ public:
     value(0, buffer);
     renderAero();
     if (windValid) snprintf(buffer, sizeof(buffer), "%.1f", wind * 3.6f); else snprintf(buffer, sizeof(buffer), "--");
+    // 风速行（id=1）在 value() 内部走拆段渲染：整数随字号放大，小数固定 14px。
     value(1, buffer);
     snprintf(buffer, sizeof(buffer), "%.0f", power); value(2, buffer);
     snprintf(buffer, sizeof(buffer), "%.0f", cadence); value(3, buffer);
@@ -138,7 +145,101 @@ public:
   lv_obj_t *sdButton = nullptr, *sdIcon = nullptr, *settingsButton = nullptr;
 
 private:
-  struct Row { DashboardView *owner = nullptr; unsigned id = 0; lv_obj_t *box = nullptr, *title = nullptr, *unit = nullptr, *value = nullptr, *line = nullptr, *detail = nullptr; };
+  struct Row { DashboardView *owner = nullptr; unsigned id = 0; lv_obj_t *box = nullptr, *title = nullptr, *unit = nullptr, *value = nullptr, *line = nullptr, *detail = nullptr, *frac = nullptr; };
+  // ---------- 数值字号选择（所有行共用同一套规则） ----------
+  // 目标字号来自该行的 level；放不下时沿候选链逐级回退。
+  // budget 是这一段文本可用的水平像素宽度。
+  const lv_font_t *pickFont(unsigned id, const char *textValue, int budget) const {
+    const lv_font_t *selected = font(layout_.level(id));
+    const lv_font_t *candidates[] = {selected, &lv_font_jetbrains_mono_40, &lv_font_jetbrains_mono_28,
+                                     &lv_font_jetbrains_mono_20, &lv_font_jetbrains_mono_14};
+    for (const auto *candidate : candidates) {
+      if (candidate->line_height > selected->line_height) continue;
+      lv_point_t size;
+      lv_txt_get_size(&size, textValue, candidate, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+      if (size.x <= budget) return candidate;
+    }
+    return &lv_font_jetbrains_mono_14;
+  }
+  static int textWidth(const char *textValue, const lv_font_t *font) {
+    lv_point_t size;
+    lv_txt_get_size(&size, textValue, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    return size.x;
+  }
+
+  // ---------- 风速行：整数段 + 小数段 ----------
+  // 布局：整数 + 小数作为一个整体，在数值区内水平居中，垂直居中；
+  // 小数段紧跟整数段右侧，互不重叠。
+  //
+  //    |<---------------- ValueWidth (136) -------------->|
+  //              [ 22 ][.5]          <- 整体居中
+  //
+  // 注意：数值区只有 136px，不能把小数叠在整数上，否则必然重叠。
+  void renderWindSplit(const char *textValue) {
+    auto &row = rows_[WindRow];
+    if (!row.box || !row.value) return;
+    if (!row.frac) {
+      row.frac = text(row.box, 0, 0, ValueWidth, 36, &lv_font_jetbrains_mono_14);
+      lv_obj_clear_flag(row.frac, LV_OBJ_FLAG_CLICKABLE);
+    }
+    const char *point = strchr(textValue, '.');
+    char wholeText[32];
+    if (point) {
+      const size_t wholeLength = static_cast<size_t>(point - textValue);
+      if (wholeLength >= sizeof(wholeText)) return;
+      memcpy(wholeText, textValue, wholeLength);
+      wholeText[wholeLength] = '\0';
+      if (strcmp(lv_label_get_text(row.frac), point)) lv_label_set_text(row.frac, point);
+      lv_obj_clear_flag(row.frac, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      snprintf(wholeText, sizeof(wholeText), "%s", textValue);
+      lv_obj_add_flag(row.frac, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (strcmp(lv_label_get_text(row.value), wholeText)) lv_label_set_text(row.value, wholeText);
+    layoutWindSplit();
+  }
+
+  // 根据当前行高、整数段与小数的实际字体重新排版。
+  void layoutWindSplit() {
+    auto &row = rows_[WindRow];
+    if (!row.value || !row.frac) return;
+    const int rowHeight = lv_obj_get_height(row.box);
+    const bool hasFraction = !lv_obj_has_flag(row.frac, LV_OBJ_FLAG_HIDDEN);
+    const int fractionWidth = hasFraction
+        ? textWidth(lv_label_get_text(row.frac), &lv_font_jetbrains_mono_14) : 0;
+    const char *wholeText = lv_label_get_text(row.value);
+
+    // 整数段的字号与其它行同一规则，宽度预算扣除小数段（两者是并列的，不是叠加）。
+    const lv_font_t *wholeFont = pickFont(WindRow, wholeText, ValueWidth - fractionWidth);
+    lv_obj_set_style_text_font(row.value, wholeFont, 0);
+
+    // 与其它行保持一致：整块右对齐到数值区右边缘（ValueLeft + ValueWidth）。
+    // 普通行的标签框宽 ValueWidth 且 TEXT_ALIGN_RIGHT，右缘恒为 ValueLeft + ValueWidth；
+    // 风速这里让「小数段」的右缘贴到同一条线上，整数段紧贴其左侧。
+    const int wholeTextWidth = textWidth(wholeText, wholeFont);   // 等宽字体下即 adv 之和
+    const int rightEdge = ValueLeft + ValueWidth;
+    // 整数框多出的 kTextSlack 会把小数段整个右推，先把它算进总宽里。
+    const int blockLeft = rightEdge - wholeTextWidth - kTextSlack - fractionWidth;
+    const int wholeTop = (rowHeight - wholeFont->line_height) / 2;
+
+    // 整数段：标签框按自身宽度摆放，右对齐后自然紧贴小数段。
+    // 宽度留 1px 余量，避免 CLIP 模式因取整把末位数字裁掉。
+    lv_obj_set_pos(row.value, blockLeft, wholeTop);
+    lv_obj_set_size(row.value, wholeTextWidth + kTextSlack, wholeFont->line_height);
+    lv_obj_set_style_text_align(row.value, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_color(row.frac, lv_obj_get_style_text_color(row.value, 0), 0);
+
+    if (!hasFraction) return;
+
+    // 小数段：紧接整数段右侧，垂直居中于整数段，右缘落在数值区右边缘。
+    const int fractionHeight = lv_font_jetbrains_mono_14.line_height;
+    const int wholeCenterY = wholeTop + wholeFont->line_height / 2;
+    lv_obj_set_pos(row.frac, blockLeft + wholeTextWidth + kTextSlack,
+                   wholeCenterY - fractionHeight / 2);
+    lv_obj_set_size(row.frac, fractionWidth, fractionHeight);
+    lv_obj_set_style_text_align(row.frac, LV_TEXT_ALIGN_LEFT, 0);
+  }
+
   void renderAero() {
     if (!rows_[0].unit) return;
     char textValue[32];
@@ -185,16 +286,10 @@ private:
     return &lv_font_jetbrains_mono_20;
   }
   void value(unsigned id, const char *textValue) {
+    // 风速行拆成「整数 + 小数」两段，整数字号规则与其它行一致。
+    if (id == WindRow) { renderWindSplit(textValue); return; }
     if (strcmp(lv_label_get_text(rows_[id].value), textValue)) lv_label_set_text(rows_[id].value, textValue);
-    const lv_font_t *selected = font(layout_.level(id));
-    const lv_font_t *candidates[] = {selected, &lv_font_jetbrains_mono_40, &lv_font_jetbrains_mono_28, &lv_font_jetbrains_mono_20, &lv_font_jetbrains_mono_14};
-    for (const auto *candidate : candidates) {
-      if (candidate->line_height > selected->line_height) continue;
-      lv_point_t size;
-      lv_txt_get_size(&size, textValue, candidate, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-      if (size.x <= 136) { selected = candidate; break; }
-    }
-    lv_obj_set_style_text_font(rows_[id].value, selected, 0);
+    lv_obj_set_style_text_font(rows_[id].value, pickFont(id, textValue, ValueWidth), 0);
   }
   void reflow() {
     for (unsigned position = 0; position < 5; ++position) {
@@ -209,10 +304,13 @@ private:
         if (layout_.level(id) >= 3) lv_obj_clear_flag(row.detail, LV_OBJ_FLAG_HIDDEN);
         else lv_obj_add_flag(row.detail, LV_OBJ_FLAG_HIDDEN);
       }
+      // 先按该行 max 字号占位，具体字号由 value() 按内容与预算决定。
       const int textHeight = font(layout_.level(id))->line_height;
-      lv_obj_set_pos(row.value, 80, (height - textHeight) / 2);
-      lv_obj_set_height(row.value, textHeight);
+      lv_obj_set_pos(row.value, ValueLeft, (height - textHeight) / 2);
+      lv_obj_set_size(row.value, ValueWidth, textHeight);
       value(id, lv_label_get_text(row.value));
+      // 风速行的整数段字号可能被降级，需要按最终字号重新居中。
+      if (id == WindRow) layoutWindSplit();
     }
   }
   static void event(lv_event_t *event) {
