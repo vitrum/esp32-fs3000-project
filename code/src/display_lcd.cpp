@@ -954,7 +954,7 @@ void DisplayLcd::buildGpsPanel() {
   gpsFixLabel_ = lv_label_create(gpsPanel_);
   lv_label_set_text(gpsFixLabel_, "Searching satellites...");
   lv_obj_set_width(gpsFixLabel_, 216);
-  lv_obj_set_style_text_font(gpsFixLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_font(gpsFixLabel_, &lv_font_jetbrains_mono_16, 0);
   lv_obj_set_style_text_color(gpsFixLabel_, lv_color_make(217, 119, 6), 0);
   lv_obj_align(gpsFixLabel_, LV_ALIGN_TOP_LEFT, 12, 56);
 
@@ -981,7 +981,7 @@ void DisplayLcd::buildGpsPanel() {
     lv_label_set_text(lbl, initTexts[i]);
     lv_obj_set_width(lbl, 196);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_jetbrains_mono_14, 0);
     lv_obj_set_style_text_color(lbl, lv_color_make(30, 41, 59), 0);
     *labels[i] = lbl;
   }
@@ -996,7 +996,7 @@ void DisplayLcd::buildGpsPanel() {
   gpsRestartLabel_ = lv_label_create(gpsRestartButton_);
   lv_label_set_text(gpsRestartLabel_, LV_SYMBOL_REFRESH " RESTART GPS");
   lv_obj_set_style_text_color(gpsRestartLabel_, lv_color_white(), 0);
-  lv_obj_set_style_text_font(gpsRestartLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(gpsRestartLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(gpsRestartLabel_);
 
   lv_obj_add_flag(gpsPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -1110,7 +1110,7 @@ void DisplayLcd::refreshSdList() {
                f.name, (unsigned long)(f.size / 1024));
     lv_label_set_text(label, text);
     lv_obj_set_style_text_font(label,
-        chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
+        chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_jetbrains_mono_14, 0);
     // 可播放项高亮背景
     lv_obj_set_style_bg_color(button,
       f.isDirectory ? lv_color_make(220, 252, 231)
@@ -1131,7 +1131,7 @@ void DisplayLcd::buildPanelHeader(lv_obj_t *panel, const char *title,
   lv_obj_add_event_cb(backButton, backCallback, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *backLabel = lv_label_create(backButton);
   lv_label_set_text(backLabel, LV_SYMBOL_LEFT " BACK");
-  lv_obj_set_style_text_font(backLabel, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(backLabel, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(backLabel, lv_color_make(51, 65, 85), 0);
   lv_obj_center(backLabel);
 
@@ -1139,7 +1139,7 @@ void DisplayLcd::buildPanelHeader(lv_obj_t *panel, const char *title,
   lv_label_set_text(titleLabel, title);
   lv_obj_set_width(titleLabel, 142);
   lv_label_set_long_mode(titleLabel, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(titleLabel, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_font(titleLabel, &lv_font_jetbrains_mono_16, 0);
   lv_obj_set_style_text_color(titleLabel, lv_color_make(37, 99, 235), 0);
   lv_obj_align(titleLabel, LV_ALIGN_TOP_LEFT, 84, 16);
 
@@ -1167,7 +1167,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   powerSourceHint_ = lv_label_create(powerSourcePanel_);
   lv_label_set_text(powerSourceHint_, "Choose a power source");
   lv_obj_set_width(powerSourceHint_, 216);
-  lv_obj_set_style_text_font(powerSourceHint_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(powerSourceHint_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(powerSourceHint_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(powerSourceHint_, LV_ALIGN_TOP_LEFT, 12, 60);
 
@@ -1192,7 +1192,7 @@ void DisplayLcd::buildPowerSourcePanel() {
     lv_obj_add_event_cb(button, callbacks[i], LV_EVENT_CLICKED, nullptr);
     powerSourceOptions_[i] = lv_label_create(button);
     lv_label_set_text(powerSourceOptions_[i], labels[i]);
-    lv_obj_set_style_text_font(powerSourceOptions_[i], &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(powerSourceOptions_[i], &lv_font_jetbrains_mono_14, 0);
     lv_obj_set_style_text_color(powerSourceOptions_[i], lv_color_make(30, 41, 59), 0);
     lv_obj_center(powerSourceOptions_[i]);
     y += heights[i] + 6;
@@ -1219,7 +1219,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   bleDeviceHint_ = lv_label_create(bleDevicePanel_);
   lv_label_set_text(bleDeviceHint_, "Tap device, then confirm");
   lv_obj_set_width(bleDeviceHint_, 216);
-  lv_obj_set_style_text_font(bleDeviceHint_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(bleDeviceHint_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(bleDeviceHint_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(bleDeviceHint_, LV_ALIGN_TOP_LEFT, 12, 56);
 
@@ -1233,14 +1233,14 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_label_set_text(scanLabel, "SCAN AGAIN");
   bleScanLabel_ = scanLabel;
   lv_obj_set_style_text_color(scanLabel, lv_color_white(), 0);
-  lv_obj_set_style_text_font(scanLabel, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(scanLabel, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(scanLabel);
 
   bleStatusLabel_ = lv_label_create(bleDevicePanel_);
   lv_label_set_text(bleStatusLabel_, "No scan yet");
   lv_obj_set_width(bleStatusLabel_, 216);
   lv_label_set_long_mode(bleStatusLabel_, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(bleStatusLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(bleStatusLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(bleStatusLabel_, lv_color_make(37, 99, 235), 0);
   lv_obj_align(bleStatusLabel_, LV_ALIGN_TOP_LEFT, 12, 116);
 
@@ -1268,7 +1268,7 @@ void DisplayLcd::buildPowerSourcePanel() {
     lv_obj_set_width(deviceLabel, 196);
     lv_obj_set_height(deviceLabel, 38);
     lv_label_set_long_mode(deviceLabel, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_font(deviceLabel, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(deviceLabel, &lv_font_jetbrains_mono_14, 0);
     lv_obj_set_style_text_color(deviceLabel, lv_color_make(30, 41, 59), 0);
     lv_obj_center(deviceLabel);
     lv_obj_add_flag(bleDeviceButtons_[i], LV_OBJ_FLAG_HIDDEN);
@@ -1294,7 +1294,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_label_set_text(bleConfirmNameLabel_, "BLE device");
   lv_obj_set_width(bleConfirmNameLabel_, 216);
   lv_label_set_long_mode(bleConfirmNameLabel_, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(bleConfirmNameLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_font(bleConfirmNameLabel_, &lv_font_jetbrains_mono_16, 0);
   lv_obj_set_style_text_color(bleConfirmNameLabel_, lv_color_make(23, 32, 51), 0);
   lv_obj_align(bleConfirmNameLabel_, LV_ALIGN_TOP_LEFT, 12, 76);
 
@@ -1303,7 +1303,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_width(bleConfirmAddressLabel_, 216);
   lv_obj_set_height(bleConfirmAddressLabel_, 44);
   lv_label_set_long_mode(bleConfirmAddressLabel_, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_font(bleConfirmAddressLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(bleConfirmAddressLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(bleConfirmAddressLabel_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(bleConfirmAddressLabel_, LV_ALIGN_TOP_LEFT, 12, 104);
 
@@ -1317,7 +1317,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_label_set_text(confirmLabel, "CONNECT");
   bleConfirmButtonLabel_ = confirmLabel;
   lv_obj_set_style_text_color(confirmLabel, lv_color_white(), 0);
-  lv_obj_set_style_text_font(confirmLabel, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(confirmLabel, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(confirmLabel);
 
   lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -1351,7 +1351,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_width(bleLoadingLabel_, 216);
   lv_obj_set_height(bleLoadingLabel_, 150);
   lv_label_set_long_mode(bleLoadingLabel_, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_font(bleLoadingLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(bleLoadingLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(bleLoadingLabel_, lv_color_make(51, 65, 85), 0);
   lv_obj_align(bleLoadingLabel_, LV_ALIGN_TOP_LEFT, 12, 132);
 
@@ -1376,13 +1376,13 @@ void DisplayLcd::buildVirtualPowerPanel() {
 
   virtualPowerTitle_ = lv_label_create(virtualPowerPanel_);
   lv_label_set_text(virtualPowerTitle_, "POWER");
-  lv_obj_set_style_text_font(virtualPowerTitle_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(virtualPowerTitle_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(virtualPowerTitle_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(virtualPowerTitle_, LV_ALIGN_TOP_LEFT, 16, 64);
 
   virtualPowerValueLabel_ = lv_label_create(virtualPowerPanel_);
   lv_label_set_text(virtualPowerValueLabel_, "0 W");
-  lv_obj_set_style_text_font(virtualPowerValueLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_font(virtualPowerValueLabel_, &lv_font_jetbrains_mono_16, 0);
   lv_obj_set_style_text_color(virtualPowerValueLabel_, lv_color_make(23, 32, 51), 0);
   lv_obj_align(virtualPowerValueLabel_, LV_ALIGN_TOP_RIGHT, -16, 62);
 
@@ -1399,13 +1399,13 @@ void DisplayLcd::buildVirtualPowerPanel() {
 
   virtualCadenceTitle_ = lv_label_create(virtualPowerPanel_);
   lv_label_set_text(virtualCadenceTitle_, "CADENCE");
-  lv_obj_set_style_text_font(virtualCadenceTitle_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(virtualCadenceTitle_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(virtualCadenceTitle_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(virtualCadenceTitle_, LV_ALIGN_TOP_LEFT, 16, 146);
 
   virtualCadenceValueLabel_ = lv_label_create(virtualPowerPanel_);
   lv_label_set_text(virtualCadenceValueLabel_, "0 rpm");
-  lv_obj_set_style_text_font(virtualCadenceValueLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_font(virtualCadenceValueLabel_, &lv_font_jetbrains_mono_16, 0);
   lv_obj_set_style_text_color(virtualCadenceValueLabel_, lv_color_make(23, 32, 51), 0);
   lv_obj_align(virtualCadenceValueLabel_, LV_ALIGN_TOP_RIGHT, -16, 144);
 
@@ -1424,7 +1424,7 @@ void DisplayLcd::buildVirtualPowerPanel() {
   lv_label_set_text(virtualHint_, "Drag either slider to update\nlive power and cadence.");
   lv_obj_set_width(virtualHint_, 208);
   lv_label_set_long_mode(virtualHint_, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_font(virtualHint_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(virtualHint_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(virtualHint_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(virtualHint_, LV_ALIGN_TOP_LEFT, 16, 224);
 
@@ -1472,7 +1472,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_label_set_text(settingsPowerButtonLabel_, LV_SYMBOL_POWER "\nPOWER");
   lv_obj_set_style_text_color(settingsPowerButtonLabel_, lv_color_white(), 0);
   lv_obj_set_style_text_align(settingsPowerButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(settingsPowerButtonLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(settingsPowerButtonLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(settingsPowerButtonLabel_);
 
   // 语言入口
@@ -1487,7 +1487,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_label_set_text(settingsLanguageEntryLabel_, LV_SYMBOL_LIST "\nLANG");
   lv_obj_set_style_text_color(settingsLanguageEntryLabel_, lv_color_white(), 0);
   lv_obj_set_style_text_align(settingsLanguageEntryLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(settingsLanguageEntryLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(settingsLanguageEntryLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(settingsLanguageEntryLabel_);
 
   // Wi-Fi 入口
@@ -1502,7 +1502,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_label_set_text(settingsWifiEntryLabel_, LV_SYMBOL_WIFI "\nWI-FI");
   lv_obj_set_style_text_color(settingsWifiEntryLabel_, lv_color_white(), 0);
   lv_obj_set_style_text_align(settingsWifiEntryLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(settingsWifiEntryLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(settingsWifiEntryLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(settingsWifiEntryLabel_);
 
   // 声音入口
@@ -1516,7 +1516,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_label_set_text(settingsSoundButtonLabel_, LV_SYMBOL_AUDIO "\nSOUND");
   lv_obj_set_style_text_color(settingsSoundButtonLabel_, lv_color_white(), 0);
   lv_obj_set_style_text_align(settingsSoundButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(settingsSoundButtonLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(settingsSoundButtonLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(settingsSoundButtonLabel_);
 
   // SD 卡文件浏览入口（音乐播放）
@@ -1530,7 +1530,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_label_set_text(settingsSdButtonLabel_, LV_SYMBOL_SD_CARD "\nSD/MUSIC");
   lv_obj_set_style_text_color(settingsSdButtonLabel_, lv_color_white(), 0);
   lv_obj_set_style_text_align(settingsSdButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(settingsSdButtonLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(settingsSdButtonLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(settingsSdButtonLabel_);
 
   // GPS 入口
@@ -1544,7 +1544,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_label_set_text(settingsGpsButtonLabel_, LV_SYMBOL_GPS "\nGPS");
   lv_obj_set_style_text_color(settingsGpsButtonLabel_, lv_color_white(), 0);
   lv_obj_set_style_text_align(settingsGpsButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(settingsGpsButtonLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(settingsGpsButtonLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(settingsGpsButtonLabel_);
 
   lv_obj_t *logs = lv_btn_create(settingsPanel_);
@@ -1567,7 +1567,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_add_event_cb(usb, onUsbStorageButton, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *usbLabel = lv_label_create(usb);
   lv_label_set_text(usbLabel, LV_SYMBOL_USB "\nUSB");
-  lv_obj_set_style_text_font(usbLabel, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(usbLabel, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(usbLabel, lv_color_white(), 0);
   lv_obj_center(usbLabel);
 
@@ -1589,7 +1589,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_add_event_cb(fitSaveButton_, onFitSave, LV_EVENT_CLICKED, nullptr);
   fitSaveLabel_ = lv_label_create(fitSaveButton_);
   lv_label_set_text(fitSaveLabel_, "SAVE FIT");
-  lv_obj_set_style_text_font(fitSaveLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(fitSaveLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(fitSaveLabel_);
   // 开始/停止记录按钮（本地入口，无需依赖网页）。
   recordButton_ = lv_btn_create(rideLogPanel_);
@@ -1602,7 +1602,7 @@ void DisplayLcd::buildSettingsPanel() {
   recordLabel_ = lv_label_create(recordButton_);
   lv_label_set_text(recordLabel_, LV_SYMBOL_PLAY " START");
   lv_obj_set_style_text_color(recordLabel_, lv_color_white(), 0);
-  lv_obj_set_style_text_font(recordLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(recordLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(recordLabel_);
   stopRecordButton_ = lv_btn_create(rideLogPanel_);
   lv_obj_set_size(stopRecordButton_, 108, 34);
@@ -1613,12 +1613,12 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_t *stopLabel = lv_label_create(stopRecordButton_);
   stopRecordLabel_ = stopLabel;
   lv_label_set_text(stopLabel, LV_SYMBOL_STOP " STOP");
-  lv_obj_set_style_text_font(stopLabel, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(stopLabel, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(stopLabel);
   lv_obj_add_state(stopRecordButton_, LV_STATE_DISABLED);
   rideDurationLabel_ = lv_label_create(rideLogPanel_);
   lv_obj_align(rideDurationLabel_, LV_ALIGN_TOP_LEFT, 12, 90);
-  lv_obj_set_style_text_font(rideDurationLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(rideDurationLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_t *scroll = lv_obj_create(rideLogPanel_);
   lv_obj_set_size(scroll, 224, 192);
   lv_obj_align(scroll, LV_ALIGN_TOP_LEFT, 8, 112);
@@ -1627,7 +1627,7 @@ void DisplayLcd::buildSettingsPanel() {
   rideLogText_ = lv_label_create(scroll);
   lv_obj_set_width(rideLogText_, 204);
   lv_label_set_long_mode(rideLogText_, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_font(rideLogText_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(rideLogText_, &lv_font_jetbrains_mono_14, 0);
   updateRideLog("", false, 0, 0, 0, 0, 0);
   lv_obj_add_flag(rideLogPanel_, LV_OBJ_FLAG_HIDDEN);
 
@@ -1657,7 +1657,7 @@ void DisplayLcd::buildLanguagePanel() {
   languageHint_ = lv_label_create(languagePanel_);
   lv_label_set_text(languageHint_, "Choose interface language");
   lv_obj_set_width(languageHint_, 216);
-  lv_obj_set_style_text_font(languageHint_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(languageHint_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(languageHint_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(languageHint_, LV_ALIGN_TOP_LEFT, 12, 58);
 
@@ -1678,7 +1678,7 @@ void DisplayLcd::buildLanguagePanel() {
     settingsLanguageButtonLabels_[i] = lv_label_create(settingsLanguageButtons_[i]);
     lv_label_set_text(settingsLanguageButtonLabels_[i], labels[i]);
     lv_obj_set_style_text_font(settingsLanguageButtonLabels_[i],
-                               i == 1 ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
+                               i == 1 ? &lv_font_noto_sans_sc_14 : &lv_font_jetbrains_mono_14, 0);
     lv_obj_center(settingsLanguageButtonLabels_[i]);
   }
 
@@ -1701,7 +1701,7 @@ void DisplayLcd::buildWifiPanel() {
 
   settingsWifiLabel_ = lv_label_create(wifiPanel_);
   lv_label_set_text(settingsWifiLabel_, "Wi-Fi");
-  lv_obj_set_style_text_font(settingsWifiLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_font(settingsWifiLabel_, &lv_font_jetbrains_mono_16, 0);
   lv_obj_set_style_text_color(settingsWifiLabel_, lv_color_make(30, 41, 59), 0);
   lv_obj_align(settingsWifiLabel_, LV_ALIGN_TOP_LEFT, 16, 62);
 
@@ -1719,7 +1719,7 @@ void DisplayLcd::buildWifiPanel() {
     settingsWifiButtonLabels_[i] = lv_label_create(settingsWifiButtons_[i]);
     lv_label_set_text(settingsWifiButtonLabels_[i], i == 1 ? "ON" : "OFF");
     lv_obj_set_style_text_font(settingsWifiButtonLabels_[i],
-                               &lv_font_montserrat_14, 0);
+                               &lv_font_jetbrains_mono_14, 0);
     lv_obj_center(settingsWifiButtonLabels_[i]);
   }
 
@@ -1737,7 +1737,7 @@ void DisplayLcd::buildWifiPanel() {
   lv_obj_t *setupLabel = lv_label_create(setup);
   wifiSetupLabel_ = setupLabel;
   lv_label_set_text(setupLabel, "SET UP WI-FI");
-  lv_obj_set_style_text_font(setupLabel, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(setupLabel, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(setupLabel);
   lv_obj_add_flag(wifiPanel_, LV_OBJ_FLAG_HIDDEN);
 }
@@ -1760,13 +1760,13 @@ void DisplayLcd::buildSoundPanel() {
   lv_label_set_text(soundHint_, "Drag the slider to set volume.\nPreview tones are disabled.");
   lv_obj_set_width(soundHint_, 216);
   lv_label_set_long_mode(soundHint_, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_font(soundHint_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(soundHint_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(soundHint_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(soundHint_, LV_ALIGN_TOP_LEFT, 12, 58);
 
   soundVolumeLabel_ = lv_label_create(soundPanel_);
   lv_label_set_text(soundVolumeLabel_, "Volume: 70%");
-  lv_obj_set_style_text_font(soundVolumeLabel_, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_font(soundVolumeLabel_, &lv_font_jetbrains_mono_16, 0);
   lv_obj_set_style_text_color(soundVolumeLabel_, lv_color_make(23, 32, 51), 0);
   lv_obj_align(soundVolumeLabel_, LV_ALIGN_TOP_LEFT, 12, 112);
 
@@ -1805,7 +1805,7 @@ void DisplayLcd::buildSdPanel() {
   lv_label_set_text(sdCurrentPathLabel_, "/");
   lv_obj_set_width(sdCurrentPathLabel_, 154);
   lv_label_set_long_mode(sdCurrentPathLabel_, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(sdCurrentPathLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(sdCurrentPathLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_align(sdCurrentPathLabel_, LV_ALIGN_TOP_LEFT, 12, 52);
 
   sdUpButton_ = lv_btn_create(sdPanel_);
@@ -1823,7 +1823,7 @@ void DisplayLcd::buildSdPanel() {
   sdStatusLabel_ = lv_label_create(sdPanel_);
   lv_label_set_text(sdStatusLabel_, "Loading files...");
   lv_obj_set_width(sdStatusLabel_, 216);
-  lv_obj_set_style_text_font(sdStatusLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(sdStatusLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(sdStatusLabel_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(sdStatusLabel_, LV_ALIGN_TOP_LEFT, 12, 74);
 
@@ -1852,7 +1852,7 @@ void DisplayLcd::buildSdPanel() {
     lv_obj_t *label = lv_label_create(button);
     lv_obj_set_width(label, 200);
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(label, &lv_font_jetbrains_mono_14, 0);
     lv_obj_set_style_text_color(label, lv_color_make(30, 41, 59), 0);
     lv_obj_center(label);
     sdRowLabels_[i] = label;
@@ -1863,7 +1863,7 @@ void DisplayLcd::buildSdPanel() {
   lv_label_set_text(sdNowPlayingLabel_, "Stopped");
   lv_obj_set_width(sdNowPlayingLabel_, 216);
   lv_label_set_long_mode(sdNowPlayingLabel_, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(sdNowPlayingLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(sdNowPlayingLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(sdNowPlayingLabel_, lv_color_make(37, 99, 235), 0);
   lv_obj_align(sdNowPlayingLabel_, LV_ALIGN_TOP_LEFT, 12, 260);
 
@@ -1876,7 +1876,7 @@ void DisplayLcd::buildSdPanel() {
   sdStopLabel_ = lv_label_create(sdStopButton_);
   lv_label_set_text(sdStopLabel_, LV_SYMBOL_STOP " STOP");
   lv_obj_set_style_text_color(sdStopLabel_, lv_color_white(), 0);
-  lv_obj_set_style_text_font(sdStopLabel_, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(sdStopLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(sdStopLabel_);
 
   lv_obj_add_flag(sdPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -1929,9 +1929,9 @@ void DisplayLcd::refreshBleDeviceButtons() {
 void DisplayLcd::refreshLanguage() {
   AppLog.printf("[LANG] begin zh=%d\n", (int)chinese_);
   const lv_font_t *font = chinese_ ? &lv_font_noto_sans_sc_14
-                                   : &lv_font_montserrat_14;
+                                   : &lv_font_jetbrains_mono_14;
   const lv_font_t *titleFont = chinese_ ? &lv_font_noto_sans_sc_14
-                                        : &lv_font_montserrat_16;
+                                        : &lv_font_jetbrains_mono_16;
   dashboard_.setLanguage(chinese_);
   AppLog.println("[LANG] 1 main done");
 
@@ -2036,7 +2036,7 @@ void DisplayLcd::refreshLanguage() {
   else snprintf(playing, sizeof(playing), "%s", localized("Stopped", "已停止"));
   lv_label_set_text(sdNowPlayingLabel_, playing);
   lv_obj_set_style_text_font(settingsWifiStatus_, font, 0);
-  lv_obj_set_style_text_font(settingsLanguageButtonLabels_[0], &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(settingsLanguageButtonLabels_[0], &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_font(settingsLanguageButtonLabels_[1], &lv_font_noto_sans_sc_14, 0);
   for (size_t i = 0; i < 2; ++i) {
     const bool selected = chinese_ == (i == 1);
@@ -2282,7 +2282,7 @@ void DisplayLcd::showUsbStorage(bool ready, bool ejected, bool hostConnected, bo
     buildPanelHeader(usbStoragePanel_, "USB STORAGE", onUsbStorageBack);
     usbStorageStatus_ = lv_label_create(usbStoragePanel_);
     lv_obj_set_width(usbStorageStatus_, 216);
-    lv_obj_set_style_text_font(usbStorageStatus_, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(usbStorageStatus_, &lv_font_jetbrains_mono_14, 0);
     lv_obj_set_style_text_color(usbStorageStatus_, lv_color_make(30, 41, 59), 0);
     lv_obj_align(usbStorageStatus_, LV_ALIGN_TOP_LEFT, 12, 76);
     for (unsigned index = 0; index < 2; ++index) {
@@ -2302,7 +2302,7 @@ void DisplayLcd::showUsbStorage(bool ready, bool ejected, bool hostConnected, bo
   if (!usbStorageError_ && strcmp(lv_label_get_text(usbStorageStatus_), status)) lv_label_set_text(usbStorageStatus_, status);
   for (unsigned index = 0; index < 2; ++index) {
     lv_label_set_text(usbStorageButtonLabels_[index], index ? localized("ON", "开启") : localized("OFF", "关闭"));
-    lv_obj_set_style_text_font(usbStorageButtonLabels_[index], chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(usbStorageButtonLabels_[index], chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_jetbrains_mono_14, 0);
     if (enabled == (index == 1)) lv_obj_add_state(usbStorageButtons_[index], LV_STATE_DISABLED);
     else lv_obj_clear_state(usbStorageButtons_[index], LV_STATE_DISABLED);
   }

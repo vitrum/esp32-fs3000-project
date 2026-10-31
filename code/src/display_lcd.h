@@ -6,6 +6,7 @@
 
 #include "lv_conf.h"
 #include <lvgl.h>
+#include "jetbrains_mono_latin.h"
 
 #include "ble_power.h"
 #include "wind_probe.h"

@@ -430,3 +430,5 @@ APP 校验 CRC32
 - 存储与 CSV/FIT 基础方案见 [`plan/README.md`](./README.md)。
 - 本文档的 meta sidecar（§7.1）扩展了 `README.md` §2.3。
 - 时间源问题（RTC/GNSS）在 `README.md` §3.4 与本文档 §9 中均需解决。
+- 电池电量/充电状态可加入实时遥测 Notify 载荷与记录 meta，见 [`plan/battery-power.md`](./battery-power.md) §7.3。
+- 双 FS3000 探针（vAlong/vCross/yaw）依赖 I2C 分路，见 [`plan/i2c-bus.md`](./i2c-bus.md)。

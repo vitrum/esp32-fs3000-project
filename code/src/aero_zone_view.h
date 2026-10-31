@@ -17,11 +17,11 @@ public:
     lv_obj_set_style_radius(parent_, 0, 0);
     lv_obj_set_style_border_width(parent_, 0, 0);
     lv_obj_set_style_bg_opa(parent_, LV_OPA_TRANSP, 0);
-    title_ = label(0, 0, 104, 22, &lv_font_montserrat_14, false);
-    description_ = label(0, 29, 104, 22, &lv_font_montserrat_14, false);
-    zone_ = label(116, 12, 100, 50, &lv_font_montserrat_40, true);
-    unit_ = label(0, 70, 104, 18, &lv_font_montserrat_14, false);
-    value_ = label(116, 70, 100, 18, &lv_font_montserrat_14, true);
+    title_ = label(0, 0, 104, 22, &lv_font_jetbrains_mono_14, false);
+    description_ = label(0, 29, 104, 22, &lv_font_jetbrains_mono_14, false);
+    zone_ = label(116, 12, 100, 50, &lv_font_jetbrains_mono_40, true);
+    unit_ = label(0, 70, 104, 18, &lv_font_jetbrains_mono_14, false);
+    value_ = label(116, 70, 100, 18, &lv_font_jetbrains_mono_14, true);
     lv_label_set_text(unit_, "CdA / m2");
     lv_obj_set_style_text_color(zone_, lv_color_make(37, 99, 235), 0);
     lv_obj_t *line = lv_obj_create(parent_);
@@ -57,7 +57,7 @@ private:
     if (!parent_) return;
     static const char *const english[] = {"NO DATA", "UPRIGHT", "DROPS", "AERO", "AGGRESSIVE", "VERY AERO", "RACE TT", "ELITE TT"};
     static const char *const chinese[] = {"等待数据", "直立", "低位下把", "气动", "激进", "极致气动", "竞赛姿态", "精英姿态"};
-    const lv_font_t *font = chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14;
+    const lv_font_t *font = chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_jetbrains_mono_14;
     lv_obj_set_style_text_font(title_, font, 0);
     lv_obj_set_style_text_font(description_, font, 0);
     lv_label_set_text(title_, chinese_ ? "气动区间" : "AERO ZONE");

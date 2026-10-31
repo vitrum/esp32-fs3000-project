@@ -27,5 +27,5 @@ console.log(`Font source SHA256: ${sourceHash}`);
 execFileSync('npx', ['--yes', '--package', 'lv_font_conv@1.5.3', 'lv_font_conv',
   '--size', '14', '--bpp', '4', '--format', 'lvgl', '--font', font,
   '--symbols', symbols, '--no-kerning', '--no-compress', '--lv-include', 'lvgl.h',
-  '--lv-font-name', 'lv_font_noto_sans_sc_14', '--lv-fallback', 'lv_font_montserrat_14',
+  '--lv-font-name', 'lv_font_noto_sans_sc_14', '--lv-fallback', 'lv_font_jetbrains_mono_14',
   '-o', path.join(root, 'src/noto_sans_sc_14.c')], { stdio: 'inherit', cwd: root });

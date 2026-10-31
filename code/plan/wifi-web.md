@@ -378,6 +378,11 @@ ws.onmessage = (ev) => {
 
 三者共享：文件命名规范、meta sidecar、功率源切换、实时指标定义。
 
+补充规划：
+
+- **电池电量/充电状态**：加入 `/ws` 实时帧与 `/api/status`，见 [`plan/battery-power.md`](./battery-power.md) §7.3。
+- **双 FS3000 视风**：`vCross` / `yaw` 依赖 I2C 分路，见 [`plan/i2c-bus.md`](./i2c-bus.md)。
+
 ---
 
 ## 10. 实现状态（已落地）

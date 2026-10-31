@@ -18,9 +18,9 @@ public:
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
-    gps = text(bar, 2, 4, 20, 20, &lv_font_montserrat_16);
+    gps = text(bar, 2, 4, 20, 20, &lv_font_jetbrains_mono_16);
     lv_label_set_text(gps, LV_SYMBOL_GPS);
-    satellites = text(bar, 22, 4, 24, 20, &lv_font_montserrat_16);
+    satellites = text(bar, 22, 4, 24, 20, &lv_font_jetbrains_mono_16);
     lv_label_set_text(satellites, "--");
     spinner = lv_spinner_create(bar, 1000, 60);
     lv_obj_set_pos(spinner, 25, 6);
@@ -31,7 +31,7 @@ public:
     lv_obj_set_style_arc_color(spinner, lv_color_make(80, 80, 80), LV_PART_MAIN);
     lv_obj_add_flag(spinner, LV_OBJ_FLAG_HIDDEN);
     sdButton = hotButton(screen, 48, sdCallback);
-    sdIcon = text(bar, 58, 4, 20, 20, &lv_font_montserrat_16);
+    sdIcon = text(bar, 58, 4, 20, 20, &lv_font_jetbrains_mono_16);
     lv_label_set_text(sdIcon, LV_SYMBOL_SAVE);
     dot_ = lv_obj_create(bar);
     lv_obj_set_pos(dot_, 82, 11);
@@ -41,9 +41,9 @@ public:
     lv_obj_set_style_bg_opa(dot_, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(dot_, lv_color_make(239, 68, 68), 0);
     settingsButton = hotButton(screen, 94, settingsCallback);
-    auto *gear = text(bar, 106, 4, 20, 20, &lv_font_montserrat_16);
+    auto *gear = text(bar, 106, 4, 20, 20, &lv_font_jetbrains_mono_16);
     lv_label_set_text(gear, LV_SYMBOL_SETTINGS);
-    clock = text(bar, 140, 4, 98, 20, &lv_font_montserrat_16);
+    clock = text(bar, 140, 4, 98, 20, &lv_font_jetbrains_mono_16);
     lv_obj_set_style_text_align(clock, LV_TEXT_ALIGN_RIGHT, 0);
     lv_label_set_text(clock, "--:--:--");
     for (unsigned index = 0; index < DashboardLayout::Count; ++index) {
@@ -58,13 +58,13 @@ public:
       lv_obj_add_flag(row.box, LV_OBJ_FLAG_CLICKABLE);
       lv_obj_add_flag(row.box, LV_OBJ_FLAG_PRESS_LOCK);
       lv_obj_add_event_cb(row.box, event, LV_EVENT_ALL, &row);
-      row.title = text(row.box, 0, 0, 72, 18, &lv_font_montserrat_14);
-      row.unit = text(row.box, 0, 18, 72, 18, &lv_font_montserrat_14);
+      row.title = text(row.box, 0, 0, 72, 18, &lv_font_jetbrains_mono_14);
+      row.unit = text(row.box, 0, 18, 72, 18, &lv_font_jetbrains_mono_14);
       if (index == 0) {
-        row.detail = text(row.box, 0, 36, 72, 18, &lv_font_montserrat_14);
+        row.detail = text(row.box, 0, 36, 72, 18, &lv_font_jetbrains_mono_14);
         lv_obj_set_style_text_color(row.detail, lv_color_make(100, 116, 139), 0);
       }
-      row.value = text(row.box, 80, 0, 136, 36, &lv_font_montserrat_20);
+      row.value = text(row.box, 80, 0, 136, 36, &lv_font_jetbrains_mono_20);
       lv_obj_set_style_text_align(row.value, LV_TEXT_ALIGN_RIGHT, 0);
       lv_label_set_text(row.value, "--");
       row.line = lv_obj_create(row.box);
@@ -88,7 +88,7 @@ public:
     for (unsigned index = 0; index < 5; ++index) {
       if (!rows_[index].box) continue;
       lv_label_set_text(rows_[index].title, chinese ? translated[index] : english[index]);
-      lv_obj_set_style_text_font(rows_[index].title, chinese ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
+      lv_obj_set_style_text_font(rows_[index].title, chinese ? &lv_font_noto_sans_sc_14 : &lv_font_jetbrains_mono_14, 0);
       lv_label_set_text(rows_[index].unit, units[index]);
     }
     renderAero();
@@ -145,13 +145,13 @@ private:
     if (std::isfinite(cda_) && cda_ >= 0) snprintf(textValue, sizeof(textValue), "CdA %.2g", cda_);
     else snprintf(textValue, sizeof(textValue), "CdA --");
     lv_point_t size;
-    lv_txt_get_size(&size, textValue, &lv_font_montserrat_14, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_txt_get_size(&size, textValue, &lv_font_jetbrains_mono_14, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     if (size.x > 72) snprintf(textValue, sizeof(textValue), cda_ < 10000 ? "CdA %.0f" : "CdA >999", cda_);
     lv_label_set_text(rows_[0].unit, textValue);
     const char *english[] = {"NO DATA", "UPRIGHT", "DROPS", "AERO", "AGGR.", "LOW", "RACE", "TT"};
     const char *chinese[] = {"等待数据", "直立", "低位下把", "气动", "激进", "极致气动", "竞赛姿态", "精英姿态"};
     lv_label_set_text(rows_[0].detail, chinese_ ? chinese[zone_] : english[zone_]);
-    lv_obj_set_style_text_font(rows_[0].detail, chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(rows_[0].detail, chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_jetbrains_mono_14, 0);
   }
   static void plain(lv_obj_t *object) {
     lv_obj_set_style_pad_all(object, 0, 0);
@@ -179,15 +179,15 @@ private:
     return button;
   }
   const lv_font_t *font(unsigned level) const {
-    if (level == 4) return &lv_font_montserrat_48;
-    if (level == 3) return &lv_font_montserrat_40;
-    if (level == 2) return &lv_font_montserrat_28;
-    return &lv_font_montserrat_20;
+    if (level == 4) return &lv_font_jetbrains_mono_48;
+    if (level == 3) return &lv_font_jetbrains_mono_40;
+    if (level == 2) return &lv_font_jetbrains_mono_28;
+    return &lv_font_jetbrains_mono_20;
   }
   void value(unsigned id, const char *textValue) {
     if (strcmp(lv_label_get_text(rows_[id].value), textValue)) lv_label_set_text(rows_[id].value, textValue);
     const lv_font_t *selected = font(layout_.level(id));
-    const lv_font_t *candidates[] = {selected, &lv_font_montserrat_40, &lv_font_montserrat_28, &lv_font_montserrat_20, &lv_font_montserrat_14};
+    const lv_font_t *candidates[] = {selected, &lv_font_jetbrains_mono_40, &lv_font_jetbrains_mono_28, &lv_font_jetbrains_mono_20, &lv_font_jetbrains_mono_14};
     for (const auto *candidate : candidates) {
       if (candidate->line_height > selected->line_height) continue;
       lv_point_t size;
