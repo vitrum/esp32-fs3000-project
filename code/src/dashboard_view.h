@@ -1,8 +1,10 @@
 #pragma once
 
+#include "battery_gauge.h"
 #include "dashboard_layout.h"
 #include "sd_activity.h"
 #include <lvgl.h>
+#include "jetbrains_mono_latin.h"
 #include <cmath>
 #include <cstdio>
 
@@ -15,6 +17,12 @@ public:
   static constexpr int ValueLeft = 80;
   static constexpr unsigned WindRow = 1;   // 风速行 id（整数段 + 小数段）
   static constexpr int kTextSlack = 1;     // 标签框相对文字宽度的余量，防 CLIP 取整裁字
+  // 电量图标几何（顶栏右侧）。外框 4 格 + 1px 间距 + 右侧凸点，整体落在 192..238。
+  static constexpr int BatteryX = 192;
+  static constexpr int BatteryY = 8;
+  static constexpr int BatteryCellWidth = 5;
+  static constexpr int BatteryWidth = BatteryGauge::Cells * BatteryCellWidth + (BatteryGauge::Cells - 1) + 3;
+  static constexpr int BatteryHeight = 14;
 
   void create(lv_obj_t *screen, lv_event_cb_t sdCallback, lv_event_cb_t settingsCallback) {
     auto *bar = lv_obj_create(screen);
@@ -49,9 +57,39 @@ public:
     settingsButton = hotButton(screen, 94, settingsCallback);
     auto *gear = text(bar, 106, 4, 20, 20, &lv_font_jetbrains_mono_16);
     lv_label_set_text(gear, LV_SYMBOL_SETTINGS);
-    clock = text(bar, 140, 4, 98, 20, &lv_font_jetbrains_mono_16);
+    // 时钟右缘让位给电量图标：140..190 为时钟，192..236 为电池。
+    clock = text(bar, 140, 4, 50, 20, &lv_font_jetbrains_mono_16);
     lv_obj_set_style_text_align(clock, LV_TEXT_ALIGN_RIGHT, 0);
     lv_label_set_text(clock, "--:--:--");
+    // 电量图标：外框 + 4 个格子 + 右侧凸点，全部自绘，便于精确控制格数。
+    batteryIcon_ = lv_obj_create(bar);
+    lv_obj_set_pos(batteryIcon_, BatteryX, BatteryY);
+    lv_obj_set_size(batteryIcon_, BatteryWidth, BatteryHeight);
+    plain(batteryIcon_);
+    lv_obj_set_style_bg_opa(batteryIcon_, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(batteryIcon_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(batteryIcon_, LV_OBJ_FLAG_CLICKABLE);
+    batteryCaps_ = lv_obj_create(bar);
+    lv_obj_set_pos(batteryCaps_, BatteryX + BatteryWidth, BatteryY + 4);
+    lv_obj_set_size(batteryCaps_, 2, BatteryHeight - 8);
+    plain(batteryCaps_);
+    lv_obj_set_style_bg_opa(batteryCaps_, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(batteryCaps_, lv_color_make(148, 163, 184), 0);
+    lv_obj_clear_flag(batteryCaps_, LV_OBJ_FLAG_CLICKABLE);
+    for (unsigned index = 0; index < BatteryGauge::Cells; ++index) {
+      batteryCells_[index] = lv_obj_create(bar);
+      lv_obj_set_pos(batteryCells_[index], BatteryX + 2 + index * (BatteryCellWidth + 1), BatteryY + 2);
+      lv_obj_set_size(batteryCells_[index], BatteryCellWidth, BatteryHeight - 4);
+      plain(batteryCells_[index]);
+      lv_obj_set_style_bg_opa(batteryCells_[index], LV_OPA_TRANSP, 0);
+      lv_obj_clear_flag(batteryCells_[index], LV_OBJ_FLAG_CLICKABLE);
+    }
+    // 外框：透明填充 + 1px 描边。
+    lv_obj_set_style_bg_opa(batteryIcon_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(batteryIcon_, 1, 0);
+    lv_obj_set_style_border_color(batteryIcon_, lv_color_make(148, 163, 184), 0);
+    lv_obj_set_style_radius(batteryIcon_, 1, 0);
+    battery(3, false);
     for (unsigned index = 0; index < DashboardLayout::Count; ++index) {
       auto &row = rows_[index];
       row.owner = this;
@@ -118,14 +156,46 @@ public:
     if (valid) snprintf(buffer, sizeof(buffer), "%u", bpm); else snprintf(buffer, sizeof(buffer), "--");
     value(4, buffer);
   }
-  void storage(SdActivity::State state, uint32_t now) {
-    const bool writing = state == SdActivity::State::Writing;
-    const auto color = state == SdActivity::State::Absent ? lv_color_make(148, 163, 184) :
-        state == SdActivity::State::Ready ? lv_color_make(34, 197, 94) : lv_color_make(239, 68, 68);
+  // SD 状态 + 录制指示。
+  // 注意：SdActivity::Writing 只表示「此刻正在写 SD」，两次写之间是 Ready，
+  // 所以它不能用来表示「正在录制」。录制中由 recording 参数驱动图标闪烁。
+  void storage(SdActivity::State state, uint32_t now, bool recording = false) {
+    static const lv_color_t green = lv_color_make(34, 197, 94);
+    static const lv_color_t red = lv_color_make(239, 68, 68);
+    static const lv_color_t grey = lv_color_make(148, 163, 184);
+
+    lv_color_t color;
+    const char *symbol = LV_SYMBOL_SAVE;
+    switch (state) {
+      case SdActivity::State::Absent: color = grey; break;
+      case SdActivity::State::Error: color = red; symbol = LV_SYMBOL_WARNING; break;
+      default: color = green; break;
+    }
+
+    // 录制中：绿 <-> 红 每 500ms 切换，整个图标变红（不只是小圆点）。
+    if (recording && state != SdActivity::State::Absent && state != SdActivity::State::Error) {
+      if (((now / 500) & 1) == 0) color = red;
+      lv_obj_clear_flag(dot_, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_set_style_bg_color(dot_, red, 0);
+    } else {
+      lv_obj_add_flag(dot_, LV_OBJ_FLAG_HIDDEN);
+    }
     lv_obj_set_style_text_color(sdIcon, color, 0);
-    lv_label_set_text(sdIcon, state == SdActivity::State::Error ? LV_SYMBOL_WARNING : LV_SYMBOL_SAVE);
-    if (writing && ((now / 250) & 1)) lv_obj_clear_flag(dot_, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(dot_, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(sdIcon, symbol);
+  }
+
+  // 电量图标：cells 0..4，charging 时用绿色，否则按格数着色（0 格红色告警）。
+  void battery(uint8_t cells, bool charging) {
+    if (cells > BatteryGauge::Cells) cells = BatteryGauge::Cells;
+    const lv_color_t on = charging ? lv_color_make(34, 197, 94)
+        : (BatteryGauge::critical(cells) ? lv_color_make(239, 68, 68) : lv_color_make(226, 232, 240));
+    for (unsigned index = 0; index < BatteryGauge::Cells; ++index) {
+      if (!batteryCells_[index]) continue;
+      const bool lit = index < cells;
+      lv_obj_set_style_bg_opa(batteryCells_[index], lit ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+      if (lit) lv_obj_set_style_bg_color(batteryCells_[index], on, 0);
+    }
+    batteryCellsShown_ = cells;
   }
   bool load(const DashboardLayout::Settings &settings) { const bool valid = layout_.load(settings); reflow(); return valid; }
   bool takeSettings(DashboardLayout::Settings &settings, bool force = false) {
@@ -142,6 +212,10 @@ public:
   lv_obj_t *title(unsigned id) const { return rows_[id].title; }
   lv_obj_t *reading(unsigned id) const { return rows_[id].value; }
   lv_obj_t *gps = nullptr, *satellites = nullptr, *spinner = nullptr, *clock = nullptr;
+  lv_obj_t *dot_ = nullptr;   // 录制中的闪烁小圆点
+  // 电量图标对外暴露，便于测试断言格数与位置。
+  lv_obj_t *batteryIcon_ = nullptr, *batteryCaps_ = nullptr;
+  lv_obj_t *batteryCells_[BatteryGauge::Cells] = {nullptr, nullptr, nullptr, nullptr};
   lv_obj_t *sdButton = nullptr, *sdIcon = nullptr, *settingsButton = nullptr;
 
 private:
@@ -344,8 +418,8 @@ private:
   }
   Row rows_[5];
   DashboardLayout layout_;
-  lv_obj_t *dot_ = nullptr;
   bool chinese_ = false, dirty_ = false;
+  uint8_t batteryCellsShown_ = 0;
   uint32_t changedAt_ = 0;
   float cda_ = -1;
   unsigned zone_ = 0;

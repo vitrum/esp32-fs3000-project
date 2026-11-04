@@ -8,6 +8,7 @@
 #include <lvgl.h>
 #include "jetbrains_mono_latin.h"
 
+#include "battery_gauge.h"
 #include "ble_power.h"
 #include "wind_probe.h"
 #include "csv_logger.h"   // SdFileEntry
@@ -171,6 +172,7 @@ private:
   bool recordingRequested_ = false;
   bool recordingRequestStart_ = false;
   bool recording_ = false;
+  uint8_t batteryCells_ = 0;      // 0..4，由 battery_gauge.h 的电压映射得出
   bool rideLogFromDashboard_ = false;
   char rideHistory_[360] = {};
   uint32_t rideLastSample_ = 0;

@@ -2355,7 +2355,15 @@ void DisplayLcd::tick() {
   lastTick = now;
   lv_tick_inc(dt);
   saveDashboardSettings(false);
-  if (statusLabel_) dashboard_.storage(sdActivity.state(sdCardReady(), now), now);
+  if (statusLabel_) {
+    // recording_ 由 setRecording() 维护，表示「是否正在录制」；
+    // sdActivity 只表示「此刻 SD 是否在写」，两者不能混用。
+    dashboard_.storage(sdActivity.state(sdCardReady(), now), now, recording_ || recordingArmed_);
+    // 电量：目前板上没有电池 ADC，用模拟电压驱动图标（见 battery_gauge.h）。
+    const float packVoltage = BatteryGauge::simulatedVoltage(now);
+    batteryCells_ = BatteryGauge::cellsForVoltage(packVoltage);
+    dashboard_.battery(batteryCells_, false);
+  }
   lv_timer_handler();
 }
 

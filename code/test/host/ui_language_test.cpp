@@ -1,4 +1,5 @@
 #include "aero_zone_view.h"
+#include "battery_gauge.h"
 #include "dashboard_layout.h"
 #include "dashboard_view.h"
 #include <cassert>
@@ -103,6 +104,168 @@ static void checkGlyphs() {
     assert(!glyph.is_placeholder);
   }
   std::cout << "CJK glyphs checked: " << required.size() << '\n';
+}
+
+
+// ---- 录制指示：红点/图标必须在整个录制期间持续闪烁，停止后恢复绿色 ----
+static lv_color_t sdIconColor(DashboardView &view) {
+  return lv_obj_get_style_text_color(view.sdIcon, 0);
+}
+
+static void checkRecordingIndicator(lv_disp_t *display) {
+  const lv_color_t green = lv_color_make(34, 197, 94);
+  const lv_color_t red = lv_color_make(239, 68, 68);
+  lv_obj_t *screen = lv_disp_get_scr_act(display);
+  lv_obj_clean(screen);
+  DashboardView view;
+  view.create(screen, [](lv_event_t *) {}, [](lv_event_t *) {});
+
+  // 未录制：图标为绿色，不闪，红点隐藏。
+  for (uint32_t now = 0; now <= 4000; now += 250) {
+    view.storage(SdActivity::State::Ready, now, false);
+    assert(sdIconColor(view).full == green.full);
+    assert(lv_obj_has_flag(view.dot_, LV_OBJ_FLAG_HIDDEN));
+  }
+
+  // 录制中：跨越远超 600ms 的时间，颜色必须持续在两个值之间切换，
+  // 也就是说红点不能「只闪一次」。
+  unsigned redSeen = 0, greenSeen = 0, transitions = 0;
+  uint16_t previous = 0xFFFF;
+  for (uint32_t now = 0; now <= 20000; now += 250) {
+    view.storage(SdActivity::State::Ready, now, true);
+    const uint16_t color = sdIconColor(view).full;
+    // 录制期间红点必须一直显示（不是只显示一次）。
+    assert(!lv_obj_has_flag(view.dot_, LV_OBJ_FLAG_HIDDEN));
+    assert(lv_obj_get_style_bg_color(view.dot_, 0).full == red.full);
+    assert(color == red.full || color == green.full);
+    if (color == red.full) ++redSeen; else ++greenSeen;
+    if (previous != 0xFFFF && color != previous) ++transitions;
+    previous = color;
+  }
+  // 20s 内每 500ms 翻转一次 => 至少 35 次跳变；红/绿都必须出现很多次。
+  assert(transitions >= 35);
+  assert(redSeen >= 20 && greenSeen >= 20);
+
+  // 停止录制后：立即恢复绿色，且不再闪烁，红点隐藏。
+  for (uint32_t now = 20000; now <= 24000; now += 250) {
+    view.storage(SdActivity::State::Ready, now, false);
+    assert(sdIconColor(view).full == green.full);
+    assert(lv_obj_has_flag(view.dot_, LV_OBJ_FLAG_HIDDEN));
+  }
+
+  // SD 错误优先级高于录制：仍为红色告警图标。
+  view.storage(SdActivity::State::Error, 100, true);
+  assert(sdIconColor(view).full == red.full);
+  assert(std::string(lv_label_get_text(view.sdIcon)) == LV_SYMBOL_WARNING);
+
+  // SD 拔出：灰色，不闪。
+  view.storage(SdActivity::State::Absent, 100, true);
+  assert(std::string(lv_label_get_text(view.sdIcon)) == LV_SYMBOL_SAVE);
+
+  // 录制期间反复刷新不应泄漏或崩溃。
+  for (unsigned repeat = 0; repeat < 200; ++repeat) {
+    view.storage(SdActivity::State::Ready, repeat * 250, true);
+    lv_refr_now(display);
+  }
+  assert(lv_mem_test() == LV_RES_OK);
+  lv_obj_clean(screen);
+}
+
+// ---- 电量图标：4 格映射 + 位于时间右侧 + 不与其他顶栏元素重叠 ----
+static void checkBatteryGauge(lv_disp_t *display) {
+  // 纯逻辑：电压 -> 格数
+  assert(BatteryGauge::cellsForVoltage(4.20f) == 4);
+  assert(BatteryGauge::cellsForVoltage(4.05f) == 4);
+  assert(BatteryGauge::cellsForVoltage(4.04f) == 3);
+  assert(BatteryGauge::cellsForVoltage(3.85f) == 3);
+  assert(BatteryGauge::cellsForVoltage(3.84f) == 2);
+  assert(BatteryGauge::cellsForVoltage(3.65f) == 2);
+  assert(BatteryGauge::cellsForVoltage(3.64f) == 1);
+  assert(BatteryGauge::cellsForVoltage(3.45f) == 1);
+  assert(BatteryGauge::cellsForVoltage(3.44f) == 0);
+  assert(BatteryGauge::cellsForVoltage(3.30f) == 0);
+  assert(BatteryGauge::cellsForVoltage(0.0f) == 0);
+  assert(BatteryGauge::cellsForVoltage(-1.0f) == 0);
+  assert(BatteryGauge::cellsForVoltage(NAN) == 0);
+  // 单调性：电压越高格数不应减少
+  uint8_t previous = 0;
+  for (int step = 300; step <= 430; ++step) {
+    const uint8_t cells = BatteryGauge::cellsForVoltage(step / 100.0f);
+    assert(cells >= previous && cells <= BatteryGauge::Cells);
+    previous = cells;
+  }
+  // 模拟电压随时长单调下降，且始终落在可显示范围
+  float lastVoltage = 5.0f;
+  for (uint32_t minutes = 0; minutes <= 600; minutes += 5) {
+    const float voltage = BatteryGauge::simulatedVoltage(minutes * 60000u);
+    assert(voltage <= lastVoltage && voltage >= 3.30f && voltage <= 4.20f);
+    lastVoltage = voltage;
+  }
+  assert(BatteryGauge::critical(0) && !BatteryGauge::critical(1));
+
+  lv_obj_t *screen = lv_disp_get_scr_act(display);
+  lv_obj_clean(screen);
+  DashboardView view;
+  view.create(screen, [](lv_event_t *) {}, [](lv_event_t *) {});
+  lv_obj_update_layout(screen);
+
+  // 电池图标必须在时钟右侧，且不超出顶栏。
+  lv_area_t clockArea, barArea;
+  lv_obj_get_coords(view.clock, &clockArea);
+  lv_obj_get_coords(lv_obj_get_child(screen, 0), &barArea);
+  assert(view.batteryIcon_ != nullptr);
+  lv_area_t batteryArea;
+  lv_obj_get_coords(view.batteryIcon_, &batteryArea);
+  assert(batteryArea.x1 > clockArea.x2);          // 严格位于时间右侧
+  assert(batteryArea.y2 <= barArea.y2);           // 不越出顶栏
+  assert(batteryArea.x2 + 3 <= barArea.x2);       // 留出右侧凸点空间
+  assert(view.clock);                             // 时钟仍在
+
+  // 电量格数：亮的格子数量必须精确等于传入的格数。
+  const uint16_t lit = lv_color_make(226, 232, 240).full;
+  for (uint8_t cells = 0; cells <= BatteryGauge::Cells; ++cells) {
+    view.battery(cells, false);
+    lv_obj_update_layout(screen);
+    unsigned visible = 0;
+    for (unsigned index = 0; index < BatteryGauge::Cells; ++index) {
+      auto *cell = view.batteryCells_[index];
+      assert(cell != nullptr);
+      lv_area_t area;
+      lv_obj_get_coords(cell, &area);
+      // 每个格子都在外框内部
+      assert(area.x1 >= batteryArea.x1 && area.x2 <= batteryArea.x2);
+      assert(area.y1 >= batteryArea.y1 && area.y2 <= batteryArea.y2);
+      if (lv_obj_get_style_bg_opa(cell, 0) == LV_OPA_COVER) {
+        ++visible;
+        assert(lv_obj_get_style_bg_color(cell, 0).full == lit);
+      }
+    }
+    assert(visible == cells);
+    lv_refr_now(display);
+    assert(lv_mem_test() == LV_RES_OK);
+  }
+
+  // 0 格用红色告警
+  view.battery(0, false);
+  for (unsigned index = 0; index < BatteryGauge::Cells; ++index)
+    assert(lv_obj_get_style_bg_opa(view.batteryCells_[index], 0) == LV_OPA_TRANSP);
+
+  // 充电时全绿
+  view.battery(2, true);
+  lv_obj_update_layout(screen);
+  assert(lv_obj_get_style_bg_color(view.batteryCells_[0], 0).full == lv_color_make(34, 197, 94).full);
+  assert(lv_obj_get_style_bg_color(view.batteryCells_[1], 0).full == lv_color_make(34, 197, 94).full);
+  assert(lv_obj_get_style_bg_opa(view.batteryCells_[2], 0) == LV_OPA_TRANSP);
+
+  // 越界格数被收敛到 4
+  view.battery(9, false);
+  lv_obj_update_layout(screen);
+  unsigned overflow = 0;
+  for (unsigned index = 0; index < BatteryGauge::Cells; ++index)
+    if (lv_obj_get_style_bg_opa(view.batteryCells_[index], 0) == LV_OPA_COVER) ++overflow;
+  assert(overflow == BatteryGauge::Cells);
+
+  lv_obj_clean(screen);
 }
 
 int main() {
@@ -321,5 +484,9 @@ int main() {
   assert(rebooted.layout().id(4) == 0);
   for (unsigned index = 0; index < 5; ++index)
     assert(lv_obj_get_style_bg_opa(rebooted.row(index), 0) == LV_OPA_TRANSP);
+  checkRecordingIndicator(display);
+  checkBatteryGauge(display);
   std::cout << "PASS UI language: real LVGL, glyphs/icons, no overlap/clipping, values preserved, 1600 refreshes, heap integrity, nonblank pixels\n";
+  std::cout << "PASS recording indicator: persists while recording, blinks green<->red, restores green on stop\n";
+  std::cout << "PASS battery gauge: 4-cell mapping, cell count, right of clock, no overlap\n";
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include <lvgl.h>
+#include "jetbrains_mono_latin.h"
 #include <cmath>
 #include <cstdio>
 
