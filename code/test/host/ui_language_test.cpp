@@ -209,17 +209,45 @@ static void checkBatteryGauge(lv_disp_t *display) {
   view.create(screen, [](lv_event_t *) {}, [](lv_event_t *) {});
   lv_obj_update_layout(screen);
 
-  // 电池图标必须在时钟右侧，且不超出顶栏。
+  // 完整时分秒显示在右侧电池之前，顶栏文字使用统一的 14px 字号。
+  lv_label_set_text(view.clock, "23:59:59");
+  lv_obj_update_layout(screen);
   lv_area_t clockArea, barArea;
   lv_obj_get_coords(view.clock, &clockArea);
   lv_obj_get_coords(lv_obj_get_child(screen, 0), &barArea);
+  assert(std::string(lv_label_get_text(view.clock)) == "23:59:59");
+  const lv_obj_t *statusLabels[] = {
+      view.gps, view.satellites, view.sdIcon, view.settingsIcon, view.clock};
+  for (const auto *label : statusLabels) {
+    assert(lv_obj_get_style_text_font(label, 0) == &lv_font_jetbrains_mono_14);
+    lv_point_t textSize;
+    lv_txt_get_size(&textSize, lv_label_get_text(label),
+                    lv_obj_get_style_text_font(label, 0),
+                    lv_obj_get_style_text_letter_space(label, 0),
+                    lv_obj_get_style_text_line_space(label, 0), LV_COORD_MAX,
+                    LV_TEXT_FLAG_NONE);
+    assert(textSize.x <= lv_obj_get_width(label));
+    assert(textSize.y <= lv_obj_get_height(label));
+  }
+  lv_area_t gpsArea, satellitesArea, sdArea, settingsArea;
+  lv_obj_get_coords(view.gps, &gpsArea);
+  lv_obj_get_coords(view.satellites, &satellitesArea);
+  lv_obj_get_coords(view.sdIcon, &sdArea);
+  lv_obj_get_coords(view.settingsIcon, &settingsArea);
+  assert(gpsArea.x2 < satellitesArea.x1);
+  assert(satellitesArea.x2 < sdArea.x1);
+  assert(sdArea.x2 < settingsArea.x1);
+  assert(settingsArea.x2 < clockArea.x1);
+
+  // 电池必须位于时钟右侧，靠顶栏右边缘且完整保留凸点。
   assert(view.batteryIcon_ != nullptr);
-  lv_area_t batteryArea;
+  lv_area_t batteryArea, batteryCapArea;
   lv_obj_get_coords(view.batteryIcon_, &batteryArea);
-  assert(batteryArea.x1 > clockArea.x2);          // 严格位于时间右侧
-  assert(batteryArea.y2 <= barArea.y2);           // 不越出顶栏
-  assert(batteryArea.x2 + 3 <= barArea.x2);       // 留出右侧凸点空间
-  assert(view.clock);                             // 时钟仍在
+  lv_obj_get_coords(view.batteryCaps_, &batteryCapArea);
+  assert(batteryArea.x1 > clockArea.x2);
+  assert(batteryArea.y1 >= barArea.y1 && batteryArea.y2 <= barArea.y2);
+  assert(batteryCapArea.x2 == barArea.x2 - DashboardView::BatteryRightMargin);
+  assert(view.clock);
 
   // 电量格数：亮的格子数量必须精确等于传入的格数。
   const uint16_t lit = lv_color_make(226, 232, 240).full;

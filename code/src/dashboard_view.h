@@ -17,12 +17,19 @@ public:
   static constexpr int ValueLeft = 80;
   static constexpr unsigned WindRow = 1;   // 风速行 id（整数段 + 小数段）
   static constexpr int kTextSlack = 1;     // 标签框相对文字宽度的余量，防 CLIP 取整裁字
-  // 电量图标几何（顶栏右侧）。外框 4 格 + 1px 间距 + 右侧凸点，整体落在 192..238。
-  static constexpr int BatteryX = 192;
-  static constexpr int BatteryY = 8;
+  static constexpr int StatusBarWidth = 240;
+  static constexpr int StatusBarHeight = 28;
+  static constexpr int StatusLabelHeight = 18;
+  static constexpr int StatusLabelY = (StatusBarHeight - StatusLabelHeight) / 2;
+  static constexpr int BatteryRightMargin = 6;
+  static constexpr int BatteryCapWidth = 2;
   static constexpr int BatteryCellWidth = 5;
-  static constexpr int BatteryWidth = BatteryGauge::Cells * BatteryCellWidth + (BatteryGauge::Cells - 1) + 3;
   static constexpr int BatteryHeight = 14;
+  static constexpr int BatteryWidth = BatteryGauge::Cells * BatteryCellWidth + (BatteryGauge::Cells - 1) + 3;
+  static constexpr int BatteryX = StatusBarWidth - BatteryWidth - BatteryCapWidth - BatteryRightMargin;
+  static constexpr int BatteryY = (StatusBarHeight - BatteryHeight) / 2;
+  static constexpr int ClockX = 128;
+  static constexpr int ClockWidth = BatteryX - ClockX - 2;
 
   void create(lv_obj_t *screen, lv_event_cb_t sdCallback, lv_event_cb_t settingsCallback) {
     auto *bar = lv_obj_create(screen);
@@ -32,9 +39,9 @@ public:
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
-    gps = text(bar, 2, 4, 20, 20, &lv_font_jetbrains_mono_16);
+    gps = text(bar, 2, StatusLabelY, 18, StatusLabelHeight, &lv_font_jetbrains_mono_14);
     lv_label_set_text(gps, LV_SYMBOL_GPS);
-    satellites = text(bar, 22, 4, 24, 20, &lv_font_jetbrains_mono_16);
+    satellites = text(bar, 20, StatusLabelY, 26, StatusLabelHeight, &lv_font_jetbrains_mono_14);
     lv_label_set_text(satellites, "--");
     spinner = lv_spinner_create(bar, 1000, 60);
     lv_obj_set_pos(spinner, 25, 6);
@@ -45,7 +52,7 @@ public:
     lv_obj_set_style_arc_color(spinner, lv_color_make(80, 80, 80), LV_PART_MAIN);
     lv_obj_add_flag(spinner, LV_OBJ_FLAG_HIDDEN);
     sdButton = hotButton(screen, 48, sdCallback);
-    sdIcon = text(bar, 58, 4, 20, 20, &lv_font_jetbrains_mono_16);
+    sdIcon = text(bar, 61, StatusLabelY, 18, StatusLabelHeight, &lv_font_jetbrains_mono_14);
     lv_label_set_text(sdIcon, LV_SYMBOL_SAVE);
     dot_ = lv_obj_create(bar);
     lv_obj_set_pos(dot_, 82, 11);
@@ -55,10 +62,10 @@ public:
     lv_obj_set_style_bg_opa(dot_, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(dot_, lv_color_make(239, 68, 68), 0);
     settingsButton = hotButton(screen, 94, settingsCallback);
-    auto *gear = text(bar, 106, 4, 20, 20, &lv_font_jetbrains_mono_16);
-    lv_label_set_text(gear, LV_SYMBOL_SETTINGS);
-    // 时钟右缘让位给电量图标：140..190 为时钟，192..236 为电池。
-    clock = text(bar, 140, 4, 50, 20, &lv_font_jetbrains_mono_16);
+    settingsIcon = text(bar, 107, StatusLabelY, 18, StatusLabelHeight, &lv_font_jetbrains_mono_14);
+    lv_label_set_text(settingsIcon, LV_SYMBOL_SETTINGS);
+    // 14px 等宽数字可在电量图标左侧完整显示 HH:MM:SS。
+    clock = text(bar, ClockX, StatusLabelY, ClockWidth, StatusLabelHeight, &lv_font_jetbrains_mono_14);
     lv_obj_set_style_text_align(clock, LV_TEXT_ALIGN_RIGHT, 0);
     lv_label_set_text(clock, "--:--:--");
     // 电量图标：外框 + 4 个格子 + 右侧凸点，全部自绘，便于精确控制格数。
@@ -71,7 +78,7 @@ public:
     lv_obj_clear_flag(batteryIcon_, LV_OBJ_FLAG_CLICKABLE);
     batteryCaps_ = lv_obj_create(bar);
     lv_obj_set_pos(batteryCaps_, BatteryX + BatteryWidth, BatteryY + 4);
-    lv_obj_set_size(batteryCaps_, 2, BatteryHeight - 8);
+    lv_obj_set_size(batteryCaps_, BatteryCapWidth, BatteryHeight - 8);
     plain(batteryCaps_);
     lv_obj_set_style_bg_opa(batteryCaps_, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(batteryCaps_, lv_color_make(148, 163, 184), 0);
@@ -216,7 +223,7 @@ public:
   // 电量图标对外暴露，便于测试断言格数与位置。
   lv_obj_t *batteryIcon_ = nullptr, *batteryCaps_ = nullptr;
   lv_obj_t *batteryCells_[BatteryGauge::Cells] = {nullptr, nullptr, nullptr, nullptr};
-  lv_obj_t *sdButton = nullptr, *sdIcon = nullptr, *settingsButton = nullptr;
+  lv_obj_t *sdButton = nullptr, *sdIcon = nullptr, *settingsButton = nullptr, *settingsIcon = nullptr;
 
 private:
   struct Row { DashboardView *owner = nullptr; unsigned id = 0; lv_obj_t *box = nullptr, *title = nullptr, *unit = nullptr, *value = nullptr, *line = nullptr, *detail = nullptr, *frac = nullptr; };
