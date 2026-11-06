@@ -12,10 +12,8 @@
   ];
   const files = new Map([
     ["/LOG", { directory: true }],
-    ["/music", { directory: true }],
     ["/system", { directory: true }],
-    ["/music/demo.mp3", { audio: true }],
-    ["/system/boot.wav", { audio: true }],
+    ["/system/boot.wav", {}],
     ["/readme.txt", {}]
   ]);
   const savedVolume = Number(localStorage.getItem("aero-volume") ?? 55);
@@ -38,7 +36,7 @@
     networkTime: false, ntpDeadline: 0, ntpAvailable: true,
     volume: Number.isFinite(savedVolume) ? Math.max(0, Math.min(100, savedVolume)) : 55,
     gpsEnvironment: "searching", gps: "searching", gpsDeadline: 0, gpsSpeed: 30 / 3.6,
-    sdReady: true, sdBusy: false, directory: "/", audio: null, audioDeadline: 0,
+    sdReady: true, sdBusy: false, directory: "/",
     operation: null, bleResult: "success", discoveredDevices: [], manualPairing: false,
     postureEnvironment: "absent", postureConnected: false, nextPostureMs: 30000,
     recording: false, currentRecord: null, logDate: "", pending: [], writer: [], dropped: 0,
@@ -290,11 +288,10 @@
       `${gpsFixed() ? "31.23040, 121.47370" : "-- , --"}\n` +
       `SAT ${hasTime ? 12 : 0}    HDOP ${hasTime ? "0.9" : "0.0"}` +
       `\nALT  ${hasTime ? "12.0" : "0.0"} m\nSPD  ${hasTime ? (state.gpsSpeed * 3.6).toFixed(1) : "0.0"} km/h`;
-    $("sd-playing").textContent = state.audio ? `Playing: ${state.audio}` : "Stopped";
     $("runtime-status").textContent = `Source: ${["NONE", "BLE", "", "VIRTUAL"][source()]} (mode ${state.mode === 3 ? "VIRTUAL" : state.mode === 1 ? "BLE" : "AUTO"})\n` +
-      `BLE: ${state.audio ? "suspended for audio" : state.bleConnected ? state.bleName : "disconnected"}\n` +
+      `BLE: ${state.bleConnected ? state.bleName : "disconnected"}\n` +
       `Posture: ${state.postureConnected ? "-15.00 deg" : "not connected"}; BLE operation: ${state.operation?.kind ?? "idle"}\n` +
-      `SD: ${state.sdReady ? state.sdBusy ? "busy" : "ready" : "not mounted"}; CSV submissions: ${state.audio ? "paused" : "enabled"}`;
+      `SD: ${state.sdReady ? state.sdBusy ? "busy" : "ready" : "not mounted"}; CSV submissions: enabled`;
     $("record-status").textContent = `${state.recording ? "Recording" : "Stopped"}: ${state.currentRecord?.path ?? "no recording yet"}\n` +
       `Buffered ${state.pending.length}; writer queued ${state.writer.length}; dropped ${state.dropped}; written ${state.currentRecord?.rows.length ?? 0}`;
     $("download-status").textContent = state.download
@@ -320,7 +317,7 @@
 
   function flushWriter() {
     if (!state.currentRecord) return;
-    if (!state.audio && state.pending.length >= 60 && !state.writer.length)
+    if (state.pending.length >= 60 && !state.writer.length)
       state.writer = state.pending.splice(0, 60);
     if (!state.sdReady || state.sdBusy) return;
     if (state.writer.length) {
@@ -328,7 +325,7 @@
       state.currentRecord.rows.push(...state.writer);
       state.writer = [];
     }
-    if (!state.audio && state.pending.length >= 60) {
+    if (state.pending.length >= 60) {
       state.sdWriteUntil=now()+600;
       state.writer = state.pending.splice(0, 60);
       state.currentRecord.rows.push(...state.writer);
@@ -383,7 +380,7 @@
       createRecord();
     }
     if (state.pending.length >= 60) {
-      if (!state.audio && !state.writer.length) state.writer = state.pending.splice(0, 60);
+      if (!state.writer.length) state.writer = state.pending.splice(0, 60);
       else { state.dropped++; return; }
     }
     const speed = gpsFixed() ? state.gpsSpeed : state.bleConnected ? state.bleSpeed : 0;
@@ -419,7 +416,6 @@
     render();
   }
   function beginBle(kind, device = null) {
-    if (state.audio) return notice("BLE is suspended for audio playback. Stop playback first.");
     if (state.operation) return notice("BLE is busy. Wait for the current scan/connection, then retry.");
     if (kind === 'scan') state.autoFavorites = [];
     state.operation = { kind, device, deadline: now() + (kind === "scan" ? 6000 : kind === "posture" ? 1500 : 900) };
@@ -464,7 +460,7 @@
     showPage("touch-dialog");
   }
   function connect() {
-    if (state.audio || state.operation) return notice("BLE is busy or suspended; stop playback/wait and retry.");
+    if (state.operation) return notice("BLE is busy. Wait for the current operation and retry.");
     state.bleConnected = true; state.bleName = "Assioma Duo"; state.mode = 1;
     state.connectedDevice = devices[0];
     state.manualPairing = false;
@@ -472,21 +468,6 @@
   }
   function disconnect() {
     state.bleConnected = false; state.bleName = "";
-    render();
-  }
-  function play(path) {
-    if (state.fitSaving) return notice("Wait for FIT export before playing audio.");
-    if (!state.sdReady || state.sdBusy) return notice("Cannot play: SD card unavailable or busy.");
-    if (state.operation) return notice("Wait for the BLE operation to finish before playback.");
-    disconnect();
-    state.postureConnected = false;
-    state.audio = path; state.audioDeadline = now() + 90000;
-    render();
-  }
-  function stopAudio() {
-    state.audio = null;
-    state.nextPostureMs = now() + 30000;
-    flushWriter();
     render();
   }
   function browse(directory = "/") {
@@ -498,23 +479,21 @@
     const entries = state.sdReady && !state.sdBusy ? [...files.entries()]
       .filter(([path]) => path.startsWith(prefix) && !path.slice(prefix.length).includes("/") && path !== directory)
       .sort(([a, x], [b, y]) => Number(Boolean(y.directory)) - Number(Boolean(x.directory)) ||
-        Number(Boolean(y.audio)) - Number(Boolean(x.audio)) || a.localeCompare(b)).slice(0, 12) : [];
+        a.localeCompare(b)).slice(0, 12) : [];
     $("sd-status").textContent = !state.sdReady ? "No files / SD not ready" :
       state.sdBusy ? "SD card busy; reopen to retry" : `${entries.length} file(s)`;
     for (const [path, entry] of entries) {
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = `${entry.directory ? "▣ " : entry.audio ? "▶ " : ""}${path.slice(prefix.length)}`;
+      button.textContent = `${entry.directory ? "▣ " : ""}${path.slice(prefix.length)}`;
       button.addEventListener("click", () => {
         if (entry.directory) browse(path);
-        else if (entry.audio) play(path);
         else if (entry.binary) {
           const url = URL.createObjectURL(new Blob([entry.binary], { type: "application/octet-stream" }));
           const link = document.createElement("a");
           link.href = url; link.download = path.split("/").pop(); link.click();
           setTimeout(() => URL.revokeObjectURL(url),1000);
-        }
-        else notice("Not an audio file");
+        } else notice("File preview unavailable.");
       });
       $("sd-files").append(button);
     }
@@ -556,7 +535,6 @@
     }
     if (["detecting", "restarting"].includes(state.gps) && time >= state.gpsDeadline)
       state.gps = state.gpsEnvironment === "absent" ? "absent" : "searching";
-    if (state.audio && time >= state.audioDeadline) stopAudio();
     if (state.operation && time >= state.operation.deadline) {
       const operation = state.operation;
       state.operation = null;
@@ -632,8 +610,8 @@
   $("settings-log").onclick = () => showPage("ride-log-page");
   $('settings-usb').onclick = () => showPage('usb-page');
   const changeUsbMode = (enabled) => {
-    if (enabled && (state.recording || state.armed || state.fitSaving || state.audio))
-      return notice('Stop recording and finish SAVE FIT/audio before enabling USB.');
+    if (enabled && (state.recording || state.armed || state.fitSaving))
+      return notice('Stop recording and finish SAVE FIT before enabling USB.');
     try { localStorage.setItem('aero-usb-mode', enabled ? '1' : '0'); }
     catch { return notice('Could not save USB mode.'); }
     state.usbStorage = enabled;
@@ -648,7 +626,6 @@
   function saveFit(auto = false) {
     if (state.fitSaving) return;
     if (!state.sdReady || state.sdBusy) return notice("SD card unavailable or busy. Recording state unchanged.");
-    if (state.audio) return notice("Stop audio before saving FIT.");
     const rows = [...state.sessionRecords.flatMap((record) => record.rows), ...state.writer, ...state.pending]
       .map((row) => row.trim().split(",").map(Number));
     if (!rows.length) return notice("No recorded samples. Start recording first.");
@@ -691,13 +668,11 @@
   $("posture-input").onchange = (event) => { state.postureEnvironment = event.target.value; if (event.target.value === "absent") state.postureConnected = false; render(); };
   $("sd-ready").onchange = (event) => {
     state.sdReady = event.target.checked;
-    if (!state.sdReady && state.audio) stopAudio();
     if (state.page === "sd-page") browse(state.directory);
     render();
   };
   $("sd-busy").onchange = (event) => { state.sdBusy = event.target.checked; processEvents(); render(); };
   $("sd-up").onclick = () => browse(state.directory.slice(0, state.directory.lastIndexOf("/")) || "/");
-  $("sd-stop").onclick = () => state.sdBusy ? notice("SD card busy; playback could not stop.") : stopAudio();
   $("connect-ble").onclick = connect;
   $("disconnect").onclick = disconnect;
   $("scan-again").onclick = $("ble-scan-again").onclick = () => beginBle("scan");
@@ -777,7 +752,7 @@
         cda: estimateCda(), zone: zoneFor(estimateCda())?.zone ?? null,
         average3: average(state.samples.slice(-3)), average60: average(state.samples), sampleCount: state.samples.length,
         seconds: state.seconds, page: state.page, language: state.language, volume: state.volume, usbStorage: state.usbStorage,
-        wifi: state.wifi, gps: state.gps, gpsSpeedMps: state.gpsSpeed, audio: state.audio,
+        wifi: state.wifi, gps: state.gps, gpsSpeedMps: state.gpsSpeed,
         networkTime: state.networkTime, trustedTime: state.trustedTime,
         bleConnected: state.bleConnected, postureConnected: state.postureConnected, operation: state.operation?.kind ?? null,
         recording: state.recording, buffered: state.pending.length, queued: state.writer.length, dropped: state.dropped,

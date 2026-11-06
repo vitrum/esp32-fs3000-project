@@ -10,6 +10,7 @@
 
 #include "battery_gauge.h"
 #include "ble_power.h"
+#include "saved_connections.h"
 #include "wind_probe.h"
 #include "csv_logger.h"   // SdFileEntry
 #include "ui_navigation_guard.h"
@@ -27,7 +28,7 @@ public:
   bool takePowerSourceRequest(int &mode);
   float virtualPowerW() const { return virtualPowerW_; }
   float virtualCadenceRpm() const { return virtualCadenceRpm_; }
-  bool takeBleScanRequest();
+  bool takeBleScanRequest(SavedConnections::Role *role = nullptr);
   // 取出用户确认连接的地址，并带回该设备在扫描时记录的真实地址类型
   // （addressType 可为 nullptr）。
   bool takeBleConnectRequest(char *address, size_t capacity,
@@ -40,6 +41,14 @@ public:
   void showBleConnectFailure(const char *error);
   void setBleDevices(const BlePowerDevice *devices, size_t count, const char *status);
   void closePowerMeterPanels();
+  void updateOnlineDevices(bool powerConnected, bool powerResponding,
+                           bool heartConnected, bool heartResponding,
+                           bool postureConnected, bool postureResponding,
+                           bool gpsPresent, bool gpsFixed,
+                           bool windPresent, bool windResponding);
+  void updateHeartDeviceStatus(bool connected, bool responding, uint16_t bpm);
+  void updatePostureDeviceStatus(bool connected, bool responding,
+                                 float roll, float pitch, float yaw);
   void showUsbStorage(bool ready, bool ejected, bool hostConnected, bool active = true);
   void showUsbStorageError(const char *message) {
     usbStorageError_ = true;
@@ -51,8 +60,10 @@ public:
     usbStorageRequestPending_ = false;
     return true;
   }
-  void setConnectedBle(const char *address, uint8_t type, bool powerService);
-  void updateBleFavoriteAvailability(bool connected);
+  void setConnectedBle(const char *address, uint8_t type, bool connected,
+                       SavedConnections::Role role = SavedConnections::Role::Power);
+  void updateBleFavoriteAvailability(bool connected,
+                                     SavedConnections::Role role = SavedConnections::Role::Power);
   bool takeWifiEnableRequest(bool &enabled);
   bool takeWifiSetupRequest() { const bool requested = wifiSetupRequested_; wifiSetupRequested_ = false; return requested; }
   void updateWifiStatus(bool enabled, bool connected, bool provisioning,
@@ -61,15 +72,8 @@ public:
   // ---- SD 卡文件浏览 ----
   // 用户点击设置里的 "SD CARD" 时置位，主循环据此触发文件列表加载。
   bool takeSdListRequest(char *directory, size_t capacity);
-  // 主循环加载完文件后回填列表（音频文件带 ▶ 标记）。
+  // 主循环加载完文件后回填目录列表。
   void setSdFiles(const SdFileEntry *files, size_t count, const char *status);
-  // 用户点击某文件请求播放：输出完整路径（"/name"）到 path。
-  bool takeSdPlayRequest(char *path, size_t capacity);
-  // 用户点击 STOP：停止播放。
-  bool takeSdStopRequest();
-  // 更新当前播放状态文字（由主循环轮询 audio 模块）。
-  void updateAudioStatus(bool playing, const char *title);
-
   // ---- 声音设置 ----
   // 用户在声音页选择了新音量（0~100）：主循环据此设置音量并试听。
   bool takeVolumeRequest(uint8_t &vol);
@@ -150,6 +154,13 @@ private:
   lv_obj_t *powerSourceButton_ = nullptr;
   lv_obj_t *powerSourceLabel_ = nullptr;
   lv_obj_t *powerSourcePanel_ = nullptr;
+  lv_obj_t *deviceHubPanel_ = nullptr;
+  lv_obj_t *heartDevicePanel_ = nullptr;
+  lv_obj_t *postureDevicePanel_ = nullptr;
+  lv_obj_t *onlineDevicesPanel_ = nullptr;
+  lv_obj_t *onlineDeviceRows_[5] = {};
+  lv_obj_t *deviceHubLabels_[3] = {};
+  lv_obj_t *bleRoleStatusLabels_[3] = {};
   lv_obj_t *powerSourceTitle_ = nullptr;
   lv_obj_t *powerSourceHint_ = nullptr;
   lv_obj_t *powerSourceOptions_[3] = {};
@@ -235,9 +246,6 @@ private:
   lv_obj_t *sdRowLabels_[12] = {};          // 行文字
   lv_obj_t *sdUpButton_ = nullptr;
   lv_obj_t *sdUpLabel_ = nullptr;
-  lv_obj_t *sdStopButton_ = nullptr;
-  lv_obj_t *sdStopLabel_ = nullptr;
-  lv_obj_t *sdNowPlayingLabel_ = nullptr;
   lv_obj_t *virtualPowerPanel_ = nullptr;
   lv_obj_t *virtualPowerValueLabel_ = nullptr;
   lv_obj_t *virtualCadenceValueLabel_ = nullptr;
@@ -263,16 +271,21 @@ private:
   lv_obj_t *bleConfirmAddressLabel_ = nullptr;
   lv_obj_t *bleDeviceButtons_[kBleDeviceCapacity] = {};
   lv_obj_t *bleDeviceList_ = nullptr;
-  lv_obj_t *bleFavoriteButton_ = nullptr;
-  lv_obj_t *bleFavoriteLabel_ = nullptr;
-  lv_obj_t *bleFavoriteStar_ = nullptr;
-  char connectedBleAddress_[18] = {};
-  char connectedBleName_[32] = {};
-  uint8_t connectedBleType_ = 0;
-  bool connectedBlePower_ = false;
+  lv_obj_t *bleFavoriteButtons_[3] = {};
+  lv_obj_t *bleFavoriteLabels_[3] = {};
+  lv_obj_t *bleFavoriteStars_[3] = {};
+  char connectedBleAddresses_[3][18] = {};
+  char connectedBleNames_[3][32] = {};
+  uint8_t connectedBleTypes_[3] = {};
+  bool connectedBleActive_[3] = {};
+  SavedConnections::Role activeBleRole_ = SavedConnections::Role::Power;
   TouchBuffer bleFavoriteTouch_{BLE_UI_TOUCH_GUARD_MS};
   static void onBleFavorite(lv_event_t *event);
-  void buildBleFavoriteButton();
+  void buildBleFavoriteButton(lv_obj_t *panel, SavedConnections::Role role);
+  void showBleRolePanel(SavedConnections::Role role);
+  void hideDevicePanels();
+  lv_obj_t *bleRolePanel(SavedConnections::Role role) const;
+  void refreshBleFavoriteButton(SavedConnections::Role role);
   lv_obj_t *windLabelTitle_ = nullptr;
 
   int powerHistorySize_ = 3;
@@ -291,6 +304,12 @@ private:
   char wifiSsid_[33] = {};
   char wifiIp_[16] = {};
   bool bleScanCompleted_ = false;
+  bool onlineBleConnected_[3] = {};
+  bool onlineBleResponding_[3] = {};
+  bool onlineGpsPresent_ = false;
+  bool onlineGpsFixed_ = false;
+  bool onlineWindPresent_ = false;
+  bool onlineWindResponding_ = false;
   uint32_t currentZone_ = 0;
   int requestedPowerMode_ = -1;
   int selectedPowerMode_ = 0;
@@ -321,26 +340,27 @@ private:
 
   // ---- SD 浏览状态 ----
   bool sdListRequested_ = false;
-  bool sdPlayRequested_ = false;
-  bool sdStopRequested_ = false;
   bool gpsRestartRequested_ = false;
   bool gpsModulePresent_ = false;
   bool gpsDetectDone_ = false;
   lv_obj_t *noticePanel_ = nullptr;      // 通用提示弹窗（如"找不到 GPS 模块"）
   lv_obj_t *noticeLabel_ = nullptr;
   lv_obj_t *noticeBackLabel_ = nullptr;
-  char sdPlayPath_[256] = {};
   char sdCurrentDirectory_[128] = "/";
   SdFileEntry sdFiles_[12] = {};
   size_t sdFileCount_ = 0;
   char sdListStatus_[64] = {};
-  bool audioPlaying_ = false;
-  char audioTitle_[96] = {};
-
   static void lvglFlushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);
   static void lvglTouchReadCb(lv_indev_drv_t *drv, lv_indev_data_t *data);
   static void onBackNavigation(lv_event_t *event);
   static void onPowerSourceButton(lv_event_t *event);
+  static void onDeviceHubPower(lv_event_t *event);
+  static void onDeviceHubHeart(lv_event_t *event);
+  static void onDeviceHubPosture(lv_event_t *event);
+  static void onDeviceRoleBack(lv_event_t *event);
+  static void onOnlineDevicesButton(lv_event_t *event);
+  static void onOnlineDevicesBack(lv_event_t *event);
+  static void onBleRoleScan(lv_event_t *event);
   static void onSettingsButton(lv_event_t *event);
   static void onResetDashboard(lv_event_t *event);
   static void onSettingsBack(lv_event_t *event);
@@ -374,7 +394,6 @@ private:
   static void onSdBack(lv_event_t *event);
   static void onSdFileClicked(lv_event_t *event);
   static void onSdUpClicked(lv_event_t *event);
-  static void onSdStopClicked(lv_event_t *event);
   static void onGpsButton(lv_event_t *event);
   static void onGpsBack(lv_event_t *event);
   static void onGpsRestartClicked(lv_event_t *event);
@@ -387,6 +406,10 @@ private:
   bool touchReadRegister(uint16_t reg, uint8_t *data, size_t len);
   bool touchWriteRegister(uint16_t reg, uint8_t value);
   void buildPowerSourcePanel();
+  void buildDeviceHubPanel();
+  void buildBleRolePanel(lv_obj_t *&panel, const char *title,
+                         SavedConnections::Role role);
+  void buildOnlineDevicesPanel();
   void buildVirtualPowerPanel();
   void buildSettingsPanel();
   void buildLanguagePanel();

@@ -10,11 +10,12 @@ public:
     if (!saved.load()) { stopped_ = true; return false; }
     if (!saved.loadFavorites()) { stopped_ = true; return false; }
     count_ = 0;
-    for (uint8_t index = 0; index < saved.favoriteCount(); ++index)
+    for (uint8_t index = 0; index < saved.favoriteCount() && count_ < SavedConnections::kCapacity * 2; ++index)
       entries_[count_++] = saved.favorite(index)->device;
-    for (uint8_t index = 0; index < saved.bleCount(); ++index) {
+    for (uint8_t index = 0; index < saved.bleCount() &&
+         count_ < SavedConnections::kCapacity * 2; ++index) {
       const auto &entry = *saved.ble(index);
-      if (entry.role == SavedConnections::Role::Power && saved.isFavorite(entry.address, entry.addressType)) continue;
+      if (saved.isFavorite(entry.address, entry.addressType, entry.role)) continue;
       entries_[count_++] = entry;
     }
     next_ = 0;

@@ -4,7 +4,6 @@
 #include "power_key.h"
 #include "runtime_log.h"
 #include "../../src/audio.h"
-#include <driver/i2s.h>
 #include <cassert>
 #include <iostream>
 
@@ -153,17 +152,13 @@ int main() {
   environmentTests();
   powerTests();
   assert(!audio.begin() && !audio.enabled());
-  assert(!audio.playFile("/song.mp3") && !audio.playFile(nullptr));
   audio.playStartupChime();
   audio.playShutdownChime();
   audio.playBeepPreview();
-  audio.pauseResume();
   audio.tick();
   audio.setVolume(255);
-  assert(audio.volume() == 100 && !audio.playing());
-  audio.setTitle("disabled track");
-  assert(std::string(audio.currentTitle()) == "disabled track");
-  assert(audio.stop() && audio.releasePlayback());
-  assert(std::string(audio.currentTitle()).empty() && hostI2sInstalls == 0);
-  std::cout << "PASS audio disabled: no decoder/I2S, rejected playback, bounded volume, title reset\n";
+  assert(audio.volume() == 100);
+  audio.setVolume(42);
+  assert(audio.volume() == 42);
+  std::cout << "PASS audio disabled: media playback removed, volume bounded\n";
 }

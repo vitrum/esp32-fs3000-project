@@ -11,11 +11,12 @@ class BleCancellation;
 // 设备规格：
 //   - BLE 5.0（内置 nRF52832），自供电（电池 ~30h），9g，可绑胸口/上背
 //   - 输出：加速度/角速度/角度(Roll·Pitch·Yaw)/磁场/四元数（内置卡尔曼，0.2°）
-//   - WitMotion 标准 0x55 协议帧，角度包 0x53，角度单位 0.01°
+//   - BLE 5.0：FFE5/FFE4，0x55 0x61 20-byte frame；角度量程 ±180°
+//   - 兼容旧版：FFE0/FFE1，0x55 0x53 11-byte frame；角度单位 0.01°
 //
 // 接入方式（BLE GATT 客户端）：
-//   - 服务：0xFFE0，数据特征（notify）：0xFFE1
-//   - 本模块只订阅 notify 并解析 Pitch（俯仰角），作为躯干姿态角
+//   - BLE 5.0 优先服务：0xFFE5，数据特征（notify）：0xFFE4
+//   - 本模块订阅通知并读取 X/Y/Z 姿态角；保留旧版 0xFFE0/0xFFE1 连接兼容
 //   - 备注：Yaw 使用磁力计，骑行中受车架/路边金属干扰会漂；Pitch 由
 //     重力+陀螺仪融合，不受磁场影响，本模块只取 Pitch。
 class BlePosture {
@@ -35,20 +36,29 @@ public:
   void cancelConnect();            // 取消未完成的连接/扫描
   void resetAfterStackShutdown() { disconnect(); }
   bool connected() const { return s_connected; }
+  bool responsive(uint32_t now, uint32_t maxAgeMs = 5000) const {
+    const uint32_t received = s_lastMeasurementMs.load();
+    return connected() && received != 0 && now - received <= maxAgeMs;
+  }
   const char *lastError() const { return s_lastError; }
   float pitchDeg() const { return s_connected ? s_pitch : 0; }   // 俯仰角（度）
+  float rollDeg() const { return s_connected ? s_roll : 0; }
+  float yawDeg() const { return s_connected ? s_yaw : 0; }
   uint32_t notificationCount() const { return s_notificationCount; }
 
 private:
   static void witNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, bool isNotify);
   friend class BlePostureClientCallbacks;
   static void parsePacket(uint8_t *data, size_t length);
+  static void parseAngleFrame(const uint8_t *data, size_t length);
   static std::atomic<bool> s_connected;
+  static std::atomic<uint32_t> s_lastMeasurementMs;
   static float  s_pitch;
+  static float  s_roll;
+  static float  s_yaw;
   static uint32_t s_notificationCount;
   static NimBLEClient *s_client;
   static char   s_lastError[160];
   static char s_connectedAddress[18];
   static uint8_t s_connectedAddressType;
 };
-

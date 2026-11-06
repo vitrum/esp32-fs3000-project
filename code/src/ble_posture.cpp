@@ -11,14 +11,21 @@ uint8_t BlePosture::s_connectedAddressType = 0;
 namespace {
 BleInbox<8> postureInbox;
 uint32_t processedPostureGeneration = 0;
+uint8_t postureStream[40] = {};
+size_t postureStreamLength = 0;
 }
 
 // ---- WitMotion WT9011DCL BLE 协议 ----
-static const NimBLEUUID kSvcWit ("0xFFE0");
-static const NimBLEUUID kChrData("0xFFE1");
+static const NimBLEUUID kSvcWitBle5("0xFFE5");
+static const NimBLEUUID kChrDataBle5("0xFFE4");
+static const NimBLEUUID kSvcWitLegacy("0xFFE0");
+static const NimBLEUUID kChrDataLegacy("0xFFE1");
 
 std::atomic<bool> BlePosture::s_connected{false};
+std::atomic<uint32_t> BlePosture::s_lastMeasurementMs{0};
 float  BlePosture::s_pitch = 0;
+float  BlePosture::s_roll = 0;
+float  BlePosture::s_yaw = 0;
 uint32_t BlePosture::s_notificationCount = 0;
 NimBLEClient *BlePosture::s_client = nullptr;
 char   BlePosture::s_lastError[160] = {};
@@ -33,9 +40,9 @@ class BlePostureClientCallbacks : public NimBLEClientCallbacks {
 static BlePostureClientCallbacks postureCallbacks;
 
 // ---------------------------------------------------------------------------
-// 0x55 协议帧解析（角度包 0x53）：
-//   [0]=0x55 [1]=0x53 [2..3]=Roll [4..5]=Pitch [6..7]=Yaw [8..9]=温度
-//   [10]=校验和（前 10 字节和低 8 位）；int16 小端，单位 0.01°
+// BLE 5.0 frame layout/scaling follow WITMOTION's official BLE5.0 Python SDK:
+// github.com/WITMOTION/WitBluetooth_BWT901BLE5_0.
+// The 20-byte 0x61 frame has angles at bytes 14..19; legacy 0x53 is also accepted.
 // ---------------------------------------------------------------------------
 void BlePosture::witNotify(NimBLERemoteCharacteristic *chr, uint8_t *d, size_t n,
                            bool isNotify) {
@@ -50,7 +57,11 @@ void BlePosture::processData() {
   if (processedPostureGeneration != generation) {
     processedPostureGeneration = generation;
     s_pitch = 0;
+    s_roll = 0;
+    s_yaw = 0;
+    s_lastMeasurementMs = 0;
     s_notificationCount = 0;
+    postureStreamLength = 0;
   }
   BleInbox<8>::Packet packet;
   for (size_t processed = 0; processed < 8 && postureInbox.pop(packet); ++processed) {
@@ -59,21 +70,73 @@ void BlePosture::processData() {
 }
 
 void BlePosture::parsePacket(uint8_t *d, size_t n) {
-  AppLog.packet("POSTURE/FFE1", d, n);
-  if (n < 11) return;
+  AppLog.packet("POSTURE", d, n);
+  for (size_t index = 0; index < n; ++index) {
+    if (postureStreamLength == sizeof(postureStream)) {
+      memmove(postureStream, postureStream + 1, --postureStreamLength);
+    }
+    postureStream[postureStreamLength++] = d[index];
 
-  for (size_t i = 0; i + 11 <= n; i++) {
-    if (d[i] != 0x55 || d[i + 1] != 0x53) continue;   // 找角度包
+    for (;;) {
+      size_t header = 0;
+      while (header < postureStreamLength && postureStream[header] != 0x55)
+        ++header;
+      if (header) {
+        postureStreamLength -= header;
+        memmove(postureStream, postureStream + header, postureStreamLength);
+      }
+      if (postureStreamLength < 2) break;
 
-    uint8_t sum = 0;
-    for (size_t j = i; j < i + 10; j++) sum += d[j];
-    if (sum != d[i + 10]) break;                       // 校验失败，丢弃整包
+      const uint8_t type = postureStream[1];
+      const size_t frameLength = type == 0x53 ? 11
+          : (type == 0x61 || type == 0x71) ? 20 : 0;
+      if (!frameLength) {
+        postureStreamLength--;
+        memmove(postureStream, postureStream + 1, postureStreamLength);
+        continue;
+      }
+      if (postureStreamLength < frameLength) break;
 
-    int16_t pitch = (int16_t)(d[i + 4] | (d[i + 5] << 8));
-    s_pitch = (float)pitch / 100.0f;                   // 0.01°/LSB
-    s_notificationCount++;
+      bool valid = true;
+      if (type == 0x53) {
+        uint8_t checksum = 0;
+        for (size_t byte = 0; byte < 10; ++byte)
+          checksum += postureStream[byte];
+        valid = checksum == postureStream[10];
+      }
+      if (!valid) {
+        postureStreamLength--;
+        memmove(postureStream, postureStream + 1, postureStreamLength);
+        continue;
+      }
+
+      parseAngleFrame(postureStream, frameLength);
+      postureStreamLength -= frameLength;
+      memmove(postureStream, postureStream + frameLength, postureStreamLength);
+    }
+  }
+}
+
+void BlePosture::parseAngleFrame(const uint8_t *data, size_t length) {
+  const auto readI16 = [data](size_t index) {
+    return static_cast<int16_t>(
+        static_cast<uint16_t>(data[index]) |
+        (static_cast<uint16_t>(data[index + 1]) << 8));
+  };
+  if (length == 20 && data[1] == 0x61) {
+    // WitMotion BLE 5.0 SDK: signed little-endian angle values, ±180° / 32768.
+    s_roll = static_cast<float>(readI16(14)) * (180.0f / 32768.0f);
+    s_pitch = static_cast<float>(readI16(16)) * (180.0f / 32768.0f);
+    s_yaw = static_cast<float>(readI16(18)) * (180.0f / 32768.0f);
+  } else if (length == 11 && data[1] == 0x53) {
+    s_roll = static_cast<float>(readI16(2)) / 100.0f;
+    s_pitch = static_cast<float>(readI16(4)) / 100.0f;
+    s_yaw = static_cast<float>(readI16(6)) / 100.0f;
+  } else {
     return;
   }
+  s_lastMeasurementMs = millis();
+  s_notificationCount++;
 }
 
 void BlePosture::begin(const char *deviceName) {
@@ -89,6 +152,8 @@ void BlePosture::disconnect() {
     s_client = nullptr;
   }
   s_connected = false;
+  s_lastMeasurementMs = 0;
+  s_pitch = s_roll = s_yaw = 0;
   s_connectedAddress[0] = '\0';
   postureInbox.reset();
 }
@@ -130,12 +195,12 @@ bool BlePosture::tryConnect(uint32_t scanMs, const BleCancellation *cancelFlag) 
     const NimBLEAdvertisedDevice *ad = results.getDevice(i);
     if (!ad || !ad->isConnectable()) continue;
 
-    // 过滤：广播服务 0xFFE0 或设备名以 BLE_POSTURE_NAME_PREFIX 开头
+    // Match either BLE 5.0/legacy service UUID or the vendor's WT name token.
     const std::string candidateName = ad->getName();
     const char *prefix = BLE_POSTURE_NAME_PREFIX;
-    const bool nameHit = candidateName.length() >= strlen(prefix) &&
-                         strncmp(candidateName.c_str(), prefix, strlen(prefix)) == 0;
-    if (!ad->isAdvertisingService(kSvcWit) && !nameHit) continue;
+    const bool nameHit = candidateName.find(prefix) != std::string::npos;
+    if (!ad->isAdvertisingService(kSvcWitBle5) &&
+        !ad->isAdvertisingService(kSvcWitLegacy) && !nameHit) continue;
 
     snprintf(address, sizeof(address), "%s",
              ad->getAddress().toString().c_str());
@@ -147,7 +212,8 @@ bool BlePosture::tryConnect(uint32_t scanMs, const BleCancellation *cancelFlag) 
 
   if (!address[0]) {
     snprintf(s_lastError, sizeof(s_lastError),
-             "posture sensor '%s*' not seen in last scan", BLE_POSTURE_NAME_PREFIX);
+             "posture sensor matching '%s' not seen in last scan",
+             BLE_POSTURE_NAME_PREFIX);
     return false;
   }
   AppLog.printf("[BLE-POSTURE] candidate %s (%s)\n",
@@ -191,25 +257,30 @@ bool BlePosture::connectDevice(const char *address, uint8_t addressType,
     return false;
   }
 
-  NimBLERemoteService *svc = cli->getService(kSvcWit);
+  NimBLERemoteService *svc = cli->getService(kSvcWitBle5);
+  const NimBLEUUID *characteristicUuid = &kChrDataBle5;
+  if (!svc) {
+    svc = cli->getService(kSvcWitLegacy);
+    characteristicUuid = &kChrDataLegacy;
+  }
   if (!svc) {
     snprintf(s_lastError, sizeof(s_lastError),
-             "%s: service 0xFFE0 not found", address);
+             "%s: service 0xFFE5/0xFFE0 not found", address);
     disconnect();
     return false;
   }
 
-  NimBLERemoteCharacteristic *chr = svc->getCharacteristic(kChrData);
+  NimBLERemoteCharacteristic *chr = svc->getCharacteristic(*characteristicUuid);
   if (!chr) {
     snprintf(s_lastError, sizeof(s_lastError),
-             "%s: characteristic 0xFFE1 not found", address);
+             "%s: data characteristic not found", address);
     disconnect();
     return false;
   }
 
   if (!chr->subscribe(true, witNotify, true)) {
     snprintf(s_lastError, sizeof(s_lastError),
-             "%s: subscribing 0xFFE1 failed", address);
+             "%s: subscribing to posture data failed", address);
     disconnect();
     return false;
   }

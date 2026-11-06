@@ -357,8 +357,14 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     return false;
   }
   auto preferred = [&saved](const Candidate &left, const Candidate &right) {
-    const bool leftFavorite = saved.isFavorite(left.address, left.addressType);
-    const bool rightFavorite = saved.isFavorite(right.address, right.addressType);
+    const bool leftFavorite =
+        saved.isFavorite(left.address, left.addressType, SavedConnections::Role::Power) ||
+        saved.isFavorite(left.address, left.addressType, SavedConnections::Role::Heart) ||
+        saved.isFavorite(left.address, left.addressType, SavedConnections::Role::Posture);
+    const bool rightFavorite =
+        saved.isFavorite(right.address, right.addressType, SavedConnections::Role::Power) ||
+        saved.isFavorite(right.address, right.addressType, SavedConnections::Role::Heart) ||
+        saved.isFavorite(right.address, right.addressType, SavedConnections::Role::Posture);
     if (leftFavorite != rightFavorite) return leftFavorite;
     if (left.supported != right.supported) return left.supported;
     return left.rssi > right.rssi;
@@ -372,18 +378,24 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     const bool fitnessMachine = ad->isAdvertisingService(kSvcFTMS);
     const bool speedCadence = ad->isAdvertisingService(kSvcCSC);
     const std::string name = ad->getName();
-    const bool postureSensor = ad->isAdvertisingService(NimBLEUUID("0xffe0")) ||
-      name.compare(0, strlen(BLE_POSTURE_NAME_PREFIX), BLE_POSTURE_NAME_PREFIX) == 0;
+    std::string lowerName = name;
+    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+             [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    const bool postureSensor =
+      ad->isAdvertisingService(NimBLEUUID("0xffe5")) ||
+      ad->isAdvertisingService(NimBLEUUID("0xffe0")) ||
+      lowerName.find("wt") != std::string::npos;
     const bool heartRate = ad->isAdvertisingService(NimBLEUUID("0x180d"));
     const bool supported = cyclingPower || fitnessMachine || speedCadence || postureSensor || heartRate;
     if (name.empty() && !supported) continue;
 
     const std::string address = ad->getAddress().toString();
-    std::string lowerName = name;
-    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
-             [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-    if (lowerName.find("bike") != std::string::npos &&
-      !saved.isFavorite(address.c_str(), ad->getAddress().getType())) continue;
+    const uint8_t addressType = (uint8_t)ad->getAddress().getType();
+    const bool favorite = saved.isFavorite(address.c_str(), addressType,
+                                            SavedConnections::Role::Power) ||
+        saved.isFavorite(address.c_str(), addressType, SavedConnections::Role::Heart) ||
+        saved.isFavorite(address.c_str(), addressType, SavedConnections::Role::Posture);
+    if (lowerName.find("bike") != std::string::npos && !favorite) continue;
     bool alreadyAdded = false;
     for (size_t j = 0; j < candidateCount; ++j) {
       if (address == candidates[j].address && ad->getAddress().getType() == candidates[j].addressType) {
@@ -424,7 +436,8 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
       device.speedCadence = c.speedCadence;
       device.postureSensor = c.postureSensor;
       device.addressType = c.addressType;
-      device.favorite = saved.isFavorite(c.address, c.addressType);
+      device.favorite = saved.isFavorite(c.address, c.addressType,
+                                         SavedConnections::Role::Power);
       device.heartRate = c.heartRate;
     }
 

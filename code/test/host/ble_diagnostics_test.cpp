@@ -288,30 +288,59 @@ static void controlTests() {
   measurement->emit({2, 2, 0, 0, 8});
   manager.tick();
   assert(power.cadence() == 60 && power.power() == 0);
-  NimBLEDevice::nextService = "0xFFE0";
-  NimBLEDevice::nextCharacteristic = "0xFFE1";
+  NimBLEDevice::nextService = "0xFFE5";
+  NimBLEDevice::nextCharacteristic = "0xFFE4";
   NimBLEAdvertisedDevice sensor;
   sensor.name = "WT901";
-  sensor.services = {"0xFFE0"};
+  sensor.services = {"0xFFE5"};
   sensor.address = NimBLEAddress("33:44:55:66:77:88", 1);
   NimBLEDevice::scan.results.devices = {sensor};
   assert(manager.enqueue(BleOpKind::Posture));
   assert(outcome(manager).success && posture.connected());
   auto *postureClient = NimBLEDevice::clients.back();
   assert(postureClient->peer.getType() == 1);
-  std::vector<uint8_t> angle{0x55, 0x53, 0, 0, 0x2e, 0xfb, 0, 0, 0, 0, 0};
-  for (size_t index = 0; index < 10; ++index) angle[10] += angle[index];
-  postureClient->service.measurement.emit(angle);
+  std::vector<uint8_t> angleBle5(20, 0);
+  angleBle5[0] = 0x55;
+  angleBle5[1] = 0x61;
+  angleBle5[14] = 0x00;
+  angleBle5[15] = 0x40; // +90 degrees
+  angleBle5[16] = 0x00;
+  angleBle5[17] = 0xE0; // -45 degrees
+  angleBle5[18] = 0xFF;
+  angleBle5[19] = 0x7F; // approximately +180 degrees
+  postureClient->service.measurement.emit(
+      std::vector<uint8_t>(angleBle5.begin(), angleBle5.begin() + 7));
+  postureClient->service.measurement.emit(
+      std::vector<uint8_t>(angleBle5.begin() + 7, angleBle5.end()));
   const auto postureCount = posture.notificationCount();
   manager.tick();
-  assert(posture.notificationCount() == postureCount + 1 && std::abs(posture.pitchDeg() + 12.34f) < 0.001f);
+  assert(posture.notificationCount() == postureCount + 1);
+  assert(std::abs(posture.rollDeg() - 90.0f) < 0.001f);
+  assert(std::abs(posture.pitchDeg() + 45.0f) < 0.001f);
+  assert(std::abs(posture.yawDeg() - (32767.0f * 180.0f / 32768.0f)) < 0.001f);
   postureClient->disconnect();
   assert(!posture.connected());
   const auto scansBeforeDirect = NimBLEDevice::scan.starts.load();
+  NimBLEDevice::nextService = "0xFFE0";
+  NimBLEDevice::nextCharacteristic = "0xFFE1";
   assert(manager.enqueue(BleOpKind::Posture, "33:44:55:66:77:88", 1));
   assert(outcome(manager).success && posture.connected());
   assert(NimBLEDevice::scan.starts.load() == scansBeforeDirect);
   assert(saved.load() && saved.ble(0)->role == SavedConnections::Role::Posture);
+  postureClient = NimBLEDevice::clients.back();
+  std::vector<uint8_t> legacyAngle{0x55, 0x53, 0, 0, 0x2e, 0xfb,
+                                   0, 0, 0, 0, 0};
+  for (size_t index = 0; index < 10; ++index)
+    legacyAngle[10] += legacyAngle[index];
+  postureClient->service.measurement.emit(legacyAngle);
+  manager.tick();
+  assert(std::abs(posture.pitchDeg() + 12.34f) < 0.001f);
+  const auto validLegacyCount = posture.notificationCount();
+  legacyAngle[10]++;
+  postureClient->service.measurement.emit(legacyAngle);
+  manager.tick();
+  assert(posture.notificationCount() == validLegacyCount);
+  assert(std::abs(posture.pitchDeg() + 12.34f) < 0.001f);
   posture.disconnect();
   NimBLEDevice::scan.manualCompletion = true;
   NimBLEDevice::scan.startHook = {};

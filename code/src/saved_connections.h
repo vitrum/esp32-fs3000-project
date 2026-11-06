@@ -26,7 +26,7 @@ public:
     if (length && (next.magic != kMagic || next.count > kCapacity ||
         next.crc != esp_rom_crc32_le(0, reinterpret_cast<const uint8_t *>(&next), offsetof(Favorites, crc)))) return false;
     for (uint8_t index = 0; index < next.count; ++index)
-      if (!validBle(next.entries[index].device) || next.entries[index].device.role != Role::Power ||
+      if (!validBle(next.entries[index].device) ||
           !terminated(next.entries[index].name)) return false;
     favorites_ = next;
     return true;
@@ -35,25 +35,28 @@ public:
   const Favorite *favorite(uint8_t index) const {
     return index < favoriteCount() ? &favorites_.entries[index] : nullptr;
   }
-  bool isFavorite(const char *address, uint8_t type) const {
+  bool isFavorite(const char *address, uint8_t type, Role role = Role::Power) const {
     if (!address) return false;
     for (uint8_t index = 0; index < favoriteCount(); ++index)
       if (favorites_.entries[index].device.addressType == type &&
+          favorites_.entries[index].device.role == role &&
           !strcasecmp(favorites_.entries[index].device.address, address)) return true;
     return false;
   }
-  bool setFavorite(const char *address, uint8_t type, const char *name, bool enabled) {
+  bool setFavorite(const char *address, uint8_t type, const char *name, bool enabled,
+                   Role role = Role::Power) {
     if (!address || !name || strlen(address) != 17 || strlen(name) >= 32) return false;
     Favorite entry{};
     snprintf(entry.device.address, sizeof(entry.device.address), "%s", address);
     entry.device.addressType = type;
-    entry.device.role = Role::Power;
+    entry.device.role = role;
     snprintf(entry.name, sizeof(entry.name), "%s", name);
     if (!validBle(entry.device)) return false;
     Favorites next = favorites_;
     uint8_t found = next.count;
     for (uint8_t index = 0; index < next.count; ++index)
       if (next.entries[index].device.addressType == type &&
+          next.entries[index].device.role == role &&
           !strcasecmp(next.entries[index].device.address, address)) { found = index; break; }
     if (enabled) {
       if (found == next.count) {

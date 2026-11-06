@@ -10,6 +10,10 @@ extern const lv_font_t lv_font_noto_sans_sc_14;
 namespace {
 static DisplayLcd *g_display = nullptr;
 constexpr uint8_t CST328_ADDR = 0x1A;
+
+size_t roleIndex(SavedConnections::Role role) {
+  return static_cast<size_t>(role);
+}
 }
 
 uint16_t DisplayLcd::rgb565FromLvColor(lv_color_t c) {
@@ -148,25 +152,63 @@ void DisplayLcd::onBackNavigation(lv_event_t *event) {
 
 void DisplayLcd::onPowerSourceButton(lv_event_t *) {
   if (!g_display) return;
-  // 重新进入功率源页：重置 BLE 按钮缓冲，页面切换瞬间的点击不算数。
-  g_display->bleScanTouch_.reset(millis());
-  g_display->bleRequestInFlight_ = false;
+  g_display->hideDevicePanels();
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(g_display->sdPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(g_display->virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(g_display->bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_clear_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->deviceHubPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onDeviceHubPower(lv_event_t *) {
+  if (!g_display) return;
+  g_display->showBleRolePanel(SavedConnections::Role::Power);
+}
+
+void DisplayLcd::onDeviceHubHeart(lv_event_t *) {
+  if (!g_display) return;
+  g_display->showBleRolePanel(SavedConnections::Role::Heart);
+}
+
+void DisplayLcd::onDeviceHubPosture(lv_event_t *) {
+  if (!g_display) return;
+  g_display->showBleRolePanel(SavedConnections::Role::Posture);
+}
+
+void DisplayLcd::onDeviceRoleBack(lv_event_t *event) {
+  if (!g_display) return;
+  lv_obj_t *panel = lv_obj_get_parent(lv_event_get_target(event));
+  lv_obj_add_flag(panel, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->deviceHubPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onOnlineDevicesButton(lv_event_t *) {
+  if (!g_display) return;
+  g_display->hideDevicePanels();
+  lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->onlineDevicesPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onOnlineDevicesBack(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->onlineDevicesPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onBleRoleScan(lv_event_t *event) {
+  if (!g_display) return;
+  const auto role = static_cast<SavedConnections::Role>(
+      (uintptr_t)lv_event_get_user_data(event));
+  if (role != SavedConnections::Role::Heart &&
+      role != SavedConnections::Role::Posture) return;
+  if (!g_display->bleScanTouch_.accept(millis()) ||
+      g_display->bleRequestInFlight_) return;
+  g_display->activeBleRole_ = role;
+  g_display->requestedBleScan_ = true;
+  g_display->bleRequestInFlight_ = true;
+  g_display->showBleLoading("Scanning for BLE devices...");
 }
 
 void DisplayLcd::onSettingsButton(lv_event_t *) {
   if (!g_display) return;
-  lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(g_display->virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(g_display->bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
+  g_display->hideDevicePanels();
   lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -392,49 +434,210 @@ void DisplayLcd::refreshWifiStatus() {
     lv_label_set_text(settingsWifiStatus_, status);
 }
 
-void DisplayLcd::onBleFavorite(lv_event_t *) {
-  if (!g_display || !g_display->connectedBlePower_ ||
-      !g_display->bleFavoriteTouch_.accept(millis())) return;
+void DisplayLcd::updateOnlineDevices(bool powerConnected, bool powerResponding,
+                                     bool heartConnected, bool heartResponding,
+                                     bool postureConnected, bool postureResponding,
+                                     bool gpsPresent, bool gpsFixed,
+                                     bool windPresent, bool windResponding) {
+  const SavedConnections::Role roles[] = {
+      SavedConnections::Role::Power, SavedConnections::Role::Heart,
+      SavedConnections::Role::Posture};
+  const char *roleNames[] = {
+      localized("Power meter", "功率计"),
+      localized("Heart rate", "心率设备"),
+      localized("3-axis sensor", "三轴姿态传感器")};
+  const bool connected[] = {powerConnected, heartConnected, postureConnected};
+  const bool responding[] = {powerResponding, heartResponding, postureResponding};
+  onlineBleConnected_[0] = powerConnected;
+  onlineBleConnected_[1] = heartConnected;
+  onlineBleConnected_[2] = postureConnected;
+  onlineBleResponding_[0] = powerResponding;
+  onlineBleResponding_[1] = heartResponding;
+  onlineBleResponding_[2] = postureResponding;
+  onlineGpsPresent_ = gpsPresent;
+  onlineGpsFixed_ = gpsFixed;
+  onlineWindPresent_ = windPresent;
+  onlineWindResponding_ = windResponding;
+  for (size_t i = 0; i < 3; ++i) {
+    const size_t index = roleIndex(roles[i]);
+    if (connectedBleActive_[index] != connected[i]) {
+      connectedBleActive_[index] = connected[i];
+      refreshBleFavoriteButton(roles[i]);
+    }
+    const char *deviceName = connectedBleNames_[index][0]
+        ? connectedBleNames_[index] : roleNames[i];
+    const char *status = !connected[i]
+        ? localized("Offline", "离线")
+        : responding[i] ? localized("Connected / OK", "已连接 / 响应正常")
+                        : localized("Connected / stale", "已连接 / 暂无新数据");
+    char text[96];
+    snprintf(text, sizeof(text), "%.26s\n%s", deviceName, status);
+    if (onlineDeviceRows_[i] &&
+        strcmp(lv_label_get_text(onlineDeviceRows_[i]), text) != 0)
+      lv_label_set_text(onlineDeviceRows_[i], text);
+
+    char roleStatus[80];
+    snprintf(roleStatus, sizeof(roleStatus), "%s\n%s", deviceName, status);
+    if (bleRoleStatusLabels_[index] &&
+        strcmp(lv_label_get_text(bleRoleStatusLabels_[index]), roleStatus) != 0)
+      lv_label_set_text(bleRoleStatusLabels_[index], roleStatus);
+
+    const char *hubTitle = i == 0 ? localized("POWER METER", "功率计")
+        : i == 1 ? localized("HEART RATE", "心率设备")
+                 : localized("3-AXIS SENSOR", "三轴姿态");
+    char hubText[64];
+    snprintf(hubText, sizeof(hubText), "%s\n%s",
+             hubTitle, connected[i] ? localized("CONNECTED", "已连接")
+                                    : localized("NOT CONNECTED", "未连接"));
+    if (deviceHubLabels_[index] &&
+        strcmp(lv_label_get_text(deviceHubLabels_[index]), hubText) != 0)
+      lv_label_set_text(deviceHubLabels_[index], hubText);
+  }
+
+  const char *gpsStatus = !gpsPresent
+      ? localized("Offline", "离线")
+      : gpsFixed ? localized("Online / FIX", "在线 / 已定位")
+                 : localized("Online / searching", "在线 / 搜星中");
+  char gpsText[64];
+  snprintf(gpsText, sizeof(gpsText), "%s\n%s",
+           localized("GPS", "GPS"), gpsStatus);
+  if (onlineDeviceRows_[3] &&
+      strcmp(lv_label_get_text(onlineDeviceRows_[3]), gpsText) != 0)
+    lv_label_set_text(onlineDeviceRows_[3], gpsText);
+
+  const char *windStatus = !windPresent
+      ? localized("Offline", "离线")
+      : windResponding ? localized("Online / OK", "在线 / 响应正常")
+                       : localized("Online / stale", "在线 / 暂无新数据");
+  char windText[64];
+  snprintf(windText, sizeof(windText), "%s\n%s",
+           localized("Wind sensor", "风速计"), windStatus);
+  if (onlineDeviceRows_[4] &&
+      strcmp(lv_label_get_text(onlineDeviceRows_[4]), windText) != 0)
+    lv_label_set_text(onlineDeviceRows_[4], windText);
+}
+
+void DisplayLcd::updateHeartDeviceStatus(bool connected, bool responding,
+                                         uint16_t bpm) {
+  const size_t index = roleIndex(SavedConnections::Role::Heart);
+  if (!bleRoleStatusLabels_[index]) return;
+  char text[96];
+  const char *name = connectedBleNames_[index][0]
+      ? connectedBleNames_[index] : localized("Heart rate", "心率设备");
+  if (!connected)
+    snprintf(text, sizeof(text), "%s\n%s", localized("Heart rate", "心率设备"),
+             localized("Offline", "离线"));
+  else if (responding)
+    snprintf(text, sizeof(text), "%s\n%u bpm  %s", name, (unsigned)bpm,
+             localized("OK", "正常"));
+  else
+    snprintf(text, sizeof(text), "%s\n-- bpm  %s", name,
+             localized("No recent data", "无新数据"));
+  if (strcmp(lv_label_get_text(bleRoleStatusLabels_[index]), text) != 0)
+    lv_label_set_text(bleRoleStatusLabels_[index], text);
+}
+
+void DisplayLcd::updatePostureDeviceStatus(bool connected, bool responding,
+                                           float roll, float pitch, float yaw) {
+  const size_t index = roleIndex(SavedConnections::Role::Posture);
+  if (!bleRoleStatusLabels_[index]) return;
+  char text[128];
+  if (!connected)
+    snprintf(text, sizeof(text), "%s\n%s\nRoll: --\nPitch: --\nYaw: --",
+             connectedBleNames_[index][0] ? connectedBleNames_[index]
+                                          : localized("WT9011DCL-BT50", "WT9011DCL-BT50"),
+             localized("Offline", "离线"));
+  else
+    snprintf(text, sizeof(text), "%s\n%s\nR %+.2f  P %+.2f\nY %+.2f",
+             connectedBleNames_[index][0] ? connectedBleNames_[index]
+                                          : localized("WT9011DCL-BT50", "WT9011DCL-BT50"),
+             responding ? localized("Connected / OK", "已连接 / 正常")
+                        : localized("Connected / stale", "已连接 / 数据过期"),
+             roll, pitch, yaw);
+  if (strcmp(lv_label_get_text(bleRoleStatusLabels_[index]), text) != 0)
+    lv_label_set_text(bleRoleStatusLabels_[index], text);
+}
+
+void DisplayLcd::onBleFavorite(lv_event_t *event) {
+  if (!g_display || !g_display->bleFavoriteTouch_.accept(millis())) return;
+  const auto role = static_cast<SavedConnections::Role>(
+      (uintptr_t)lv_event_get_user_data(event));
+  const size_t index = roleIndex(role);
+  if (index >= 3 || !g_display->connectedBleActive_[index] ||
+      !g_display->connectedBleAddresses_[index][0]) return;
   SavedConnections saved;
-  if (!saved.loadFavorites() || !saved.setFavorite(g_display->connectedBleAddress_,
-      g_display->connectedBleType_, g_display->connectedBleName_,
-      !saved.isFavorite(g_display->connectedBleAddress_, g_display->connectedBleType_))) {
-    g_display->showBleConnectFailure("Could not save favorite (limit 4). Existing favorites retained.");
+  if (!saved.loadFavorites() ||
+      !saved.setFavorite(g_display->connectedBleAddresses_[index],
+                         g_display->connectedBleTypes_[index],
+                         g_display->connectedBleNames_[index],
+                         !saved.isFavorite(g_display->connectedBleAddresses_[index],
+                                           g_display->connectedBleTypes_[index], role),
+                         role)) {
+    g_display->showNotice(g_display->localized(
+        "Could not save favorite (limit 4). Existing favorites retained.",
+        "收藏保存失败（最多 4 个）。已有收藏保持不变。"));
     return;
   }
-  g_display->updateBleFavoriteAvailability(true);
+  g_display->refreshBleFavoriteButton(role);
 }
 
-void DisplayLcd::setConnectedBle(const char *address, uint8_t type, bool powerService) {
-  snprintf(connectedBleAddress_, sizeof(connectedBleAddress_), "%s", address);
-  snprintf(connectedBleName_, sizeof(connectedBleName_), "%s", address);
-  connectedBleType_ = type;
-  for (size_t index = 0; index < bleDeviceCount_; ++index)
-    if (!strcasecmp(bleDevices_[index].address, address) && bleDevices_[index].addressType == type)
-      snprintf(connectedBleName_, sizeof(connectedBleName_), "%s", bleDevices_[index].name);
+void DisplayLcd::setConnectedBle(const char *address, uint8_t type, bool connected,
+                                 SavedConnections::Role role) {
+  const size_t index = roleIndex(role);
+  if (index >= 3 || !address) return;
+  snprintf(connectedBleAddresses_[index], sizeof(connectedBleAddresses_[index]), "%s", address);
+  const char *fallbackName = role == SavedConnections::Role::Power
+      ? localized("Power meter", "功率计")
+      : role == SavedConnections::Role::Heart
+          ? localized("Heart rate", "心率设备")
+          : "WT9011DCL-BT50";
+  snprintf(connectedBleNames_[index], sizeof(connectedBleNames_[index]), "%s",
+           fallbackName);
+  connectedBleTypes_[index] = type;
+  for (size_t deviceIndex = 0; deviceIndex < bleDeviceCount_; ++deviceIndex)
+    if (!strcasecmp(bleDevices_[deviceIndex].address, address) &&
+        bleDevices_[deviceIndex].addressType == type)
+      snprintf(connectedBleNames_[index], sizeof(connectedBleNames_[index]), "%s",
+               bleDevices_[deviceIndex].name);
   SavedConnections saved;
   if (saved.loadFavorites())
-    for (uint8_t index = 0; index < saved.favoriteCount(); ++index)
-      if (!strcasecmp(saved.favorite(index)->device.address, address) && saved.favorite(index)->device.addressType == type)
-        snprintf(connectedBleName_, sizeof(connectedBleName_), "%s", saved.favorite(index)->name);
-  connectedBlePower_ = powerService;
-  updateBleFavoriteAvailability(powerService);
+    for (uint8_t favorite = 0; favorite < saved.favoriteCount(); ++favorite)
+      if (saved.favorite(favorite)->device.role == role &&
+          !strcasecmp(saved.favorite(favorite)->device.address, address) &&
+          saved.favorite(favorite)->device.addressType == type)
+        snprintf(connectedBleNames_[index], sizeof(connectedBleNames_[index]), "%s",
+                 saved.favorite(favorite)->name);
+  connectedBleActive_[index] = connected;
+  refreshBleFavoriteButton(role);
 }
 
-void DisplayLcd::updateBleFavoriteAvailability(bool connected) {
-  if (!bleFavoriteButton_) return;
-  connectedBlePower_ = connectedBlePower_ && connected;
-  if (connectedBlePower_) lv_obj_clear_state(bleFavoriteButton_, LV_STATE_DISABLED);
-  else lv_obj_add_state(bleFavoriteButton_, LV_STATE_DISABLED);
-  lv_label_set_text(bleFavoriteLabel_, connectedBleAddress_[0] ? connectedBleName_ : "--");
+void DisplayLcd::updateBleFavoriteAvailability(bool connected, SavedConnections::Role role) {
+  const size_t index = roleIndex(role);
+  if (index >= 3) return;
+  connectedBleActive_[index] = connected;
+  refreshBleFavoriteButton(role);
+}
+
+void DisplayLcd::refreshBleFavoriteButton(SavedConnections::Role role) {
+  const size_t index = roleIndex(role);
+  if (index >= 3 || !bleFavoriteButtons_[index]) return;
+  if (connectedBleActive_[index])
+    lv_obj_clear_state(bleFavoriteButtons_[index], LV_STATE_DISABLED);
+  else
+    lv_obj_add_state(bleFavoriteButtons_[index], LV_STATE_DISABLED);
+  lv_label_set_text(bleFavoriteLabels_[index],
+                    connectedBleNames_[index][0] ? connectedBleNames_[index] : "--");
   SavedConnections saved;
-  const bool favorite = saved.loadFavorites() && saved.isFavorite(connectedBleAddress_, connectedBleType_);
-  lv_obj_set_style_line_color(bleFavoriteStar_, favorite ? lv_color_make(217, 119, 6) : lv_color_make(100, 116, 139), 0);
-  lv_obj_set_style_line_width(bleFavoriteStar_, favorite ? 4 : 2, 0);
+  const bool favorite = saved.loadFavorites() &&
+      saved.isFavorite(connectedBleAddresses_[index], connectedBleTypes_[index], role);
+  lv_obj_set_style_line_color(bleFavoriteStars_[index],
+      favorite ? lv_color_make(217, 119, 6) : lv_color_make(100, 116, 139), 0);
+  lv_obj_set_style_line_width(bleFavoriteStars_[index], favorite ? 4 : 2, 0);
 }
 
 void DisplayLcd::onBleSelected(lv_event_t *) {
   if (!g_display) return;
+  g_display->activeBleRole_ = SavedConnections::Role::Power;
   if (!g_display->bleScanTouch_.accept(millis())) return;
   // 上一次 BLE 请求还没被主循环消费：直接忽略，避免重复扫描。
   if (g_display->bleRequestInFlight_) return;
@@ -452,7 +655,9 @@ void DisplayLcd::onBleScanAgain(lv_event_t *) {
   if (g_display->bleRequestInFlight_) return;
   g_display->requestedBleScan_ = true;
   g_display->bleRequestInFlight_ = true;
-  g_display->showBleLoading("Scanning for BLE power meters and smart trainers...");
+  g_display->showBleLoading(g_display->activeBleRole_ == SavedConnections::Role::Power
+      ? "Scanning for BLE power meters and smart trainers..."
+      : "Scanning for BLE devices...");
 }
 
 void DisplayLcd::onBleDeviceSelected(lv_event_t *event) {
@@ -502,12 +707,10 @@ void DisplayLcd::onBleConfirm(lv_event_t *) {
   if (g_display->bleRequestInFlight_) return;
   snprintf(g_display->requestedBleAddress_, sizeof(g_display->requestedBleAddress_),
            "%s", g_display->bleDevices_[g_display->selectedBleDevice_].address);
-  g_display->requestedBlePosture_ = g_display->bleDevices_[g_display->selectedBleDevice_].postureSensor &&
-      !g_display->bleDevices_[g_display->selectedBleDevice_].cyclingPower &&
-      !g_display->bleDevices_[g_display->selectedBleDevice_].fitnessMachine;
-    g_display->requestedBleHeart_ = g_display->bleDevices_[g_display->selectedBleDevice_].heartRate &&
-        !g_display->bleDevices_[g_display->selectedBleDevice_].cyclingPower &&
-        !g_display->bleDevices_[g_display->selectedBleDevice_].fitnessMachine;
+  g_display->requestedBlePosture_ =
+      g_display->activeBleRole_ == SavedConnections::Role::Posture;
+  g_display->requestedBleHeart_ =
+      g_display->activeBleRole_ == SavedConnections::Role::Heart;
   // 连同扫描时记录的地址类型一起提交，主循环透传给 connectDevice()。
   g_display->requestedBleAddressType_ =
       g_display->bleDevices_[g_display->selectedBleDevice_].addressType;
@@ -523,7 +726,7 @@ void DisplayLcd::onBleBack(lv_event_t *) {
   g_display->requestedBleCancel_ = true;
   lv_obj_add_flag(g_display->bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(g_display->bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_clear_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->bleRolePanel(g_display->activeBleRole_), LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::onBleConfirmBack(lv_event_t *) {
@@ -591,12 +794,13 @@ void DisplayLcd::onAutoSelected(lv_event_t *) {
   g_display->selectedPowerMode_ = 0;
   g_display->refreshLanguage();
   lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->deviceHubPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::onCancelSelection(lv_event_t *) {
   if (g_display && g_display->powerSourcePanel_) {
-    lv_obj_add_flag(g_display->powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+    g_display->hideDevicePanels();
+    lv_obj_clear_flag(g_display->deviceHubPanel_, LV_OBJ_FLAG_HIDDEN);
   }
 }
 
@@ -695,22 +899,7 @@ void DisplayLcd::onSdFileClicked(lv_event_t *event) {
       lv_obj_add_flag(g_display->sdRowButtons_[i], LV_OBJ_FLAG_HIDDEN);
     return;
   }
-  if (!entry.isAudio) {
-    lv_label_set_text(g_display->sdNowPlayingLabel_,
-                      g_display->localized("Not an audio file", "不是音频文件"));
-    return;
-  }
-  const int pathLength = strcmp(g_display->sdCurrentDirectory_, "/") == 0
-      ? snprintf(g_display->sdPlayPath_, sizeof(g_display->sdPlayPath_),
-                 "/%s", entry.name)
-      : snprintf(g_display->sdPlayPath_, sizeof(g_display->sdPlayPath_),
-                 "%s/%s", g_display->sdCurrentDirectory_, entry.name);
-  if (pathLength < 0 || (size_t)pathLength >= sizeof(g_display->sdPlayPath_)) {
-    lv_label_set_text(g_display->sdNowPlayingLabel_,
-                      g_display->localized("Path is too long", "文件路径过长"));
-    return;
-  }
-  g_display->sdPlayRequested_ = true;
+  (void)entry;
 }
 
 void DisplayLcd::onSdUpClicked(lv_event_t *) {
@@ -728,30 +917,11 @@ void DisplayLcd::onSdUpClicked(lv_event_t *) {
     lv_obj_add_flag(g_display->sdRowButtons_[i], LV_OBJ_FLAG_HIDDEN);
 }
 
-void DisplayLcd::onSdStopClicked(lv_event_t *) {
-  if (!g_display) return;
-  g_display->sdStopRequested_ = true;
-}
-
 bool DisplayLcd::takeSdListRequest(char *directory, size_t capacity) {
   if (!sdListRequested_) return false;
   sdListRequested_ = false;
   if (!directory || capacity == 0) return false;
   snprintf(directory, capacity, "%s", sdCurrentDirectory_);
-  return true;
-}
-
-bool DisplayLcd::takeSdPlayRequest(char *path, size_t capacity) {
-  if (!sdPlayRequested_) return false;
-  sdPlayRequested_ = false;
-  if (!path || capacity == 0) return false;
-  snprintf(path, capacity, "%s", sdPlayPath_);
-  return true;
-}
-
-bool DisplayLcd::takeSdStopRequest() {
-  if (!sdStopRequested_) return false;
-  sdStopRequested_ = false;
   return true;
 }
 
@@ -765,6 +935,7 @@ void DisplayLcd::onGpsButton(lv_event_t *) {
         "找不到 GPS 模块。\n请检查 UART 接线和供电。"));
     return;
   }
+  g_display->hideDevicePanels();
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(g_display->gpsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
@@ -803,6 +974,7 @@ bool DisplayLcd::takeGpsRestartRequest() {
 void DisplayLcd::showGpsPanel() {
   if (!gpsPanel_) return;
   if (rideLogPanel_) lv_obj_add_flag(rideLogPanel_, LV_OBJ_FLAG_HIDDEN);
+  hideDevicePanels();
   lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
@@ -814,36 +986,159 @@ void DisplayLcd::showGpsPanel() {
   lv_obj_clear_flag(gpsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
-void DisplayLcd::buildBleFavoriteButton() {
-  bleFavoriteButton_ = lv_btn_create(powerSourcePanel_);
-  lv_obj_set_size(bleFavoriteButton_, 208, 44);
-  lv_obj_align(bleFavoriteButton_, LV_ALIGN_TOP_LEFT, 16, 244);
-  lv_obj_set_style_radius(bleFavoriteButton_, 0, 0);
-  lv_obj_set_style_pad_all(bleFavoriteButton_, 8, 0);
-  lv_obj_set_style_bg_color(bleFavoriteButton_, lv_color_make(226, 232, 240), 0);
-  lv_obj_add_event_cb(bleFavoriteButton_, onBleFavorite, LV_EVENT_CLICKED, nullptr);
-  bleFavoriteStar_ = lv_line_create(bleFavoriteButton_);
+void DisplayLcd::buildBleFavoriteButton(lv_obj_t *panel, SavedConnections::Role role) {
+  const size_t index = roleIndex(role);
+  if (!panel || index >= 3) return;
+  bleFavoriteButtons_[index] = lv_btn_create(panel);
+  lv_obj_set_size(bleFavoriteButtons_[index], 208, 44);
+  lv_obj_align(bleFavoriteButtons_[index], LV_ALIGN_TOP_LEFT, 16, 244);
+  lv_obj_set_style_radius(bleFavoriteButtons_[index], 0, 0);
+  lv_obj_set_style_pad_all(bleFavoriteButtons_[index], 8, 0);
+  lv_obj_set_style_bg_color(bleFavoriteButtons_[index], lv_color_make(226, 232, 240), 0);
+  lv_obj_add_event_cb(bleFavoriteButtons_[index], onBleFavorite, LV_EVENT_CLICKED,
+                      (void *)(uintptr_t)role);
+  bleFavoriteStars_[index] = lv_line_create(bleFavoriteButtons_[index]);
   static const lv_point_t starPoints[] = {{12, 0}, {15, 8}, {24, 9}, {17, 15}, {20, 24},
                                          {12, 19}, {4, 24}, {7, 15}, {0, 9}, {9, 8}, {12, 0}};
-  lv_line_set_points(bleFavoriteStar_, starPoints, 11);
-  lv_obj_align(bleFavoriteStar_, LV_ALIGN_LEFT_MID, 0, 0);
-  bleFavoriteLabel_ = lv_label_create(bleFavoriteButton_);
-  lv_obj_set_width(bleFavoriteLabel_, 150);
-  lv_label_set_long_mode(bleFavoriteLabel_, LV_LABEL_LONG_DOT);
-  lv_obj_align(bleFavoriteLabel_, LV_ALIGN_RIGHT_MID, 0, 0);
-  lv_obj_set_style_text_font(bleFavoriteLabel_, &lv_font_noto_sans_sc_14, 0);
-  lv_obj_set_style_text_color(bleFavoriteLabel_, lv_color_make(30, 41, 59), 0);
-  updateBleFavoriteAvailability(false);
+  lv_line_set_points(bleFavoriteStars_[index], starPoints, 11);
+  lv_obj_align(bleFavoriteStars_[index], LV_ALIGN_LEFT_MID, 0, 0);
+  bleFavoriteLabels_[index] = lv_label_create(bleFavoriteButtons_[index]);
+  lv_obj_set_width(bleFavoriteLabels_[index], 150);
+  lv_label_set_long_mode(bleFavoriteLabels_[index], LV_LABEL_LONG_DOT);
+  lv_obj_align(bleFavoriteLabels_[index], LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_set_style_text_font(bleFavoriteLabels_[index], &lv_font_noto_sans_sc_14, 0);
+  lv_obj_set_style_text_color(bleFavoriteLabels_[index], lv_color_make(30, 41, 59), 0);
+  refreshBleFavoriteButton(role);
+}
+
+lv_obj_t *DisplayLcd::bleRolePanel(SavedConnections::Role role) const {
+  switch (role) {
+    case SavedConnections::Role::Power: return powerSourcePanel_;
+    case SavedConnections::Role::Heart: return heartDevicePanel_;
+    case SavedConnections::Role::Posture: return postureDevicePanel_;
+  }
+  return nullptr;
+}
+
+void DisplayLcd::hideDevicePanels() {
+  for (lv_obj_t *panel : {deviceHubPanel_, powerSourcePanel_, heartDevicePanel_,
+                          postureDevicePanel_, onlineDevicesPanel_, virtualPowerPanel_,
+                          bleDevicePanel_, bleConfirmPanel_, bleLoadingPanel_})
+    if (panel) lv_obj_add_flag(panel, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::showBleRolePanel(SavedConnections::Role role) {
+  hideDevicePanels();
+  activeBleRole_ = role;
+  lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(bleRolePanel(role), LV_OBJ_FLAG_HIDDEN);
+  if (role == SavedConnections::Role::Power)
+    lv_obj_clear_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
+  bleScanTouch_.reset(millis());
+  bleRequestInFlight_ = false;
+}
+
+void DisplayLcd::buildDeviceHubPanel() {
+  deviceHubPanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(deviceHubPanel_, 240, 320);
+  lv_obj_center(deviceHubPanel_);
+  lv_obj_clear_flag(deviceHubPanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_pad_all(deviceHubPanel_, 0, 0);
+  lv_obj_set_style_radius(deviceHubPanel_, 0, 0);
+  lv_obj_set_style_border_width(deviceHubPanel_, 0, 0);
+  lv_obj_set_style_bg_color(deviceHubPanel_, lv_color_make(248, 250, 252), 0);
+  buildPanelHeader(deviceHubPanel_, "BLUETOOTH DEVICES", onCancelSelection);
+  static const char *titles[] = {"POWER METER", "3-AXIS SENSOR", "HEART RATE"};
+  static const lv_color_t colors[] = {
+      lv_color_make(37, 99, 235), lv_color_make(220, 38, 38),
+      lv_color_make(13, 148, 136)};
+  static lv_event_cb_t callbacks[] = {
+      onDeviceHubPower, onDeviceHubPosture, onDeviceHubHeart};
+  for (size_t i = 0; i < 3; ++i) {
+    lv_obj_t *button = lv_btn_create(deviceHubPanel_);
+    lv_obj_set_size(button, 208, 54);
+    lv_obj_align(button, LV_ALIGN_TOP_LEFT, 16, 66 + (lv_coord_t)i * 62);
+    lv_obj_set_style_radius(button, 4, 0);
+    lv_obj_set_style_bg_color(button, colors[i], 0);
+    lv_obj_add_event_cb(button, callbacks[i], LV_EVENT_CLICKED, nullptr);
+    deviceHubLabels_[i] = lv_label_create(button);
+    lv_label_set_text(deviceHubLabels_[i], titles[i]);
+    lv_obj_set_width(deviceHubLabels_[i], 192);
+    lv_label_set_long_mode(deviceHubLabels_[i], LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(deviceHubLabels_[i], lv_color_white(), 0);
+    lv_obj_set_style_text_font(deviceHubLabels_[i], &lv_font_jetbrains_mono_14, 0);
+    lv_obj_center(deviceHubLabels_[i]);
+  }
+  lv_obj_add_flag(deviceHubPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::buildBleRolePanel(lv_obj_t *&panel, const char *title,
+                                   SavedConnections::Role role) {
+  panel = lv_obj_create(screen_);
+  lv_obj_set_size(panel, 240, 320);
+  lv_obj_center(panel);
+  lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_pad_all(panel, 0, 0);
+  lv_obj_set_style_radius(panel, 0, 0);
+  lv_obj_set_style_border_width(panel, 0, 0);
+  lv_obj_set_style_bg_color(panel, lv_color_make(248, 250, 252), 0);
+  buildPanelHeader(panel, title, onDeviceRoleBack);
+
+  lv_obj_t *status = lv_label_create(panel);
+  lv_obj_set_width(status, 216);
+  lv_obj_set_height(status, role == SavedConnections::Role::Posture ? 126 : 52);
+  lv_label_set_long_mode(status, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(status, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(status, lv_color_make(71, 85, 105), 0);
+  lv_obj_align(status, LV_ALIGN_TOP_LEFT, 12, 62);
+  bleRoleStatusLabels_[roleIndex(role)] = status;
+
+  lv_obj_t *scan = lv_btn_create(panel);
+  lv_obj_set_size(scan, 208, 42);
+  lv_obj_align(scan, LV_ALIGN_TOP_LEFT, 16,
+               role == SavedConnections::Role::Posture ? 194 : 126);
+  lv_obj_set_style_bg_color(scan, lv_color_make(37, 99, 235), 0);
+  lv_obj_add_event_cb(scan, onBleRoleScan, LV_EVENT_CLICKED,
+                      (void *)(uintptr_t)role);
+  lv_obj_t *scanLabel = lv_label_create(scan);
+  lv_label_set_text(scanLabel, "SEARCH NEARBY");
+  lv_obj_set_style_text_color(scanLabel, lv_color_white(), 0);
+  lv_obj_set_style_text_font(scanLabel, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_center(scanLabel);
+
+  buildBleFavoriteButton(panel, role);
+  lv_obj_add_flag(panel, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::buildOnlineDevicesPanel() {
+  onlineDevicesPanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(onlineDevicesPanel_, 240, 320);
+  lv_obj_center(onlineDevicesPanel_);
+  lv_obj_clear_flag(onlineDevicesPanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_pad_all(onlineDevicesPanel_, 0, 0);
+  lv_obj_set_style_radius(onlineDevicesPanel_, 0, 0);
+  lv_obj_set_style_border_width(onlineDevicesPanel_, 0, 0);
+  lv_obj_set_style_bg_color(onlineDevicesPanel_, lv_color_make(248, 250, 252), 0);
+  buildPanelHeader(onlineDevicesPanel_, "ONLINE DEVICES", onOnlineDevicesBack);
+  static const char *names[] = {
+      "Power meter", "Heart rate", "3-axis sensor", "GPS", "Wind sensor"};
+  for (size_t i = 0; i < 5; ++i) {
+    onlineDeviceRows_[i] = lv_label_create(onlineDevicesPanel_);
+    lv_obj_set_size(onlineDeviceRows_[i], 216, 42);
+    lv_label_set_long_mode(onlineDeviceRows_[i], LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(onlineDeviceRows_[i], &lv_font_jetbrains_mono_14, 0);
+    lv_obj_set_style_text_color(onlineDeviceRows_[i], lv_color_make(30, 41, 59), 0);
+    lv_label_set_text_fmt(onlineDeviceRows_[i], "%s\n--", names[i]);
+    lv_obj_align(onlineDeviceRows_[i], LV_ALIGN_TOP_LEFT, 12,
+                 58 + (lv_coord_t)i * 48);
+  }
+  lv_obj_add_flag(onlineDevicesPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::showSettings() {
   if (!settingsPanel_) return;
   if (rideLogPanel_) lv_obj_add_flag(rideLogPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
+  hideDevicePanels();
   lv_obj_add_flag(soundPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(sdPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(gpsPanel_, LV_OBJ_FLAG_HIDDEN);
@@ -1058,25 +1353,6 @@ void DisplayLcd::setSdFiles(const SdFileEntry *files, size_t count,
   refreshSdList();
 }
 
-void DisplayLcd::updateAudioStatus(bool playing, const char *title) {
-  audioPlaying_ = playing;
-  snprintf(audioTitle_, sizeof(audioTitle_), "%s", title ? title : "");
-  if (sdNowPlayingLabel_) {
-    char text[128];
-    if (playing && audioTitle_[0])
-      snprintf(text, sizeof(text), localized("Playing: %s", "播放中: %s"),
-               audioTitle_);
-    else
-      snprintf(text, sizeof(text), "%s",
-               localized("Stopped", "已停止"));
-    lv_label_set_text(sdNowPlayingLabel_, text);
-  }
-  if (sdStopButton_)
-    lv_obj_set_style_bg_color(sdStopButton_,
-                              playing ? lv_color_make(220, 38, 38)
-                                      : lv_color_make(148, 163, 184), 0);
-}
-
 void DisplayLcd::refreshSdList() {
   if (!sdList_) return;
 
@@ -1102,20 +1378,16 @@ void DisplayLcd::refreshSdList() {
     const SdFileEntry &f = sdFiles_[i];
     if (f.isDirectory)
       snprintf(text, sizeof(text), "DIR  %s", f.name);
-    else if (f.isAudio)
-      snprintf(text, sizeof(text), LV_SYMBOL_PLAY " %s\n%lu KB",
-               f.name, (unsigned long)(f.size / 1024));
     else
       snprintf(text, sizeof(text), LV_SYMBOL_FILE " %s\n%lu KB",
                f.name, (unsigned long)(f.size / 1024));
     lv_label_set_text(label, text);
     lv_obj_set_style_text_font(label,
         chinese_ ? &lv_font_noto_sans_sc_14 : &lv_font_jetbrains_mono_14, 0);
-    // 可播放项高亮背景
+    // Keep directory rows visually distinct from files.
     lv_obj_set_style_bg_color(button,
       f.isDirectory ? lv_color_make(220, 252, 231)
-              : (f.isAudio ? lv_color_make(219, 234, 254)
-                     : lv_color_make(241, 245, 249)), 0);
+              : lv_color_make(241, 245, 249), 0);
     lv_obj_clear_flag(button, LV_OBJ_FLAG_HIDDEN);
   }
 }
@@ -1197,7 +1469,7 @@ void DisplayLcd::buildPowerSourcePanel() {
     lv_obj_center(powerSourceOptions_[i]);
     y += heights[i] + 6;
   }
-  buildBleFavoriteButton();
+  buildBleFavoriteButton(powerSourcePanel_, SavedConnections::Role::Power);
   lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
 
   buildVirtualPowerPanel();
@@ -1357,6 +1629,10 @@ void DisplayLcd::buildPowerSourcePanel() {
 
   lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
 
+  buildDeviceHubPanel();
+  buildBleRolePanel(heartDevicePanel_, "HEART RATE", SavedConnections::Role::Heart);
+  buildBleRolePanel(postureDevicePanel_, "3-AXIS POSTURE", SavedConnections::Role::Posture);
+  buildOnlineDevicesPanel();
   buildSettingsPanel();
 }
 
@@ -1453,14 +1729,13 @@ void DisplayLcd::buildSettingsPanel() {
   lv_label_set_text(resetIcon, LV_SYMBOL_REFRESH);
   lv_obj_center(resetIcon);
 
-  // 设置主页：功能入口按“一行两个并排”排布（3 行 × 2 列）。
-  // 每个按钮 104×52，列起点 16 / 128，行起点 60 / 122 / 184。
+  // 设置主页：功能入口按“一行两个并排”排布。
   const lv_coord_t kColX[2] = {16, 128};
   const lv_coord_t kRowY[3] = {60, 122, 184};
   const lv_coord_t kBtnW = 96;
   const lv_coord_t kBtnH = 52;
 
-  // 功率计入口
+  // 蓝牙设备入口
   settingsPowerButton_ = lv_btn_create(settingsPanel_);
   lv_obj_set_size(settingsPowerButton_, kBtnW, kBtnH);
   lv_obj_set_style_radius(settingsPowerButton_, 8, LV_PART_MAIN);
@@ -1469,7 +1744,7 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_add_event_cb(settingsPowerButton_, onPowerSourceButton,
                       LV_EVENT_CLICKED, nullptr);
   settingsPowerButtonLabel_ = lv_label_create(settingsPowerButton_);
-  lv_label_set_text(settingsPowerButtonLabel_, LV_SYMBOL_POWER "\nPOWER");
+  lv_label_set_text(settingsPowerButtonLabel_, LV_SYMBOL_BLUETOOTH "\nDEVICES");
   lv_obj_set_style_text_color(settingsPowerButtonLabel_, lv_color_white(), 0);
   lv_obj_set_style_text_align(settingsPowerButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(settingsPowerButtonLabel_, &lv_font_jetbrains_mono_14, 0);
@@ -1519,15 +1794,15 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_text_font(settingsSoundButtonLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(settingsSoundButtonLabel_);
 
-  // SD 卡文件浏览入口（音乐播放）
+  // 在线设备状态列表
   settingsSdButton_ = lv_btn_create(settingsPanel_);
   lv_obj_set_size(settingsSdButton_, kBtnW, kBtnH);
   lv_obj_set_style_radius(settingsSdButton_, 8, LV_PART_MAIN);
   lv_obj_set_style_bg_color(settingsSdButton_, lv_color_make(15, 118, 110), 0);
   lv_obj_align(settingsSdButton_, LV_ALIGN_TOP_LEFT, kColX[0], kRowY[2]);
-  lv_obj_add_event_cb(settingsSdButton_, onSdCardButton, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(settingsSdButton_, onOnlineDevicesButton, LV_EVENT_CLICKED, nullptr);
   settingsSdButtonLabel_ = lv_label_create(settingsSdButton_);
-  lv_label_set_text(settingsSdButtonLabel_, LV_SYMBOL_SD_CARD "\nSD/MUSIC");
+  lv_label_set_text(settingsSdButtonLabel_, LV_SYMBOL_OK "\nONLINE");
   lv_obj_set_style_text_color(settingsSdButtonLabel_, lv_color_white(), 0);
   lv_obj_set_style_text_align(settingsSdButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(settingsSdButtonLabel_, &lv_font_jetbrains_mono_14, 0);
@@ -1859,26 +2134,6 @@ void DisplayLcd::buildSdPanel() {
     lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
   }
 
-  sdNowPlayingLabel_ = lv_label_create(sdPanel_);
-  lv_label_set_text(sdNowPlayingLabel_, "Stopped");
-  lv_obj_set_width(sdNowPlayingLabel_, 216);
-  lv_label_set_long_mode(sdNowPlayingLabel_, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(sdNowPlayingLabel_, &lv_font_jetbrains_mono_14, 0);
-  lv_obj_set_style_text_color(sdNowPlayingLabel_, lv_color_make(37, 99, 235), 0);
-  lv_obj_align(sdNowPlayingLabel_, LV_ALIGN_TOP_LEFT, 12, 260);
-
-  sdStopButton_ = lv_btn_create(sdPanel_);
-  lv_obj_set_size(sdStopButton_, 216, 34);
-  lv_obj_set_style_radius(sdStopButton_, 0, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(sdStopButton_, lv_color_make(148, 163, 184), 0);
-  lv_obj_align(sdStopButton_, LV_ALIGN_TOP_LEFT, 12, 282);
-  lv_obj_add_event_cb(sdStopButton_, onSdStopClicked, LV_EVENT_CLICKED, nullptr);
-  sdStopLabel_ = lv_label_create(sdStopButton_);
-  lv_label_set_text(sdStopLabel_, LV_SYMBOL_STOP " STOP");
-  lv_obj_set_style_text_color(sdStopLabel_, lv_color_white(), 0);
-  lv_obj_set_style_text_font(sdStopLabel_, &lv_font_jetbrains_mono_14, 0);
-  lv_obj_center(sdStopLabel_);
-
   lv_obj_add_flag(sdPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1918,7 +2173,9 @@ void DisplayLcd::refreshBleDeviceButtons() {
                                             ? localized("CSC cadence only", "CSC 仅踏频")
                                             : localized("BLE device", "蓝牙设备")));
     char text[64];
-    bleDevices_[i].favorite = saved.isFavorite(bleDevices_[i].address, bleDevices_[i].addressType);
+    bleDevices_[i].favorite = saved.isFavorite(bleDevices_[i].address,
+                                                bleDevices_[i].addressType,
+                                                activeBleRole_);
     snprintf(text, sizeof(text), "%s%s\n%s  %d dBm",
          bleDevices_[i].favorite ? "* " : "", bleDevices_[i].name, profile, bleDevices_[i].rssi);
     lv_label_set_text(label, text);
@@ -1987,15 +2244,29 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_set_style_text_font(virtualCadenceTitle_, font, 0);
   lv_obj_set_style_text_font(virtualHint_, font, 0);
   lv_label_set_text(settingsTitle_, localized("SETTINGS", "设置"));
-  lv_label_set_text(settingsPowerButtonLabel_, localized(LV_SYMBOL_POWER "\nPOWER", LV_SYMBOL_POWER "\n功率"));
+  lv_label_set_text(settingsPowerButtonLabel_,
+                    localized(LV_SYMBOL_BLUETOOTH "\nDEVICES",
+                              LV_SYMBOL_BLUETOOTH "\n设备"));
   lv_label_set_text(settingsLanguageEntryLabel_, localized(LV_SYMBOL_LIST "\nLANG", LV_SYMBOL_LIST "\n语言"));
   lv_label_set_text(settingsWifiEntryLabel_, LV_SYMBOL_WIFI "\nWI-FI");
-  lv_label_set_text(settingsSdButtonLabel_, localized(LV_SYMBOL_SD_CARD "\nSD/MUSIC", LV_SYMBOL_SD_CARD "\nSD/音乐"));
+  lv_label_set_text(settingsSdButtonLabel_,
+                    localized(LV_SYMBOL_OK "\nONLINE", LV_SYMBOL_OK "\n在线设备"));
   lv_label_set_text(settingsSoundButtonLabel_, localized(LV_SYMBOL_AUDIO "\nSOUND", LV_SYMBOL_AUDIO "\n声音"));
   lv_label_set_text(settingsGpsButtonLabel_, LV_SYMBOL_GPS "\nGPS");
   lv_obj_set_style_text_font(settingsTitle_, titleFont, 0);
   for (auto *label : {settingsPowerButtonLabel_, settingsLanguageEntryLabel_, settingsWifiEntryLabel_, settingsSdButtonLabel_, settingsSoundButtonLabel_, settingsGpsButtonLabel_})
     lv_obj_set_style_text_font(label, font, 0);
+  lv_label_set_text(lv_obj_get_child(deviceHubPanel_, 1),
+                    localized("BLUETOOTH DEVICES", "蓝牙设备"));
+  const char *roleTitles[] = {
+      localized("POWER SOURCE", "功率来源"),
+      localized("3-AXIS POSTURE", "三轴姿态"),
+      localized("HEART RATE", "心率设备")};
+  lv_obj_t *rolePanels[] = {powerSourcePanel_, postureDevicePanel_, heartDevicePanel_};
+  for (size_t i = 0; i < 3; ++i)
+    lv_label_set_text(lv_obj_get_child(rolePanels[i], 1), roleTitles[i]);
+  lv_label_set_text(lv_obj_get_child(onlineDevicesPanel_, 1),
+                    localized("ONLINE DEVICES", "在线设备"));
   lv_label_set_text(languageTitle_, localized("LANGUAGE", "语言"));
   lv_label_set_text(languageHint_, localized("Choose interface language", "选择界面语言"));
   lv_obj_set_style_text_font(languageTitle_, titleFont, 0);
@@ -2027,14 +2298,10 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_set_style_text_font(soundVolumeLabel_, font, 0);
   refreshSoundVolume();
   lv_label_set_text(sdTitle_, localized("SD CARD", "SD 卡"));
-  lv_label_set_text(sdStopLabel_, localized(LV_SYMBOL_STOP " STOP", LV_SYMBOL_STOP " 停止"));
   lv_obj_set_style_text_font(sdTitle_, titleFont, 0);
-  for (auto *label : {sdStatusLabel_, sdStopLabel_, sdNowPlayingLabel_}) lv_obj_set_style_text_font(label, font, 0);
+  for (auto *label : {sdStatusLabel_, sdCurrentPathLabel_, sdUpLabel_})
+    lv_obj_set_style_text_font(label, font, 0);
   refreshSdList();
-  char playing[128];
-  if (audioPlaying_ && audioTitle_[0]) snprintf(playing, sizeof(playing), localized("Playing: %s", "播放中: %s"), audioTitle_);
-  else snprintf(playing, sizeof(playing), "%s", localized("Stopped", "已停止"));
-  lv_label_set_text(sdNowPlayingLabel_, playing);
   lv_obj_set_style_text_font(settingsWifiStatus_, font, 0);
   lv_obj_set_style_text_font(settingsLanguageButtonLabels_[0], &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_font(settingsLanguageButtonLabels_[1], &lv_font_noto_sans_sc_14, 0);
@@ -2057,7 +2324,8 @@ void DisplayLcd::refreshLanguage() {
 
   AppLog.println("[LANG] 11 panels begin");
   lv_obj_t *panels[] = {
-    powerSourcePanel_, bleDevicePanel_, bleConfirmPanel_,
+    powerSourcePanel_, deviceHubPanel_, heartDevicePanel_, postureDevicePanel_,
+    onlineDevicesPanel_, bleDevicePanel_, bleConfirmPanel_,
     bleLoadingPanel_, virtualPowerPanel_, settingsPanel_, soundPanel_, sdPanel_,
     gpsPanel_, languagePanel_, wifiPanel_, rideLogPanel_
   };
@@ -2068,6 +2336,11 @@ void DisplayLcd::refreshLanguage() {
                       localized(LV_SYMBOL_LEFT " BACK", LV_SYMBOL_LEFT " 返回"));
     lv_obj_set_style_text_font(backLabel, font, 0);
   }
+  updateOnlineDevices(onlineBleConnected_[0], onlineBleResponding_[0],
+                      onlineBleConnected_[1], onlineBleResponding_[1],
+                      onlineBleConnected_[2], onlineBleResponding_[2],
+                      onlineGpsPresent_, onlineGpsFixed_,
+                      onlineWindPresent_, onlineWindResponding_);
   AppLog.println("[LANG] 12 done");
 }
 
@@ -2148,9 +2421,10 @@ bool DisplayLcd::takePowerSourceRequest(int &mode) {
   return true;
 }
 
-bool DisplayLcd::takeBleScanRequest() {
+bool DisplayLcd::takeBleScanRequest(SavedConnections::Role *role) {
   if (!requestedBleScan_) return false;
   requestedBleScan_ = false;
+  if (role) *role = activeBleRole_;
   return true;
 }
 
@@ -2196,6 +2470,7 @@ void DisplayLcd::showBleLoading(const char *status) {
   lv_label_set_text(bleLoadingLabel_, message);
   lv_obj_clear_flag(bleLoadingSpinner_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_y(bleLoadingLabel_, 132);
+  lv_obj_add_flag(bleRolePanel(activeBleRole_), LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
@@ -2237,11 +2512,18 @@ void DisplayLcd::setBleDevices(const BlePowerDevice *devices, size_t count,
   bleDeviceTouch_.reset(millis());
   bleScanTouch_.reset(millis());
   bleScanCompleted_ = true;
-  bleDeviceCount_ = min(count, kBleDeviceCapacity);
+  bleDeviceCount_ = 0;
+  for (size_t i = 0; devices && i < count && bleDeviceCount_ < kBleDeviceCapacity; ++i) {
+    const BlePowerDevice &device = devices[i];
+    const bool matches = activeBleRole_ == SavedConnections::Role::Power
+        ? (device.cyclingPower || device.fitnessMachine || device.speedCadence)
+        : activeBleRole_ == SavedConnections::Role::Heart
+            ? device.heartRate : device.postureSensor;
+    if (matches) bleDevices_[bleDeviceCount_++] = device;
+  }
   lv_obj_scroll_to_y(bleDeviceList_, 0, LV_ANIM_OFF);
-  if (devices)
-    for (size_t i = 0; i < bleDeviceCount_; ++i) bleDevices_[i] = devices[i];
-  (void)status;
+  if (bleStatusLabel_ && status && status[0] && bleDeviceCount_ == 0)
+    lv_label_set_text(bleStatusLabel_, status);
   refreshLanguage();
   lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);

@@ -193,15 +193,10 @@
     sim.recording(true); sim.step(60);
     assert(snapshot().written === 60 && snapshot().buffered === 0, "CSV flushes a complete 60-sample batch");
     if (snapshot().operation) sim.step(2);
-    const bufferedBeforeAudio = snapshot().buffered;
-    sim.browse("/music");
-    $("sd-files").firstElementChild.click();
-    assert(snapshot().audio === "/music/demo.mp3" && !snapshot().bleConnected && snapshot().powerSrc === 0, "Audio playback suspends BLE and uses simulated SD file");
+    const bufferedBeforeDisconnect = snapshot().buffered;
+    sim.disconnect();
     sim.step(61);
-    assert(snapshot().buffered === bufferedBeforeAudio && snapshot().dropped === 0 && snapshot().skipped >= 61, "Missing BLE power skips invalid windows without fabricating zero samples");
-    $("sd-stop").click();
-    sim.step(1);
-    assert(snapshot().audio === null && snapshot().written === 60, "Stopping audio does not fabricate measurements before BLE reconnects");
+    assert(snapshot().buffered === bufferedBeforeDisconnect && snapshot().dropped === 0 && snapshot().skipped >= 61, "Missing BLE power skips invalid windows without fabricating zero samples");
     sim.connect();sim.step(1);
     sim.recording(false);
     sim.step(1);
@@ -221,7 +216,7 @@
     assert(!snapshot().downloading && downloads.length === 1, "Chunked CSV download completes and offers one file");
     sim.browse("/");
     $("sd-files").lastElementChild.click();
-    assert(snapshot().error === "Not an audio file", "SD browser does not play non-audio files");
+    assert(snapshot().error === "File preview unavailable.", "SD browser does not play media files");
     dismiss();
     change("sd-ready", false);
     sim.browse("/");

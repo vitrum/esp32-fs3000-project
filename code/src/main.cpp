@@ -82,12 +82,10 @@ static uint32_t lastBleFtmsNotification = 0;
 static uint32_t lastBlePostureNotification = 0;
 static uint32_t lastBleDiagnosticsMs = 0;
 static uint32_t lastBleDisconnectCount = 0;
-static uint32_t lastBlePostureAttemptMs = 0;
-static bool     postAudioBleCatchUpNeeded = false;
 static bool     powerConnected = false;
 static bool     postureConnected = false;
 static bool     manualPairingActive = false;   // 用户正在手动挑选/连接设备
-static bool     wirelessSuspendedForAudio = false;
+static SavedConnections::Role manualScanRole = SavedConnections::Role::Power;
 static int      powerMode = 0;      // 0=AUTO 1=BLE 3=VIRTUAL; 2 is reserved.
 static WindVector wv;            // 最近一次探针读数（供显示）
 
@@ -107,41 +105,6 @@ static bool takeBleOutcome(BleOutcome &out) {
 static void requestBleCancel() {
   bleManager.cancel();
 }
-
-#if AUDIO_ENABLE
-static bool suspendWirelessForAudio() {
-  if (wirelessSuspendedForAudio) return true;
-  if (bleManager.busy()) {
-    AppLog.println("[AUDIO] wait for BLE operation to finish before playback");
-    return false;
-  }
-  if (!bleManager.suspend()) {
-    AppLog.println("[AUDIO] could not release BLE stack for playback");
-    return false;
-  }
-  powerConnected = false;
-  postureConnected = false;
-  wirelessSuspendedForAudio = true;
-  AppLog.printf("[AUDIO] BLE stack suspended; internal heap free=%u largest=%u\n",
-                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
-  return true;
-}
-
-static void resumeWirelessAfterAudio() {
-  if (!audio.releasePlayback()) return;
-  if (!wirelessSuspendedForAudio) return;
-  if (!beginBleWorker()) {
-    AppLog.println("[BLE] worker could not be restarted after audio");
-    return;
-  }
-  wirelessSuspendedForAudio = false;
-  // 播放期间姿态重连被挂起，恢复后立刻补一次，不必再等 30s 周期。
-  lastBlePostureAttemptMs = millis();
-  postAudioBleCatchUpNeeded = true;
-  AppLog.println("[AUDIO] BLE stack resumed");
-}
-#endif  // AUDIO_ENABLE
 
 // Keep historical CSV source IDs: 0=none, 1=BLE, 2=reserved, 3=virtual.
 static int pmSrc() {
@@ -179,8 +142,8 @@ static void cancelStartupConnections(bool stopWifiAttempt = false) {
 
 static void changeUsbStorageMode(bool enabled) {
   if (enabled) {
-    if (!recorder.safeToRestartForUsb() || fitExport.busy() || audio.playing()) {
-      lcd.showUsbStorageError("Stop recording and finish SAVE FIT/audio before enabling USB.");
+    if (!recorder.safeToRestartForUsb() || fitExport.busy()) {
+      lcd.showUsbStorageError("Stop recording and finish SAVE FIT before enabling USB.");
       return;
     }
     if (logger.ok() && !logger.stop()) {
@@ -338,8 +301,6 @@ void loop() {
 
   // 音频解码/播放泵 + 状态回显
   audio.tick();
-  lcd.updateAudioStatus(audio.playing(), audio.currentTitle());
-
   // 保持接收任务运行，以便离线模块重新接入后自动恢复。
   if (gps.enabled()) {
     gps.tick();
@@ -359,9 +320,7 @@ void loop() {
   if (!recorder.busy() && logger.ok() && FIT_DEFAULT_UTC != 0)
     logger.useFallbackUtcReference(FIT_DEFAULT_UTC, now);
   if (lcd.takeFitSaveRequest()) {
-    if (audio.playing())
-      lcd.showFitResult("Stop audio before saving FIT.");
-    else recorder.requestSave(now);
+    recorder.requestSave(now);
   }
 
   // 本地"开始/停止记录"入口（日志页 RECORD/STOP 按钮）。
@@ -377,22 +336,6 @@ void loop() {
     }
     lcd.setRecording(recorder.recording(), recorder.waiting());
   }
-
-  // 播放音频时暂停提交新的 CSV 批次；已排队批次仍由后台任务完成。
-  // 音频整体禁用时，这段逻辑不参与，BLE 与日志互不影响。
-#if AUDIO_ENABLE
-  static bool audioWasPlaying = false;
-  const bool audioPlaying = audio.playing();
-  if (audioPlaying && !audioWasPlaying) {
-    logger.pause();
-    AppLog.println("[SD] audio playback started -> CSV logging paused");
-  } else if (!audioPlaying && audioWasPlaying) {
-    logger.resume();
-    AppLog.println("[SD] audio playback ended -> CSV logging resumed");
-  }
-  if (!audioPlaying && wirelessSuspendedForAudio) resumeWirelessAfterAudio();
-  audioWasPlaying = audioPlaying;
-#endif
 
   // 声音设置：应用音量并用该音量试听
   uint8_t newVolume = 0;
@@ -421,35 +364,6 @@ void loop() {
       snprintf(status, sizeof(status), "SD read error (errno=%d)", readError);
     lcd.setSdFiles(files, count, readError != 0 ? status : nullptr);
   }
-  char sdPlayPath[256] = {};
-  if (lcd.takeSdPlayRequest(sdPlayPath, sizeof(sdPlayPath))) {
-#if AUDIO_ENABLE
-    if (recorder.busy()) {
-      lcd.showFitResult("Wait for FIT export before playing audio.");
-    } else {
-      const bool wirelessReady = suspendWirelessForAudio();
-      if (wirelessReady && audio.playFile(sdPlayPath)) {
-        AppLog.printf("[SD] play mp3: %s\n", sdPlayPath);
-      } else {
-        AppLog.printf("[SD] could not play: %s\n", sdPlayPath);
-        resumeWirelessAfterAudio();
-      }
-    }
-#else
-    // 音频已禁用：绝不要为此 suspending BLE 协议栈（曾导致扫描时提示
-    // "BLE is paused while audio is playing" 的误报）。直接忽略播放请求。
-    (void)sdPlayPath;
-    AppLog.println("[SD] audio disabled; ignoring play request");
-    lcd.showFitResult("Audio playback is disabled.");
-#endif
-  }
-  if (lcd.takeSdStopRequest()) {
-    if (audio.stop())
-      AppLog.println("[SD] playback stopped");
-    else
-      AppLog.println("[SD] playback could not stop; SD card is busy");
-  }
-
 #if WIFI_WEB_ENABLE
   bool wifiEnabled = false;
   if (lcd.takeWifiEnableRequest(wifiEnabled)) {
@@ -546,6 +460,20 @@ void loop() {
   lcd.update(wv, windValid, pmPower(), pmCadence(), powerMeter.speed(),
          posture.pitchDeg(), env.rhoKgM3(), pmSrc(), recorder.recording());
   lcd.updateHeartRate(heartRate.bpm(), heartRate.valid(now));
+  const bool gpsPresent = gps.enabled() &&
+      (!gps.presenceChecked() || gps.modulePresent());
+  const bool windResponding = lastWindValidMs != 0 &&
+      now - lastWindValidMs <= 2000;
+  lcd.updateOnlineDevices(powerMeter.connected(), powerMeter.measurementValid(now),
+                          heartRate.connected(), heartRate.valid(now),
+                          posture.connected(), posture.responsive(now),
+                          gpsPresent, gps.hasFix(),
+                          windSensor.present(), windResponding);
+  lcd.updateHeartDeviceStatus(heartRate.connected(), heartRate.valid(now),
+                              heartRate.bpm());
+  lcd.updatePostureDeviceStatus(posture.connected(), posture.responsive(now),
+                                posture.rollDeg(), posture.pitchDeg(),
+                                posture.yawDeg());
 #if WIFI_WEB_ENABLE
     wifiWeb.broadcastTelemetry(now, power, pmCadence(), vg, vAir, windValid,
                  yaw, post, rho, src, recorder.recording(), lcd.estimatedCda(),
@@ -657,15 +585,8 @@ void loop() {
   // ------------------------------------------------------------------------
   // BLE：用户请求 → 命令队列 → 工作线程执行 → 结果队列 → 界面更新
   // ------------------------------------------------------------------------
-  // 音频播放期间 BLE 协议栈会被释放，此时任何 BLE 请求都直接拒绝，
-  // 避免在未初始化的 NimBLE 上调用扫描/连接。
-  // 注意：音频整体禁用（AUDIO_ENABLE=0）时 wirelessSuspendedForAudio 永远为
-  // false，BLE 不受任何音频状态影响，这里再显式兜一层，杜绝误报。
-#if AUDIO_ENABLE
-  const bool bleAvailable = !wirelessSuspendedForAudio && bleManager.available();
-#else
+  // BLE commands are serialized by the worker and rejected when the stack is unavailable.
   const bool bleAvailable = bleManager.available();
-#endif
 
   if (lcd.takeBleCancelRequest()) {
     scanFavoriteConnections.cancel();
@@ -681,11 +602,11 @@ void loop() {
     }
   }
 
-  if (lcd.takeBleScanRequest()) {
+  if (lcd.takeBleScanRequest(&manualScanRole)) {
     scanFavoriteConnections.cancel();
     cancelStartupConnections(true);
     manualPairingActive = true;
-    powerMode = 1;
+    if (manualScanRole == SavedConnections::Role::Power) powerMode = 1;
     if (!bleAvailable) {
       manualPairingActive = false;
       lcd.showBleConnectFailure(
@@ -707,7 +628,7 @@ void loop() {
   if (lcd.takeBleConnectRequest(selectedAddress, sizeof(selectedAddress),
                                 &selectedAddressType, &selectedPosture, &selectedHeart)) {
     scanFavoriteConnections.cancel();
-                  cancelStartupConnections(true);
+    cancelStartupConnections(true);
     AppLog.printf("[BLE] user confirmed connection to %s (addressType=%u)\n",
                   selectedAddress, (unsigned)selectedAddressType);
     if (!bleAvailable) {
@@ -727,8 +648,17 @@ void loop() {
 
   BleOutcome outcome;
   if (takeBleOutcome(outcome)) {
-    if (outcome.kind == BleOpKind::Connect && outcome.success && !outcome.cancelled)
-      lcd.setConnectedBle(outcome.address, outcome.addressType, powerMeter.hasPowerService());
+    if (outcome.success && !outcome.cancelled) {
+      if (outcome.kind == BleOpKind::Connect)
+        lcd.setConnectedBle(outcome.address, outcome.addressType,
+                            powerMeter.connected(), SavedConnections::Role::Power);
+      else if (outcome.kind == BleOpKind::Heart)
+        lcd.setConnectedBle(outcome.address, outcome.addressType,
+                            heartRate.connected(), SavedConnections::Role::Heart);
+      else if (outcome.kind == BleOpKind::Posture)
+        lcd.setConnectedBle(outcome.address, outcome.addressType,
+                            posture.connected(), SavedConnections::Role::Posture);
+    }
     if (scanFavoriteConnections.waiting()) scanFavoriteConnections.complete();
     if (startupConnections.waiting()) {
       startupConnections.complete();
@@ -764,7 +694,10 @@ void loop() {
         snprintf(status, sizeof(status), "%u device(s) found",
                  (unsigned)outcome.deviceCount);
         lcd.setBleDevices(outcome.devices, outcome.deviceCount, status);
-        scanFavoriteConnections.beginScan(outcome.devices, outcome.deviceCount);
+        if (manualScanRole == SavedConnections::Role::Power)
+          scanFavoriteConnections.beginScan(outcome.devices, outcome.deviceCount);
+        else
+          scanFavoriteConnections.cancel();
       } else {
         powerConnected = powerMeter.connected();
         manualPairingActive = false;
