@@ -16,16 +16,19 @@ size_t postureStreamLength = 0;
 }
 
 // ---- WitMotion WT9011DCL BLE 协议 ----
-static const NimBLEUUID kSvcWitBle5("0xFFE5");
-static const NimBLEUUID kChrDataBle5("0xFFE4");
-static const NimBLEUUID kSvcWitLegacy("0xFFE0");
-static const NimBLEUUID kChrDataLegacy("0xFFE1");
+static const NimBLEUUID kSvcWitBle5("0000ffe5-0000-1000-8000-00805f9a34fb");
+static const NimBLEUUID kChrDataBle5("0000ffe4-0000-1000-8000-00805f9a34fb");
+static const NimBLEUUID kSvcWitBle5Standard(uint16_t(0xFFE5));
+static const NimBLEUUID kChrDataBle5Standard(uint16_t(0xFFE4));
+static const NimBLEUUID kSvcWitLegacy(uint16_t(0xFFE0));
+static const NimBLEUUID kChrDataLegacy(uint16_t(0xFFE1));
 
 std::atomic<bool> BlePosture::s_connected{false};
 std::atomic<uint32_t> BlePosture::s_lastMeasurementMs{0};
 float  BlePosture::s_pitch = 0;
 float  BlePosture::s_roll = 0;
 float  BlePosture::s_yaw = 0;
+ImuSample BlePosture::s_imuSample;
 uint32_t BlePosture::s_notificationCount = 0;
 NimBLEClient *BlePosture::s_client = nullptr;
 char   BlePosture::s_lastError[160] = {};
@@ -47,7 +50,7 @@ static BlePostureClientCallbacks postureCallbacks;
 void BlePosture::witNotify(NimBLERemoteCharacteristic *chr, uint8_t *d, size_t n,
                            bool isNotify) {
   (void)chr; (void)isNotify;
-  postureInbox.push(0, d, n);
+  postureInbox.push(0, d, n, millis());
 }
 
 uint32_t BlePosture::droppedPackets() const { return postureInbox.dropped(); }
@@ -61,15 +64,17 @@ void BlePosture::processData() {
     s_yaw = 0;
     s_lastMeasurementMs = 0;
     s_notificationCount = 0;
+    s_imuSample = ImuSample{};
     postureStreamLength = 0;
   }
   BleInbox<8>::Packet packet;
   for (size_t processed = 0; processed < 8 && postureInbox.pop(packet); ++processed) {
-    if (packet.generation == postureInbox.generation()) parsePacket(packet.data, packet.length);
+    if (packet.generation == postureInbox.generation())
+      parsePacket(packet.data, packet.length, packet.receivedMs);
   }
 }
 
-void BlePosture::parsePacket(uint8_t *d, size_t n) {
+void BlePosture::parsePacket(uint8_t *d, size_t n, uint32_t receivedMs) {
   AppLog.packet("POSTURE", d, n);
   for (size_t index = 0; index < n; ++index) {
     if (postureStreamLength == sizeof(postureStream)) {
@@ -110,20 +115,27 @@ void BlePosture::parsePacket(uint8_t *d, size_t n) {
         continue;
       }
 
-      parseAngleFrame(postureStream, frameLength);
+      parseAngleFrame(postureStream, frameLength, receivedMs);
       postureStreamLength -= frameLength;
       memmove(postureStream, postureStream + frameLength, postureStreamLength);
     }
   }
 }
 
-void BlePosture::parseAngleFrame(const uint8_t *data, size_t length) {
+void BlePosture::parseAngleFrame(const uint8_t *data, size_t length, uint32_t receivedMs) {
   const auto readI16 = [data](size_t index) {
     return static_cast<int16_t>(
         static_cast<uint16_t>(data[index]) |
         (static_cast<uint16_t>(data[index + 1]) << 8));
   };
   if (length == 20 && data[1] == 0x61) {
+    for (size_t axis = 0; axis < 3; ++axis) {
+      s_imuSample.accelerationG[axis] = float(readI16(2 + axis * 2)) * (16.0f / 32768.0f);
+      s_imuSample.angularVelocityDps[axis] = float(readI16(8 + axis * 2)) * (2000.0f / 32768.0f);
+    }
+    s_imuSample.receivedMs = receivedMs;
+    ++s_imuSample.sequence;
+    s_imuSample.valid = true;
     // WitMotion BLE 5.0 SDK: signed little-endian angle values, ±180° / 32768.
     s_roll = static_cast<float>(readI16(14)) * (180.0f / 32768.0f);
     s_pitch = static_cast<float>(readI16(16)) * (180.0f / 32768.0f);
@@ -135,8 +147,11 @@ void BlePosture::parseAngleFrame(const uint8_t *data, size_t length) {
   } else {
     return;
   }
-  s_lastMeasurementMs = millis();
+  s_lastMeasurementMs = receivedMs;
   s_notificationCount++;
+  if (s_notificationCount == 1)
+    AppLog.printf("[BLE-POSTURE] first angles roll=%.2f pitch=%.2f yaw=%.2f\n",
+                  s_roll, s_pitch, s_yaw);
 }
 
 void BlePosture::begin(const char *deviceName) {
@@ -200,6 +215,7 @@ bool BlePosture::tryConnect(uint32_t scanMs, const BleCancellation *cancelFlag) 
     const char *prefix = BLE_POSTURE_NAME_PREFIX;
     const bool nameHit = candidateName.find(prefix) != std::string::npos;
     if (!ad->isAdvertisingService(kSvcWitBle5) &&
+      !ad->isAdvertisingService(kSvcWitBle5Standard) &&
         !ad->isAdvertisingService(kSvcWitLegacy) && !nameHit) continue;
 
     snprintf(address, sizeof(address), "%s",
@@ -257,8 +273,21 @@ bool BlePosture::connectDevice(const char *address, uint8_t addressType,
     return false;
   }
 
+  AppLog.printf("[BLE-POSTURE] link connected %s type=%u; discovering GATT\n",
+                address, unsigned(addressType));
+  for (auto *service : cli->getServices(true)) {
+    AppLog.printf("[BLE-POSTURE] service %s\n", service->getUUID().toString().c_str());
+    for (auto *characteristic : service->getCharacteristics(true))
+      AppLog.printf("[BLE-POSTURE] characteristic %s notify=%u indicate=%u\n",
+                    characteristic->getUUID().toString().c_str(),
+                    unsigned(characteristic->canNotify()), unsigned(characteristic->canIndicate()));
+  }
   NimBLERemoteService *svc = cli->getService(kSvcWitBle5);
   const NimBLEUUID *characteristicUuid = &kChrDataBle5;
+  if (!svc) {
+    svc = cli->getService(kSvcWitBle5Standard);
+    characteristicUuid = &kChrDataBle5Standard;
+  }
   if (!svc) {
     svc = cli->getService(kSvcWitLegacy);
     characteristicUuid = &kChrDataLegacy;

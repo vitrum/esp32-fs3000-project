@@ -11,11 +11,12 @@ public:
   struct Packet {
     uint8_t kind = 0;
     uint32_t generation = 0;
+    uint32_t receivedMs = 0;
     size_t length = 0;
     uint8_t data[MaxBytes] = {};
   };
 
-  bool push(uint8_t kind, const uint8_t *data, size_t length) {
+  bool push(uint8_t kind, const uint8_t *data, size_t length, uint32_t receivedMs = 0) {
     if (!data || !length || length > MaxBytes) {
       dropped_.fetch_add(1);
       return false;
@@ -29,6 +30,7 @@ public:
     auto &packet = packets_[(head_ + size_) % Slots];
     packet.kind = kind;
     packet.generation = generation_.load();
+    packet.receivedMs = receivedMs;
     packet.length = length;
     memcpy(packet.data, data, length);
     ++size_;

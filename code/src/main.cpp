@@ -35,6 +35,8 @@
 #include "audio.h"
 #include "gps_time.h"
 #include "usb_sd_storage.h"
+#include "board_imu.h"
+#include "imu_comparison_logger.h"
 #if WIFI_WEB_ENABLE
 #include "wifi_web.h"
 #endif
@@ -56,6 +58,13 @@ RideRecorder recorder(logger, fitExport, recordingJournal);
 DisplayLcd   lcd;
 PowerKey     powerKey;
 GpsTime      gps;
+BoardImu boardImu;
+ImuComparison imuComparison;
+ImuComparisonLogger imuLogger;
+RiderPosture riderPosture;
+static RiderPosture::Estimate riderPostureEstimate;
+static uint32_t lastPostureEstimateMs = 0;
+static uint32_t lastImuRecordMs = 0;
 
 // ---- 1s 窗口统计 ----
 struct Window {
@@ -124,6 +133,8 @@ static float pmCadence() {
 static void armRecording() {
   if (recorder.recording() || recorder.waiting()) return;
   if (!recorder.requestStart()) return;
+  imuComparison = ImuComparison{};
+  if (!imuLogger.start(esp_random())) AppLog.println("[IMU] could not start comparison recording");
   win = Window();
   windWindowSamples = 0;
   lastLogMs = lastSampleMs = millis();
@@ -160,6 +171,11 @@ static void changeUsbStorageMode(bool enabled) {
     if (hadMedium) unlockSdCard();
   }
   if (!lcd.saveDashboardSettings()) return;
+  imuLogger.requestStop();
+  if (imuLogger.busy()) {
+    lcd.showUsbStorageError("IMU recording is finishing. Retry USB mode.");
+    return;
+  }
   if (!UsbSdSetting::save(enabled)) {
     lcd.showUsbStorageError("Could not save USB mode. Retry.");
     return;
@@ -213,7 +229,14 @@ void setup() {
     AppLog.println("[SD] Could not create SD card mutex; SD access is unavailable");
   logger.begin();                    // TF 卡（可选，失败不阻塞）
   if (!recorder.begin()) AppLog.println("[REC] Flash cache unavailable; recording disabled");
+  {
+    SavedConnections saved;
+    if (!saved.seedDevelopmentFavorite())
+      AppLog.println("[BLE] WT901BLE67 development favorite unavailable; existing favorites preserved");
+  }
   lcd.begin();                       // 屏幕
+  AppLog.printf("[IMU] QMI8658 %s addr=0x6B bus=GPIO11/10\n", boardImu.begin(Wire) ? "ready" : "unavailable");
+  if (!imuLogger.begin()) AppLog.println("[IMU] comparison worker unavailable");
 
   // 音频 + 保存的音量设置
   audio.begin();
@@ -267,6 +290,7 @@ void loop() {
   if (!shutdownPending) powerKey.tick();
   if (powerKey.takeShutdownRequest() && !shutdownPending) {
     shutdownPending = true;
+    imuLogger.requestStop();
     recorder.requestShutdown(now);
   }
   recorder.poll(now);
@@ -278,6 +302,11 @@ void loop() {
     if (!recorder.waiting()) lcd.showFitResult(recorderMessage);
   }
   if (recorder.readyToPowerOff()) {
+    if (imuLogger.busy()) {
+      lcd.tick();
+      delay(1);
+      return;
+    }
     if (!lcd.saveDashboardSettings()) {
       lcd.tick();
       delay(1);
@@ -332,6 +361,7 @@ void loop() {
     } else if (localStartRecording) {
       armRecording();
     } else {
+      imuLogger.requestStop();
       recorder.requestStop(now);
     }
     lcd.setRecording(recorder.recording(), recorder.waiting());
@@ -391,6 +421,7 @@ void loop() {
     } else if (startRecording) {
       armRecording();
     } else {
+      imuLogger.requestStop();
       recorder.requestStop(now);
     }
   }
@@ -403,6 +434,31 @@ void loop() {
     AppLog.printf("[WEB] power source -> %d\n", powerMode);
   }
 #endif
+
+  boardImu.poll(millis());
+  const uint32_t postureNow = millis();
+  riderPosture.setPlacement(lcd.posturePlacement());
+  bool calibrateLean = false;
+  if (lcd.takePostureCalibrationRequest(calibrateLean)) {
+    const bool calibrated = riderPosture.calibrate(calibrateLean, postureNow,
+        boardImu.sample(postureNow), posture.imuSample(postureNow));
+    lcd.showPostureCalibrationResult(calibrated);
+    AppLog.printf("[POSTURE] calibration=%s success=%u wear=%u\n",
+                  calibrateLean ? "lean" : "upright", unsigned(calibrated), unsigned(lcd.posturePlacement()));
+  }
+  if (uint32_t(postureNow - lastPostureEstimateMs) >= 100) {
+    lastPostureEstimateMs = postureNow;
+    riderPostureEstimate = riderPosture.update(postureNow,
+        boardImu.sample(postureNow), posture.imuSample(postureNow));
+  }
+  if (!recorder.waiting() && !recorder.recording()) imuLogger.requestStop();
+  if (imuLogger.accepting() && uint32_t(millis() - lastImuRecordMs) >= 100) {
+    lastImuRecordMs = millis();
+    const auto record = imuComparison.capture(lastImuRecordMs,
+        boardImu.sample(lastImuRecordMs), posture.imuSample(lastImuRecordMs),
+        posture.rollDeg(), posture.pitchDeg(), posture.yawDeg());
+    imuLogger.log(record);
+  }
 
   // 1) 探针采样（8Hz，受 125ms 响应限制）
   if (now - lastSampleMs >= PROBE_SAMPLE_MS) {
@@ -464,16 +520,48 @@ void loop() {
       (!gps.presenceChecked() || gps.modulePresent());
   const bool windResponding = lastWindValidMs != 0 &&
       now - lastWindValidMs <= 2000;
+  const uint32_t sensorUiMs = millis();
+  const ImuSample boardUi = boardImu.sample(sensorUiMs);
+  const ImuSample wearableUi = posture.imuSample(sensorUiMs);
   lcd.updateOnlineDevices(powerMeter.connected(), powerMeter.measurementValid(now),
                           heartRate.connected(), heartRate.valid(now),
-                          posture.connected(), posture.responsive(now),
+                          posture.connected(), wearableUi.valid,
                           gpsPresent, gps.hasFix(),
                           windSensor.present(), windResponding);
   lcd.updateHeartDeviceStatus(heartRate.connected(), heartRate.valid(now),
                               heartRate.bpm());
-  lcd.updatePostureDeviceStatus(posture.connected(), posture.responsive(now),
+  lcd.updatePostureDeviceStatus(posture.connected(), wearableUi.valid,
                                 posture.rollDeg(), posture.pitchDeg(),
                                 posture.yawDeg());
+  char recentData[128];
+  if (powerMeter.measurementValid(sensorUiMs)) {
+    snprintf(recentData, sizeof(recentData), "%.0f W  %.0f rpm\n%.1f km/h",
+             powerMeter.power(), powerMeter.cadence(), powerMeter.speed() * 3.6f);
+    lcd.updateRecentSensor(0, recentData, powerMeter.measurementMs());
+  }
+  if (heartRate.valid(sensorUiMs)) {
+    snprintf(recentData, sizeof(recentData), "%u bpm", unsigned(heartRate.bpm()));
+    lcd.updateRecentSensor(1, recentData, heartRate.receivedMs());
+  }
+  for (unsigned index = 0; index < 2; ++index) {
+    const ImuSample &sample = index ? boardUi : wearableUi;
+    if (!sample.valid) continue;
+    snprintf(recentData, sizeof(recentData), "A %+.2f %+.2f %+.2f g\nG %+.0f %+.0f %+.0f d/s",
+             sample.accelerationG[0], sample.accelerationG[1], sample.accelerationG[2],
+             sample.angularVelocityDps[0], sample.angularVelocityDps[1], sample.angularVelocityDps[2]);
+    lcd.updateRecentSensor(index ? 5 : 2, recentData, sample.receivedMs);
+  }
+  if (gps.hasFix()) {
+    snprintf(recentData, sizeof(recentData), "%.5f %.5f\n%.1f km/h SAT %u",
+             gps.latitude(), gps.longitude(), gps.speedMps() * 3.6f, unsigned(gps.satellites()));
+    lcd.updateRecentSensor(3, recentData, sensorUiMs - gps.fixAgeMs());
+  }
+  if (windResponding) {
+    snprintf(recentData, sizeof(recentData), "%.2f m/s\nRAW %u", wv.vAir, unsigned(windSensor.lastRaw()));
+    lcd.updateRecentSensor(4, recentData, lastWindValidMs);
+  }
+  lcd.refreshRecentSensors(sensorUiMs, boardImu.ready(), boardUi.valid);
+  lcd.updatePostureEstimate(riderPostureEstimate);
 #if WIFI_WEB_ENABLE
     wifiWeb.broadcastTelemetry(now, power, pmCadence(), vg, vAir, windValid,
                  yaw, post, rho, src, recorder.recording(), lcd.estimatedCda(),

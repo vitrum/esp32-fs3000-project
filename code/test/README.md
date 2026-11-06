@@ -139,6 +139,82 @@ Sources: [Waveshare board schematic](https://files.waveshare.com/wiki/ESP32-S3-T
 and the installed Arduino-ESP32 2.0.14 USBMSC/TinyUSB implementation (the pinned
 version's actual callbacks take precedence over newer API examples).
 
+### Dual IMU Recording And Comparison
+
+#### Online Devices And Wear Location
+
+ONLINE DEVICES has six scrollable entries: power, heart rate, wearable IMU,
+GPS, wind and onboard QMI8658. Names/status and latest readings are separate;
+the existing 1 Hz main-loop UI window refreshes data and receipt age in ms.
+Only valid input replaces the cached reading. Offline/stale status remains
+visible alongside the retained last sample; no sample displays `--`.
+
+The wearable 6-axis page offers Upper arm, Back HR strap and Helmet mount.
+Selection persists as `aero-ui/imu-wear`; a failed save restores the previous
+selection. Changing location clears calibration. Calibration is intentionally
+boot-local because the sensor mounting/orientation can change between rides.
+Use the upright reference then a forward-lean reference with the board fixed.
+Fresh, near-1 g, low-angular-rate samples are required; the forward reference
+must differ by at least 8 degrees. Data loss, dynamic acceleration, excessive
+angular speed or board roll suppress classification. A result must be stable
+for 2 seconds. Board pitch compensation assumes its native X axis follows
+the bicycle forward direction; the code does not perform mounting calibration
+for arbitrary head-unit rotations.
+
+RiderPosture is an experimental geometric heuristic, not a trained or validated
+posture classifier. Back placement is the closer torso proxy; arm/helmet
+results explicitly say indirect. Arm movement, head nods and mounting slip can
+still resemble torso lean. Location-dependent thresholds are provisional:
+upright <0.35 of calibrated forward angle; low position >=1.35 for back,
+>=1.65 for arm and >=1.8 for helmet. These are engineering defaults, not
+measured accuracy or physiological claims. It does not infer a precise torso
+angle or modify wind, power, CdA, ride CSV or FIT from its classification.
+
+`imu_comparison` covers calibration, all wear locations, compensation, motion,
+freshness/skew and cached-reading wrap. `ui_sensors` runs the real LVGL sensor
+components, scroll/controls/text bounds and full current-UI glyph coverage
+without suppressing the separate `ui_language` dashboard regression. Native
+render captures are under `test/results/ui-language/online-sensors-*.ppm`
+and `posture-placement*.ppm`. Physical NVS cycles, touch and riding accuracy
+remain board checks. The rest of the dual-IMU recording contract follows.
+
+START/STOP also controls an independent 10 Hz comparison CSV under
+`/IMU/I<session>-<suffix>.csv`. It starts while riding recording waits for
+power/wind, and does not change the ride CSV, Flash journal or FIT layout.
+QMI8658 (onboard I2C GPIO11/10, address 0x6B) uses pinned SensorLib 0.2.6,
+16 g accelerometer range and 1024 deg/s gyro range. WT901 BLE5 has a 16 g,
+2000 deg/s decoding scale. Raw values retain each sensor's native axes;
+acceleration includes gravity. Saturated motion beyond either range cannot
+be treated as accurate agreement or disagreement.
+
+CSV contains ESP32 row/sample/notification-receipt times, per-source sequence
+numbers, validity, pair validity, signed board-minus-WT time skew, both sets
+of acceleration (g) and angular velocity (deg/s), WT angles, vector norms
+and WT-minus-board norm differences. Sources expire after 250 ms. Differences
+are emitted only for new samples from both sources within 100 ms; missing or
+unpaired values use `nan`, not invented zeros. BLE notification receipt time
+is retained across delayed main-loop processing. These are host observations,
+not synchronized sensor clocks or a measurement of absolute BLE latency.
+
+A bounded 32-record queue keeps SD writes off the sampling loop. STOP drains
+and fsyncs; normal shutdown/USB restart waits for completion. Write errors
+stop this log rather than replaying partially written batches; queue loss
+and failures are reported in `[IMU]` logs. IMU CSV has no Flash recovery:
+abrupt power loss may lose buffered data. An unavailable card prevents this
+file from starting; reconnecting SD requires a new START.
+
+Run `sh test/run.sh host` or select `-k 'imu_comparison or ble_runtime'`.
+Artifacts are retained in `test/results/imu/comparison-*/`, including actual
+CSV, invalid-file fixtures and independently checked `validation.json`.
+Analyze a device file with `python tools/imu_compare.py <comparison.csv>`;
+the JSON reports valid-pair counts, timing and norm bias/MAE/RMSE. Mount both
+sensors rigidly together for agreement tests. A body sensor versus a bike
+sensor measures different motion; native-axis subtraction is not calibration.
+Physical QMI8658 wiring/scale, touch coexistence and paired RF/SD operation
+still require board validation.
+The official schematic maps IMU_SDA/IMU_SCL to GPIO11/GPIO10; this shares
+the existing `Wire` bus with FS3000/BME280. Touch remains on `Wire1` GPIO1/3.
+
 ### BLE Favorites And Discovery
 
 The POWER SOURCE panel exposes a star toggle for the current, successfully
@@ -147,6 +223,30 @@ Up to four explicit favorites persist in the separate CRC-checked
 `aero-links/favorites` NVS key; existing `profiles` Wi-Fi/BLE history is unchanged.
 Full storage or a write failure preserves previous favorites and reports failure.
 Opening POWER SOURCE again allows the connected device to be unstarred.
+
+Development firmware seeds `WT901BLE67` (`E7:E0:93:0D:D0:8D`, Posture role)
+once before display/startup initialization, using scanned random-static address
+type 1. The earlier phone identifier `EEEB712B2B95` was not its observed BLE
+address. Existing same-address Posture favorites retain their
+stored type and name. The `aero-links/dev-wt901` marker prevents re-adding a
+removed preset. Full favorites, corrupt storage or failed writes are not
+overwritten; initialization retries on a later boot if it has not completed.
+Marker version 2 migrates only the exact old development favorite atomically,
+preserving other favorites and a previously removed preset. This WT901BLE67
+uses vendor UUIDs `0000ffe5-0000-1000-8000-00805f9a34fb` (service) and
+`0000ffe4-0000-1000-8000-00805f9a34fb` (notify), not the standard Bluetooth
+base ending in `5f9b34fb`. Full vendor UUIDs are tried first; standard BLE5
+and legacy fallbacks use numeric 16-bit constructors because NimBLE 2.5.1
+rejects six-character strings such as `0xFFE5`. Regression tests cover
+unnamed vendor-service discovery, standard/legacy fallback and unsupported
+service rejection. Connection logs enumerate real GATT services/characteristics
+and report the first decoded angle frame. Physical validation on 2026-11-06
+confirmed connection, notifications and changing decoded pitch; capture:
+`test/results/wt901-vendor-hardware.log`. This does not certify calibration
+or long-term multi-device RF stability.
+`ble_runtime` covers seeding, idempotency, removal, write failure/retry,
+existing-type preservation and full-capacity preservation. Physical connection
+and actual NVS persistence remain hardware checks.
 
 Startup tries favorites before connection history, without duplicate attempts.
 Manual discovery returns up to 16 devices in a vertically scrollable region

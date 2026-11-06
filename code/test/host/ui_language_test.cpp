@@ -2,6 +2,7 @@
 #include "battery_gauge.h"
 #include "dashboard_layout.h"
 #include "dashboard_view.h"
+#include "sensor_views.h"
 #include <cassert>
 #include <cstdlib>
 #include <fstream>
@@ -72,10 +73,26 @@ static void checkView(const AeroZoneView &view) {
   }
 }
 
+static void checkDeviceNavigation() {
+  std::ifstream input(std::string(UI_SOURCE_ROOT) + "/src/display_lcd.cpp");
+  assert(input.good());
+  const std::string source{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+  assert(source.find("buildPanelHeader(deviceHubPanel_, \"BLUETOOTH DEVICES\", onCancelSelection)") != std::string::npos);
+  assert(source.find("buildPanelHeader(powerSourcePanel_, \"POWER SOURCE\", onDeviceRoleBack)") != std::string::npos);
+  const size_t callbackStart = source.find("void DisplayLcd::onCancelSelection(");
+  assert(callbackStart != std::string::npos);
+  const size_t callbackEnd = source.find("\n}\n", callbackStart);
+  assert(callbackEnd != std::string::npos);
+  const std::string callback = source.substr(callbackStart, callbackEnd - callbackStart);
+  assert(callback.find("hideDevicePanels()") != std::string::npos);
+  assert(callback.find("lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN)") != std::string::npos);
+  assert(callback.find("lv_obj_clear_flag(g_display->deviceHubPanel_") == std::string::npos);
+}
+
 static void checkGlyphs() {
   std::set<uint32_t> required;
   const std::regex literal(R"re("(?:\\.|[^"\\])*")re");
-  for (const char *name : {"/src/display_lcd.cpp", "/src/aero_zone_view.h", "/src/dashboard_view.h"}) {
+  for (const char *name : {"/src/display_lcd.cpp", "/src/aero_zone_view.h", "/src/dashboard_view.h", "/src/sensor_views.h"}) {
     std::ifstream input(std::string(UI_SOURCE_ROOT) + name);
     assert(input.good());
     const std::string source{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
@@ -296,7 +313,90 @@ static void checkBatteryGauge(lv_disp_t *display) {
   lv_obj_clean(screen);
 }
 
-int main() {
+static void saveSensorFrame(const char *name) {
+  lv_refr_now(lv_disp_get_default());
+  const char *directory = std::getenv("UI_ARTIFACT_DIR");
+  if (!directory) return;
+  std::ofstream output(std::string(directory) + "/" + name, std::ios::binary);
+  output << "P6\n240 320\n255\n";
+  unsigned nonblank = 0;
+  for (const auto pixel : framebuffer) {
+    const uint16_t color = pixel.full;
+    const char rgb[] = {char(((color >> 11) & 31) * 255 / 31),
+                        char(((color >> 5) & 63) * 255 / 63), char((color & 31) * 255 / 31)};
+    output.write(rgb, sizeof(rgb));
+    if (color != framebuffer[0].full) ++nonblank;
+  }
+  assert(output.good() && nonblank > 500);
+}
+
+static void checkSensorViews(lv_obj_t *screen) {
+  lv_obj_t *panel = lv_obj_create(screen);
+  lv_obj_set_size(panel, 240, 320);
+  lv_obj_set_style_pad_all(panel, 0, 0);
+  lv_obj_set_style_border_width(panel, 0, 0);
+  OnlineDevicesView online;
+  online.create(panel);
+  const char *names[] = {"功率计", "心率设备", "穿戴六轴 / WT901BLE67", "GPS", "风速计", "板载六轴 / QMI8658"};
+  for (unsigned index = 0; index < OnlineDevicesView::kCount; ++index) {
+    online.status(index, names[index], "已连接 / 响应正常");
+    online.data(index, "A +0.01 -0.02 +1.00 g\nG +0.1 -0.2 +0.3 d/s\n42 ms");
+  }
+  lv_obj_update_layout(panel);
+  assert(lv_obj_get_scroll_bottom(online.list()) > 0);
+  assert(lv_obj_get_y(online.reading(5)) > lv_obj_get_y(online.reading(4)));
+  saveSensorFrame("online-sensors-top.ppm");
+  lv_obj_scroll_to_y(online.list(), LV_COORD_MAX, LV_ANIM_OFF);
+  lv_obj_update_layout(panel);
+  saveSensorFrame("online-sensors-bottom.ppm");
+  lv_obj_del(panel);
+  panel = lv_obj_create(screen);
+  lv_obj_set_size(panel, 240, 320);
+  lv_obj_set_style_pad_all(panel, 0, 0);
+  lv_obj_set_style_border_width(panel, 0, 0);
+  PostureSetupView setup;
+  setup.create(panel, [](lv_event_t *) {}, [](lv_event_t *) {});
+  for (bool chinese : {false, true}) {
+    setup.language(chinese);
+    for (auto placement : {RiderPosture::Placement::UpperArm, RiderPosture::Placement::BackStrap, RiderPosture::Placement::Helmet}) {
+      setup.select(placement);
+      assert(setup.placement() == placement);
+      RiderPosture::Estimate estimate;
+      estimate.state = RiderPosture::State::Forward;
+      estimate.relativeDegrees = 42;
+      setup.update(estimate);
+      lv_obj_update_layout(panel);
+      lv_area_t dropdown, button, result;
+      lv_obj_get_coords(setup.dropdown(), &dropdown);
+      lv_obj_get_coords(setup.button(0), &button);
+      lv_obj_get_coords(setup.result(), &result);
+      assert(!overlaps(dropdown, button) && !overlaps(dropdown, result));
+      lv_point_t textSize;
+      lv_txt_get_size(&textSize, lv_label_get_text(setup.result()), &lv_font_noto_sans_sc_14,
+                      0, 0, 216, LV_TEXT_FLAG_NONE);
+      assert(textSize.x <= 216 && textSize.y <= lv_obj_get_height(setup.result()));
+    }
+  }
+  setup.language(true);
+  setup.select(RiderPosture::Placement::BackStrap);
+  RiderPosture::Estimate waiting;
+  waiting.state = RiderPosture::State::NoData;
+  setup.update(waiting);
+  assert(lv_obj_has_state(setup.button(0), LV_STATE_DISABLED));
+  assert(lv_obj_has_state(setup.button(1), LV_STATE_DISABLED));
+  waiting.state = RiderPosture::State::NeedUpright;
+  setup.update(waiting);
+  assert(!lv_obj_has_state(setup.button(0), LV_STATE_DISABLED));
+  assert(lv_obj_has_state(setup.button(1), LV_STATE_DISABLED));
+  saveSensorFrame("posture-placement.ppm");
+  lv_dropdown_open(setup.dropdown());
+  saveSensorFrame("posture-placement-options.ppm");
+  lv_dropdown_close(setup.dropdown());
+  lv_obj_del(panel);
+  std::cout << "PASS sensor UI: six online rows, scroll, recent data, three placements, bilingual controls and result bounds\n";
+}
+
+int main(int argc, char **argv) {
   DashboardLayout layout;
   for (unsigned mask = 0; mask < 1024; ++mask) {
     DashboardLayout::Settings settings{};
@@ -394,7 +494,10 @@ int main() {
   auto *screen = lv_disp_get_scr_act(display);
   lv_obj_set_style_pad_all(screen, 0, 0);
   lv_obj_set_style_bg_color(screen, lv_color_make(248, 250, 252), 0);
+  checkDeviceNavigation();
+  checkSensorViews(screen);
   checkGlyphs();
+  if (argc == 2 && std::string(argv[1]) == "--sensor-views") return 0;
   lv_point_t legacyText;
   lv_txt_get_size(&legacyText, "WAITING FOR DATA", &lv_font_montserrat_14, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   assert(legacyText.x > 84);

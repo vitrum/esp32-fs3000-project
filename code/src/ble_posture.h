@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <atomic>
+#include "imu_sample.h"
 
 class BleCancellation;
 
@@ -45,12 +46,18 @@ public:
   float rollDeg() const { return s_connected ? s_roll : 0; }
   float yawDeg() const { return s_connected ? s_yaw : 0; }
   uint32_t notificationCount() const { return s_notificationCount; }
+  ImuSample imuSample(uint32_t now, uint32_t maxAgeMs = 250) const {
+    ImuSample sample = s_imuSample;
+    sample.valid = sample.valid && connected() && now - sample.receivedMs <= maxAgeMs;
+    return sample;
+  }
 
 private:
   static void witNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, bool isNotify);
   friend class BlePostureClientCallbacks;
-  static void parsePacket(uint8_t *data, size_t length);
-  static void parseAngleFrame(const uint8_t *data, size_t length);
+  static void parsePacket(uint8_t *data, size_t length, uint32_t receivedMs);
+  static void parseAngleFrame(const uint8_t *data, size_t length, uint32_t receivedMs);
+  static ImuSample s_imuSample;
   static std::atomic<bool> s_connected;
   static std::atomic<uint32_t> s_lastMeasurementMs;
   static float  s_pitch;

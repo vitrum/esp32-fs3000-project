@@ -19,6 +19,11 @@ constexpr int BLE_HS_EDONE = 14;
 class NimBLEUUID {
 public:
   NimBLEUUID(const char *value) : value_(value) {}
+  NimBLEUUID(uint16_t value) {
+    char text[7];
+    snprintf(text, sizeof(text), "0x%04X", value);
+    value_ = text;
+  }
   std::string toString() const { return value_; }
   bool operator==(const NimBLEUUID &other) const { return value_ == other.value_; }
 private:

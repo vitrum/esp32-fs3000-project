@@ -16,6 +16,8 @@
 #include "ui_navigation_guard.h"
 #include "ui_touch_buffer.h"
 #include "dashboard_view.h"
+#include "sensor_views.h"
+#include "recent_sensor_reading.h"
 
 // ST7789 240x320 display for wind, CdA, live power, cadence, and status.
 class DisplayLcd {
@@ -49,6 +51,12 @@ public:
   void updateHeartDeviceStatus(bool connected, bool responding, uint16_t bpm);
   void updatePostureDeviceStatus(bool connected, bool responding,
                                  float roll, float pitch, float yaw);
+  void updateRecentSensor(unsigned index, const char *text, uint32_t receivedMs);
+  void refreshRecentSensors(uint32_t now, bool boardPresent, bool boardResponding);
+  RiderPosture::Placement posturePlacement() const { return posturePlacement_; }
+  bool takePostureCalibrationRequest(bool &leaning);
+  void updatePostureEstimate(const RiderPosture::Estimate &estimate) { postureSetup_.update(estimate); }
+  void showPostureCalibrationResult(bool success);
   void showUsbStorage(bool ready, bool ejected, bool hostConnected, bool active = true);
   void showUsbStorageError(const char *message) {
     usbStorageError_ = true;
@@ -158,7 +166,14 @@ private:
   lv_obj_t *heartDevicePanel_ = nullptr;
   lv_obj_t *postureDevicePanel_ = nullptr;
   lv_obj_t *onlineDevicesPanel_ = nullptr;
-  lv_obj_t *onlineDeviceRows_[5] = {};
+  OnlineDevicesView onlineView_;
+  PostureSetupView postureSetup_;
+  RecentSensorReading onlineReadings_[OnlineDevicesView::kCount];
+  RiderPosture::Placement posturePlacement_ = RiderPosture::Placement::BackStrap;
+  int postureCalibrationRequest_ = -1;
+  bool onlineBoardPresent_ = false, onlineBoardResponding_ = false;
+  static void onPosturePlacement(lv_event_t *event);
+  static void onPostureCalibration(lv_event_t *event);
   lv_obj_t *deviceHubLabels_[3] = {};
   lv_obj_t *bleRoleStatusLabels_[3] = {};
   lv_obj_t *powerSourceTitle_ = nullptr;

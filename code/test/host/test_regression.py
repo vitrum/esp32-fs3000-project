@@ -19,8 +19,15 @@ from pytest_embedded.log import MessageQueue
 
 ROOT = Path(__file__).resolve().parents[2]
 SUITES = {
+    "imu_comparison": (
+        ["imu_comparison_test.cpp"], ["runtime_log.cpp"],
+        ["PASS IMU comparison:", "PASS IMU storage:"],
+    ),
     "ui_language": (
         ["ui_language_test.cpp"], [], ["PASS UI language:"],
+    ),
+    "ui_sensors": (
+        ["ui_language_test.cpp"], [], ["PASS sensor UI:"],
     ),
     "sensors_power": (
         ["sensors_power_test.cpp"],
@@ -265,6 +272,8 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
     command += [str(Path("src") / name) for name in sources]
     if suite.startswith("system_"):
         command += ["-DHOST_POSIX_SD", "-Wl,--wrap=write", "-Wl,--wrap=fsync"]
+    if suite == "imu_comparison":
+        command += ["-Wl,--wrap=write", "-Wl,--wrap=fsync"]
     if suite == "concurrency" or suite.startswith("system_"):
         gps = Path(os.environ.get(
             "GPS_SOURCE_DIR", str(ROOT / ".pio/libdeps/esp32s3/TinyGPSPlus/src")
@@ -272,7 +281,7 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
         assert (gps / "TinyGPS++.cpp").is_file(), "Set GPS_SOURCE_DIR to TinyGPSPlus/src"
         command += ["-I" + str(gps), str(gps / "TinyGPS++.cpp")]
     command += ["-o", str(binary)]
-    if suite == "ui_language":
+    if suite in {"ui_language", "ui_sensors"}:
         configured = subprocess.run(
             ["cmake", "-S", str(ROOT / "test/host/ui"), "-B", str(tmp_path), "-DCMAKE_BUILD_TYPE=Debug"],
             cwd=ROOT, capture_output=True, text=True, timeout=120)
@@ -281,10 +290,17 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
     built = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=120)
     assert built.returncode == 0, built.stdout + built.stderr
     arguments = [str(binary)]
+    if suite == "ui_sensors":
+        arguments = [str(tmp_path / "ui_language"), "--sensor-views"]
     if suite.startswith("system_"):
         arguments.append(suite[len("system_"):])
     environment = os.environ.copy()
-    if suite == "ui_language":
+    if suite == "imu_comparison":
+        artifact_root = ROOT / "test/results/imu"
+        artifact_root.mkdir(parents=True, exist_ok=True)
+        imu_artifacts = Path(tempfile.mkdtemp(prefix="comparison-", dir=artifact_root))
+        environment["IMU_ARTIFACT_DIR"] = str(imu_artifacts)
+    if suite in {"ui_language", "ui_sensors"}:
         ui_artifacts = ROOT / "test/results/ui-language"
         ui_artifacts.mkdir(parents=True, exist_ok=True)
         environment["UI_ARTIFACT_DIR"] = str(ui_artifacts)
@@ -301,6 +317,39 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
     msg_queue.put(output)
     assert result.returncode == 0, output.decode(errors="replace")
     dut.expect_exact(markers, expect_all=True, timeout=10)
+    if suite == "imu_comparison":
+        report = subprocess.run(
+            [os.sys.executable, "tools/imu_compare.py", str(imu_artifacts / "IMU/I00000002-0.csv")],
+            cwd=ROOT, capture_output=True, text=True, timeout=30)
+        assert report.returncode == 0, report.stdout + report.stderr
+        summary = json.loads(report.stdout)
+        assert summary["rows"] == summary["paired_rows"] == 20
+        assert summary["acceleration_norm_g"]["rmse"] == 0
+        assert summary["angular_velocity_norm_dps"]["rmse"] == 0
+        (imu_artifacts / "validation.json").write_text(report.stdout)
+        with (imu_artifacts / "IMU/I00000002-0.csv").open(newline="") as stream:
+            reader = csv.DictReader(stream)
+            fields = reader.fieldnames
+            imu_rows = list(reader)
+        assert len(imu_rows) == 20
+        for row in imu_rows:
+            for sensor in ("board", "wt"):
+                assert float(row[f"{sensor}_az_g"]) == 1
+                assert float(row[f"{sensor}_gx_dps"]) == 3
+                assert float(row[f"{sensor}_gy_dps"]) == 4
+                assert float(row[f"{sensor}_g_norm_dps"]) == 5
+        for key, invalid in (("wt_a_norm_g", "8"), ("paired", "2"), ("skew_ms", "101")):
+            corrupted = [dict(row) for row in imu_rows]
+            corrupted[0][key] = invalid
+            invalid_path = imu_artifacts / f"invalid-{key}.csv"
+            with invalid_path.open("w", newline="") as stream:
+                writer = csv.DictWriter(stream, fieldnames=fields)
+                writer.writeheader()
+                writer.writerows(corrupted)
+            rejected = subprocess.run(
+                [os.sys.executable, "tools/imu_compare.py", str(invalid_path)],
+                cwd=ROOT, capture_output=True, text=True, timeout=30)
+            assert rejected.returncode != 0, rejected.stdout
     if suite == "system_recording_lifecycle":
         validate_recovered_fit(artifacts)
     elif suite in recording_suites:

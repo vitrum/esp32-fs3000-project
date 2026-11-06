@@ -445,7 +445,7 @@ void DisplayLcd::updateOnlineDevices(bool powerConnected, bool powerResponding,
   const char *roleNames[] = {
       localized("Power meter", "功率计"),
       localized("Heart rate", "心率设备"),
-      localized("3-axis sensor", "三轴姿态传感器")};
+      localized("Wearable 6-axis", "穿戴六轴")};
   const bool connected[] = {powerConnected, heartConnected, postureConnected};
   const bool responding[] = {powerResponding, heartResponding, postureResponding};
   onlineBleConnected_[0] = powerConnected;
@@ -470,11 +470,7 @@ void DisplayLcd::updateOnlineDevices(bool powerConnected, bool powerResponding,
         ? localized("Offline", "离线")
         : responding[i] ? localized("Connected / OK", "已连接 / 响应正常")
                         : localized("Connected / stale", "已连接 / 暂无新数据");
-    char text[96];
-    snprintf(text, sizeof(text), "%.26s\n%s", deviceName, status);
-    if (onlineDeviceRows_[i] &&
-        strcmp(lv_label_get_text(onlineDeviceRows_[i]), text) != 0)
-      lv_label_set_text(onlineDeviceRows_[i], text);
+    onlineView_.status(i, deviceName, status);
 
     char roleStatus[80];
     snprintf(roleStatus, sizeof(roleStatus), "%s\n%s", deviceName, status);
@@ -484,7 +480,7 @@ void DisplayLcd::updateOnlineDevices(bool powerConnected, bool powerResponding,
 
     const char *hubTitle = i == 0 ? localized("POWER METER", "功率计")
         : i == 1 ? localized("HEART RATE", "心率设备")
-                 : localized("3-AXIS SENSOR", "三轴姿态");
+                 : localized("6-AXIS SENSOR", "穿戴六轴");
     char hubText[64];
     snprintf(hubText, sizeof(hubText), "%s\n%s",
              hubTitle, connected[i] ? localized("CONNECTED", "已连接")
@@ -498,23 +494,70 @@ void DisplayLcd::updateOnlineDevices(bool powerConnected, bool powerResponding,
       ? localized("Offline", "离线")
       : gpsFixed ? localized("Online / FIX", "在线 / 已定位")
                  : localized("Online / searching", "在线 / 搜星中");
-  char gpsText[64];
-  snprintf(gpsText, sizeof(gpsText), "%s\n%s",
-           localized("GPS", "GPS"), gpsStatus);
-  if (onlineDeviceRows_[3] &&
-      strcmp(lv_label_get_text(onlineDeviceRows_[3]), gpsText) != 0)
-    lv_label_set_text(onlineDeviceRows_[3], gpsText);
+  onlineView_.status(3, "GPS", gpsStatus);
 
   const char *windStatus = !windPresent
       ? localized("Offline", "离线")
       : windResponding ? localized("Online / OK", "在线 / 响应正常")
                        : localized("Online / stale", "在线 / 暂无新数据");
-  char windText[64];
-  snprintf(windText, sizeof(windText), "%s\n%s",
-           localized("Wind sensor", "风速计"), windStatus);
-  if (onlineDeviceRows_[4] &&
-      strcmp(lv_label_get_text(onlineDeviceRows_[4]), windText) != 0)
-    lv_label_set_text(onlineDeviceRows_[4], windText);
+  onlineView_.status(4, localized("Wind sensor", "风速计"), windStatus);
+  onlineView_.status(5, localized("Onboard 6-axis / QMI8658", "板载六轴 / QMI8658"),
+      !onlineBoardPresent_ ? localized("Offline", "离线") : onlineBoardResponding_
+          ? localized("Online / OK", "在线 / 响应正常") : localized("Online / stale", "在线 / 暂无新数据"));
+}
+
+void DisplayLcd::updateRecentSensor(unsigned index, const char *text, uint32_t receivedMs) {
+  if (index < OnlineDevicesView::kCount) onlineReadings_[index].capture(text, receivedMs);
+}
+
+void DisplayLcd::refreshRecentSensors(uint32_t now, bool boardPresent, bool boardResponding) {
+  onlineBoardPresent_ = boardPresent;
+  onlineBoardResponding_ = boardResponding;
+  onlineView_.status(5, localized("Onboard 6-axis / QMI8658", "板载六轴 / QMI8658"),
+      !boardPresent ? localized("Offline", "离线") : boardResponding
+          ? localized("Online / OK", "在线 / 响应正常") : localized("Online / stale", "在线 / 暂无新数据"));
+  for (unsigned index = 0; index < OnlineDevicesView::kCount; ++index) {
+    char text[160];
+    onlineReadings_[index].format(now, text, sizeof(text));
+    onlineView_.data(index, text);
+  }
+}
+
+void DisplayLcd::onPosturePlacement(lv_event_t *) {
+  if (!g_display) return;
+  const auto placement = g_display->postureSetup_.placement();
+  if (placement == g_display->posturePlacement_) return;
+  Preferences preferences;
+  bool saved = false;
+  if (preferences.begin("aero-ui", false)) {
+    saved = preferences.putUChar("imu-wear", uint8_t(placement)) == 1;
+    preferences.end();
+  }
+  if (saved) {
+    g_display->posturePlacement_ = placement;
+    g_display->postureCalibrationRequest_ = -1;
+    g_display->postureSetup_.update(RiderPosture::Estimate{});
+  }
+  else {
+    g_display->postureSetup_.select(g_display->posturePlacement_);
+    g_display->showNotice(g_display->localized("Could not save wear location.", "佩戴方式保存失败。"));
+  }
+}
+
+void DisplayLcd::onPostureCalibration(lv_event_t *event) {
+  if (g_display) g_display->postureCalibrationRequest_ = int((uintptr_t)lv_event_get_user_data(event));
+}
+
+bool DisplayLcd::takePostureCalibrationRequest(bool &leaning) {
+  if (postureCalibrationRequest_ < 0) return false;
+  leaning = postureCalibrationRequest_ == 1;
+  postureCalibrationRequest_ = -1;
+  return true;
+}
+
+void DisplayLcd::showPostureCalibrationResult(bool success) {
+  showNotice(success ? localized("Calibration saved for this boot.", "本次标定已保存。")
+                     : localized("Calibration unavailable.", "暂不能标定。"));
 }
 
 void DisplayLcd::updateHeartDeviceStatus(bool connected, bool responding,
@@ -542,13 +585,13 @@ void DisplayLcd::updatePostureDeviceStatus(bool connected, bool responding,
   const size_t index = roleIndex(SavedConnections::Role::Posture);
   if (!bleRoleStatusLabels_[index]) return;
   char text[128];
-  if (!connected)
-    snprintf(text, sizeof(text), "%s\n%s\nRoll: --\nPitch: --\nYaw: --",
+  if (!connected || !responding)
+    snprintf(text, sizeof(text), "%.20s\n%s\nR --  P --\nY --",
              connectedBleNames_[index][0] ? connectedBleNames_[index]
                                           : localized("WT9011DCL-BT50", "WT9011DCL-BT50"),
-             localized("Offline", "离线"));
+             connected ? localized("Data stale", "数据过期") : localized("Offline", "离线"));
   else
-    snprintf(text, sizeof(text), "%s\n%s\nR %+.2f  P %+.2f\nY %+.2f",
+    snprintf(text, sizeof(text), "%.20s\n%s\nR %+.1f P %+.1f\nY %+.1f",
              connectedBleNames_[index][0] ? connectedBleNames_[index]
                                           : localized("WT9011DCL-BT50", "WT9011DCL-BT50"),
              responding ? localized("Connected / OK", "已连接 / 正常")
@@ -800,7 +843,7 @@ void DisplayLcd::onAutoSelected(lv_event_t *) {
 void DisplayLcd::onCancelSelection(lv_event_t *) {
   if (g_display && g_display->powerSourcePanel_) {
     g_display->hideDevicePanels();
-    lv_obj_clear_flag(g_display->deviceHubPanel_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
   }
 }
 
@@ -1048,7 +1091,7 @@ void DisplayLcd::buildDeviceHubPanel() {
   lv_obj_set_style_border_width(deviceHubPanel_, 0, 0);
   lv_obj_set_style_bg_color(deviceHubPanel_, lv_color_make(248, 250, 252), 0);
   buildPanelHeader(deviceHubPanel_, "BLUETOOTH DEVICES", onCancelSelection);
-  static const char *titles[] = {"POWER METER", "3-AXIS SENSOR", "HEART RATE"};
+  static const char *titles[] = {"POWER METER", "6-AXIS SENSOR", "HEART RATE"};
   static const lv_color_t colors[] = {
       lv_color_make(37, 99, 235), lv_color_make(220, 38, 38),
       lv_color_make(13, 148, 136)};
@@ -1084,19 +1127,31 @@ void DisplayLcd::buildBleRolePanel(lv_obj_t *&panel, const char *title,
   lv_obj_set_style_bg_color(panel, lv_color_make(248, 250, 252), 0);
   buildPanelHeader(panel, title, onDeviceRoleBack);
 
-  lv_obj_t *status = lv_label_create(panel);
+  const bool posture = role == SavedConnections::Role::Posture;
+  lv_obj_t *body = panel;
+  if (posture) {
+    body = lv_obj_create(panel);
+    lv_obj_set_pos(body, 0, 52);
+    lv_obj_set_size(body, 240, 268);
+    lv_obj_set_style_pad_all(body, 0, 0);
+    lv_obj_set_style_border_width(body, 0, 0);
+    lv_obj_set_style_radius(body, 0, 0);
+    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
+    lv_obj_set_scroll_dir(body, LV_DIR_VER);
+  }
+  lv_obj_t *status = lv_label_create(body);
   lv_obj_set_width(status, 216);
-  lv_obj_set_height(status, role == SavedConnections::Role::Posture ? 126 : 52);
+  lv_obj_set_height(status, posture ? 70 : 52);
   lv_label_set_long_mode(status, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(status, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(status, lv_color_make(71, 85, 105), 0);
-  lv_obj_align(status, LV_ALIGN_TOP_LEFT, 12, 62);
+  lv_obj_align(status, LV_ALIGN_TOP_LEFT, 12, posture ? 4 : 62);
   bleRoleStatusLabels_[roleIndex(role)] = status;
 
-  lv_obj_t *scan = lv_btn_create(panel);
+  lv_obj_t *scan = lv_btn_create(body);
   lv_obj_set_size(scan, 208, 42);
   lv_obj_align(scan, LV_ALIGN_TOP_LEFT, 16,
-               role == SavedConnections::Role::Posture ? 194 : 126);
+               posture ? 254 : 126);
   lv_obj_set_style_bg_color(scan, lv_color_make(37, 99, 235), 0);
   lv_obj_add_event_cb(scan, onBleRoleScan, LV_EVENT_CLICKED,
                       (void *)(uintptr_t)role);
@@ -1106,7 +1161,13 @@ void DisplayLcd::buildBleRolePanel(lv_obj_t *&panel, const char *title,
   lv_obj_set_style_text_font(scanLabel, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(scanLabel);
 
-  buildBleFavoriteButton(panel, role);
+  buildBleFavoriteButton(body, role);
+  if (posture) {
+    lv_obj_set_y(bleFavoriteButtons_[roleIndex(role)], 304);
+    postureSetup_.create(body, onPosturePlacement, onPostureCalibration);
+    postureSetup_.select(posturePlacement_);
+    postureSetup_.language(chinese_);
+  }
   lv_obj_add_flag(panel, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1120,18 +1181,7 @@ void DisplayLcd::buildOnlineDevicesPanel() {
   lv_obj_set_style_border_width(onlineDevicesPanel_, 0, 0);
   lv_obj_set_style_bg_color(onlineDevicesPanel_, lv_color_make(248, 250, 252), 0);
   buildPanelHeader(onlineDevicesPanel_, "ONLINE DEVICES", onOnlineDevicesBack);
-  static const char *names[] = {
-      "Power meter", "Heart rate", "3-axis sensor", "GPS", "Wind sensor"};
-  for (size_t i = 0; i < 5; ++i) {
-    onlineDeviceRows_[i] = lv_label_create(onlineDevicesPanel_);
-    lv_obj_set_size(onlineDeviceRows_[i], 216, 42);
-    lv_label_set_long_mode(onlineDeviceRows_[i], LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(onlineDeviceRows_[i], &lv_font_jetbrains_mono_14, 0);
-    lv_obj_set_style_text_color(onlineDeviceRows_[i], lv_color_make(30, 41, 59), 0);
-    lv_label_set_text_fmt(onlineDeviceRows_[i], "%s\n--", names[i]);
-    lv_obj_align(onlineDeviceRows_[i], LV_ALIGN_TOP_LEFT, 12,
-                 58 + (lv_coord_t)i * 48);
-  }
+  onlineView_.create(onlineDevicesPanel_);
   lv_obj_add_flag(onlineDevicesPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1433,7 +1483,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_border_width(powerSourcePanel_, 0, 0);
   lv_obj_set_style_bg_color(powerSourcePanel_, lv_color_make(248, 250, 252), 0);
   lv_obj_set_style_bg_opa(powerSourcePanel_, LV_OPA_COVER, 0);
-  buildPanelHeader(powerSourcePanel_, "POWER SOURCE", onCancelSelection);
+  buildPanelHeader(powerSourcePanel_, "POWER SOURCE", onDeviceRoleBack);
   powerSourceTitle_ = lv_obj_get_child(powerSourcePanel_, 1);
 
   powerSourceHint_ = lv_label_create(powerSourcePanel_);
@@ -1631,7 +1681,7 @@ void DisplayLcd::buildPowerSourcePanel() {
 
   buildDeviceHubPanel();
   buildBleRolePanel(heartDevicePanel_, "HEART RATE", SavedConnections::Role::Heart);
-  buildBleRolePanel(postureDevicePanel_, "3-AXIS POSTURE", SavedConnections::Role::Posture);
+  buildBleRolePanel(postureDevicePanel_, "6-AXIS SENSOR", SavedConnections::Role::Posture);
   buildOnlineDevicesPanel();
   buildSettingsPanel();
 }
@@ -2260,13 +2310,16 @@ void DisplayLcd::refreshLanguage() {
                     localized("BLUETOOTH DEVICES", "蓝牙设备"));
   const char *roleTitles[] = {
       localized("POWER SOURCE", "功率来源"),
-      localized("3-AXIS POSTURE", "三轴姿态"),
+      localized("6-AXIS SENSOR", "穿戴六轴"),
       localized("HEART RATE", "心率设备")};
   lv_obj_t *rolePanels[] = {powerSourcePanel_, postureDevicePanel_, heartDevicePanel_};
   for (size_t i = 0; i < 3; ++i)
     lv_label_set_text(lv_obj_get_child(rolePanels[i], 1), roleTitles[i]);
   lv_label_set_text(lv_obj_get_child(onlineDevicesPanel_, 1),
                     localized("ONLINE DEVICES", "在线设备"));
+  postureSetup_.language(chinese_);
+  for (auto *label : bleRoleStatusLabels_)
+    if (label) lv_obj_set_style_text_font(label, font, 0);
   lv_label_set_text(languageTitle_, localized("LANGUAGE", "语言"));
   lv_label_set_text(languageHint_, localized("Choose interface language", "选择界面语言"));
   lv_obj_set_style_text_font(languageTitle_, titleFont, 0);
@@ -2352,6 +2405,8 @@ void DisplayLcd::begin() {
     Preferences preferences;
     if (preferences.begin("aero-ui", true)) {
       chinese_ = preferences.getBool("zh", false);
+      const uint8_t placement = preferences.getUChar("imu-wear", 1);
+      if (placement <= 2) posturePlacement_ = RiderPosture::Placement(placement);
       preferences.end();
     }
   }

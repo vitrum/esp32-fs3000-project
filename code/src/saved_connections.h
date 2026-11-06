@@ -14,6 +14,52 @@ public:
   struct Ble { char address[18]; uint8_t addressType; Role role; };
   struct Favorite { Ble device; char name[32]; };
 
+  bool seedDevelopmentFavorite() {
+    if (!loadFavorites()) return false;
+    Preferences prefs;
+    if (!prefs.begin("aero-links", false)) return false;
+    uint8_t seeded = 0;
+    const size_t length = prefs.getBytesLength("dev-wt901");
+    const bool read = length == 0 || (length == sizeof(seeded) &&
+        prefs.getBytes("dev-wt901", &seeded, sizeof(seeded)) == sizeof(seeded));
+    prefs.end();
+    if (!read || seeded > 2) return false;
+    if (seeded == 2) return true;
+    const char *address = "E7:E0:93:0D:D0:8D";
+    bool present = false;
+    uint8_t previous = favoriteCount();
+    for (uint8_t index = 0; index < favoriteCount(); ++index)
+      if (favorite(index)->device.role == Role::Posture) {
+        if (!strcasecmp(favorite(index)->device.address, address)) present = true;
+        if (!strcasecmp(favorite(index)->device.address, "EE:EB:71:2B:2B:95") &&
+            favorite(index)->device.addressType == 1 &&
+            !strcmp(favorite(index)->name, "WT901BLE67")) previous = index;
+      }
+    if (previous < favoriteCount()) {
+      Favorites next = favorites_;
+      if (present) {
+        for (uint8_t index = previous; index + 1 < next.count; ++index)
+          next.entries[index] = next.entries[index + 1];
+        next.entries[--next.count] = Favorite{};
+      } else {
+        snprintf(next.entries[previous].device.address,
+                 sizeof(next.entries[previous].device.address), "%s", address);
+      }
+      next.crc = esp_rom_crc32_le(0, reinterpret_cast<const uint8_t *>(&next), offsetof(Favorites, crc));
+      if (!prefs.begin("aero-links", false)) return false;
+      const bool migrated = prefs.putBytes("favorites", &next, sizeof(next)) == sizeof(next);
+      prefs.end();
+      if (!migrated) return false;
+      favorites_ = next;
+    } else if (!seeded && !present &&
+        !setFavorite(address, 1, "WT901BLE67", true, Role::Posture)) return false;
+    if (!prefs.begin("aero-links", false)) return false;
+    seeded = 2;
+    const bool written = prefs.putBytes("dev-wt901", &seeded, sizeof(seeded)) == sizeof(seeded);
+    prefs.end();
+    return written;
+  }
+
   bool loadFavorites() {
     Preferences prefs;
     if (!prefs.begin("aero-links", false)) return false;

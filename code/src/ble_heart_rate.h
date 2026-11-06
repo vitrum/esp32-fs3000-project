@@ -24,6 +24,7 @@ public:
   }
   bool valid(uint32_t now) const { return valid_.load() && now - received_.load() <= 5000; }
   uint16_t bpm() const { return bpm_.load(); }
+  uint32_t receivedMs() const { return received_.load(); }
   void invalidate() { valid_.store(false); }
 private:
   std::atomic<uint16_t> bpm_{0};
@@ -40,6 +41,7 @@ public:
   bool connected() const { return connected_.load(); }
   bool valid(uint32_t now) const { return connected() && measurement_.valid(now); }
   uint16_t bpm() const { return measurement_.bpm(); }
+  uint32_t receivedMs() const { return measurement_.receivedMs(); }
   const char *lastError() const { return error_; }
 private:
   friend class HeartRateCallbacks;

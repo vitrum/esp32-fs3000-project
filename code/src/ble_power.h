@@ -49,6 +49,7 @@ public:
   uint32_t fitnessMachineNotificationCount() const { return s_fitnessMachineNotificationCount; }
   uint16_t lastFitnessMachineFlags() const { return s_lastFitnessMachineFlags; }
   uint32_t disconnectCount() const { return s_disconnectCount; }
+  uint32_t measurementMs() const { return s_powerReceivedMs.load(); }
   bool measurementValid(uint32_t now, uint32_t maxAgeMs = 3000) const {
     return s_connected && s_powerValid && now - s_powerReceivedMs.load() <= maxAgeMs;
   }
