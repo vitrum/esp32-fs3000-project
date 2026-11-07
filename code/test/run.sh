@@ -34,7 +34,7 @@ if [ "$action" = all ] || [ "$action" = host ] || [ "$action" = measurements ] |
     report=stages
   fi
   docker run --rm -v "$PWD:/project" "$image" env PATH="$test_path" \
-    python -m pytest -q test/host/test_regression.py "$@" \
+    python -m pytest -q test/host/test_regression.py test/host/test_env_config.py "$@" \
     --root-logdir=/project/test/results/host-logs \
     --junitxml="/project/test/results/$report.xml"
 fi

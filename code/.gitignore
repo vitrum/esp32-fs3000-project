@@ -11,3 +11,6 @@ __pycache__/
 /test/embedded/sdkconfig.old
 /test/results/
 /.venv-test/
+.env
+.env.*
+!.env.example

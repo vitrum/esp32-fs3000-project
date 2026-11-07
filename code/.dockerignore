@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+.pio
+build
+.git
+test/results
+test/embedded/build

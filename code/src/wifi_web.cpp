@@ -2,6 +2,7 @@
 #include "runtime_log.h"
 #include <math.h>
 #include "config.h"
+#include "env_settings.h"
 #include "web_assets.h"
 #include "csv_logger.h"
 #include <dirent.h>
@@ -64,13 +65,17 @@ void WifiWeb::loadCredentials() {
     _pass = _candidates[0].password;
     return;
   }
-  if (!_prefs.begin("aero-wifi", true)) {
+  if (_prefs.begin("aero-wifi", true)) {
+    _ssid = _prefs.getString("ssid", "");
+    _pass = _prefs.getString("pass", "");
+    _prefs.end();
+  } else {
     AppLog.println("[WiFi] Could not open preferences to load Wi-Fi credentials");
-    return;
   }
-  _ssid = _prefs.getString("ssid", "");
-  _pass = _prefs.getString("pass", "");
-  _prefs.end();
+  if (_ssid.isEmpty()) {
+    _ssid = EnvSettings::wifiSsid();
+    _pass = EnvSettings::wifiPassword();
+  }
   if (!_ssid.isEmpty() && _ssid.length() <= 32 && _pass.length() <= 64) {
     snprintf(_candidates[0].ssid, sizeof(_candidates[0].ssid), "%s", _ssid.c_str());
     snprintf(_candidates[0].password, sizeof(_candidates[0].password), "%s", _pass.c_str());

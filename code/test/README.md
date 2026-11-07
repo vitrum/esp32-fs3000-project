@@ -141,6 +141,21 @@ version's actual callbacks take precedence over newer API examples).
 
 ### Dual IMU Recording And Comparison
 
+### Local ENV, OSS And Update Configuration
+
+See `docs/env-config.md` and the credential-free `.env.example`. PlatformIO
+reads local `.env` plus same-name process-variable overrides before building;
+private generated headers stay under `.pio/build`. Host/backend OSS access keys
+and STS token are excluded from the firmware allowlist. NVS Wi-Fi profiles
+remain ahead of ENV fallback values. OSS upload and firmware download fields
+are configuration only: no cloud client or safe OTA installer is enabled.
+`test/host/test_env_config.py` runs with host/all and checks parsing, validation,
+private-header C++11 compilation, precedence and cloud-key exclusion. Keep
+actual credentials and compiled artifacts out of commits. Full configuration
+and device credential encryption are not provided by ignore rules or encoding.
+
+### Dual IMU Recording And Comparison
+
 #### Online Devices And Wear Location
 
 ONLINE DEVICES has six scrollable entries: power, heart rate, wearable IMU,
