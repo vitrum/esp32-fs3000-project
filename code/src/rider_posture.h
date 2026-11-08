@@ -6,7 +6,7 @@
 
 class RiderPosture {
 public:
-  enum class Placement : uint8_t { UpperArm, BackStrap, Helmet };
+  enum class Placement : uint8_t { UpperArm, BackStrap, Helmet, Forearm };
   enum class State : uint8_t { NoData, Moving, NeedUpright, NeedLean, Settling, Upright, Forward, Low };
   struct Estimate {
     State state = State::NeedUpright;
@@ -16,7 +16,7 @@ public:
 
   Placement placement() const { return placement_; }
   void setPlacement(Placement placement) {
-    if (uint8_t(placement) > uint8_t(Placement::Helmet) || placement == placement_) return;
+    if (uint8_t(placement) > uint8_t(Placement::Forearm) || placement == placement_) return;
     placement_ = placement;
     upright_ = lean_ = tracking_ = false;
     result_ = Estimate{};
@@ -49,7 +49,8 @@ public:
   }
 
   Estimate update(uint32_t now, const ImuSample &board, const ImuSample &wearable) {
-    result_.indirect = placement_ != Placement::BackStrap;
+    result_.indirect = placement_ != Placement::BackStrap &&
+        placement_ != Placement::Forearm;
     if (!fresh(now, board) || !fresh(now, wearable) ||
         std::abs(int32_t(now - board.receivedMs) - int32_t(now - wearable.receivedMs)) > 100) {
       tracking_ = false;
@@ -135,7 +136,7 @@ private:
     return true;
   }
 
-  Placement placement_ = Placement::BackStrap;
+  Placement placement_ = Placement::Forearm;
   Estimate result_;
   bool upright_ = false, lean_ = false, tracking_ = false;
   float reference_[3] = {}, rotationAxis_[3] = {};

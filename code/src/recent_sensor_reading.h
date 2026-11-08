@@ -14,7 +14,8 @@ public:
   void clear() { present_ = false; }
   void format(uint32_t now, char *out, size_t capacity) const {
     if (!present_) snprintf(out, capacity, "--");
-    else snprintf(out, capacity, "%s\n%lu ms", text_, (unsigned long)(now - receivedMs_));
+    else snprintf(out, capacity, "%s  %lums", text_,
+                  (unsigned long)(now - receivedMs_));
   }
 private:
   char text_[128] = {};

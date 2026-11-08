@@ -377,6 +377,9 @@ void WifiWeb::tick() {
       if (!saveCredentials(_ssid, _pass))
         AppLog.println("[WiFi] Connected, but profile was not saved");
       configTime(0, 0, "ntp.aliyun.com", "time.cloudflare.com", "pool.ntp.org");
+      sntp_set_sync_interval(5 * 60 * 1000);
+      if (!sntp_restart())
+        AppLog.println("[TIME] could not restart SNTP with the 5-minute interval");
       AppLog.println("[TIME] network connected; requesting NTP UTC asynchronously");
       startMdns();
       AppLog.printf("[WiFi] reconnected. IP=%s\n", WiFi.localIP().toString().c_str());

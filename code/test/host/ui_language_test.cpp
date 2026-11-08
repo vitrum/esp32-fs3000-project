@@ -4,6 +4,7 @@
 #include "dashboard_view.h"
 #include "sensor_views.h"
 #include <cassert>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -108,12 +109,19 @@ static void checkGlyphs() {
     }
   }
   assert(required.size() >= 150);
+  bool allGlyphsPresent = true;
   for (const uint32_t codepoint : required) {
     lv_font_glyph_dsc_t glyph;
+    if (!lv_font_get_glyph_dsc(&lv_font_noto_sans_sc_14, &glyph, codepoint, 0)) {
+      std::fprintf(stderr, "Missing UI font glyph U+%04X\n", unsigned(codepoint));
+      allGlyphsPresent = false;
+      continue;
+    }
     assert(lv_font_get_glyph_dsc(&lv_font_noto_sans_sc_14, &glyph, codepoint, 0));
     assert(!glyph.is_placeholder);
     if (glyph.box_w && glyph.box_h) assert(lv_font_get_glyph_bitmap(&lv_font_noto_sans_sc_14, codepoint));
   }
+  assert(allGlyphsPresent);
   for (const char *symbol : {LV_SYMBOL_LEFT, LV_SYMBOL_SETTINGS, LV_SYMBOL_PLAY, LV_SYMBOL_SAVE}) {
     uint32_t index = 0;
     lv_font_glyph_dsc_t glyph;
@@ -234,7 +242,7 @@ static void checkBatteryGauge(lv_disp_t *display) {
   lv_obj_get_coords(lv_obj_get_child(screen, 0), &barArea);
   assert(std::string(lv_label_get_text(view.clock)) == "23:59:59");
   const lv_obj_t *statusLabels[] = {
-      view.gps, view.satellites, view.sdIcon, view.settingsIcon, view.clock};
+      view.network, view.timeStatus, view.sdIcon, view.settingsIcon, view.clock};
   for (const auto *label : statusLabels) {
     assert(lv_obj_get_style_text_font(label, 0) == &lv_font_jetbrains_mono_14);
     lv_point_t textSize;
@@ -246,13 +254,13 @@ static void checkBatteryGauge(lv_disp_t *display) {
     assert(textSize.x <= lv_obj_get_width(label));
     assert(textSize.y <= lv_obj_get_height(label));
   }
-  lv_area_t gpsArea, satellitesArea, sdArea, settingsArea;
-  lv_obj_get_coords(view.gps, &gpsArea);
-  lv_obj_get_coords(view.satellites, &satellitesArea);
+  lv_area_t networkArea, timeArea, sdArea, settingsArea;
+  lv_obj_get_coords(view.network, &networkArea);
+  lv_obj_get_coords(view.timeStatus, &timeArea);
   lv_obj_get_coords(view.sdIcon, &sdArea);
   lv_obj_get_coords(view.settingsIcon, &settingsArea);
-  assert(gpsArea.x2 < satellitesArea.x1);
-  assert(satellitesArea.x2 < sdArea.x1);
+  assert(networkArea.x2 < timeArea.x1);
+  assert(timeArea.x2 < sdArea.x1);
   assert(sdArea.x2 < settingsArea.x1);
   assert(settingsArea.x2 < clockArea.x1);
 
@@ -337,18 +345,19 @@ static void checkSensorViews(lv_obj_t *screen) {
   lv_obj_set_style_border_width(panel, 0, 0);
   OnlineDevicesView online;
   online.create(panel);
-  const char *names[] = {"功率计", "心率设备", "穿戴六轴 / WT901BLE67", "GPS", "风速计", "板载六轴 / QMI8658"};
+  const char *names[] = {"功率计", "心率设备", "前臂六轴", "网络时间", "风速计", "车架六轴"};
   for (unsigned index = 0; index < OnlineDevicesView::kCount; ++index) {
     online.status(index, names[index], "已连接 / 响应正常");
-    online.data(index, "A +0.01 -0.02 +1.00 g\nG +0.1 -0.2 +0.3 d/s\n42 ms");
+    online.data(index, "P+42 R+13 Y-3  42ms");
   }
   lv_obj_update_layout(panel);
-  assert(lv_obj_get_scroll_bottom(online.list()) > 0);
+  assert(!lv_obj_has_flag(online.list(), LV_OBJ_FLAG_SCROLLABLE));
   assert(lv_obj_get_y(online.reading(5)) > lv_obj_get_y(online.reading(4)));
+  lv_area_t listArea, finalRow;
+  lv_obj_get_coords(online.list(), &listArea);
+  lv_obj_get_coords(online.reading(5), &finalRow);
+  assert(finalRow.y2 <= listArea.y2);
   saveSensorFrame("online-sensors-top.ppm");
-  lv_obj_scroll_to_y(online.list(), LV_COORD_MAX, LV_ANIM_OFF);
-  lv_obj_update_layout(panel);
-  saveSensorFrame("online-sensors-bottom.ppm");
   lv_obj_del(panel);
   panel = lv_obj_create(screen);
   lv_obj_set_size(panel, 240, 320);
@@ -356,9 +365,11 @@ static void checkSensorViews(lv_obj_t *screen) {
   lv_obj_set_style_border_width(panel, 0, 0);
   PostureSetupView setup;
   setup.create(panel, [](lv_event_t *) {}, [](lv_event_t *) {});
+  assert(setup.placement() == RiderPosture::Placement::Forearm);
   for (bool chinese : {false, true}) {
     setup.language(chinese);
-    for (auto placement : {RiderPosture::Placement::UpperArm, RiderPosture::Placement::BackStrap, RiderPosture::Placement::Helmet}) {
+    for (auto placement : {RiderPosture::Placement::Forearm, RiderPosture::Placement::UpperArm,
+                           RiderPosture::Placement::BackStrap, RiderPosture::Placement::Helmet}) {
       setup.select(placement);
       assert(setup.placement() == placement);
       RiderPosture::Estimate estimate;
@@ -393,7 +404,7 @@ static void checkSensorViews(lv_obj_t *screen) {
   saveSensorFrame("posture-placement-options.ppm");
   lv_dropdown_close(setup.dropdown());
   lv_obj_del(panel);
-  std::cout << "PASS sensor UI: six online rows, scroll, recent data, three placements, bilingual controls and result bounds\n";
+  std::cout << "PASS sensor UI: six no-scroll online rows, recent data, four placements, bilingual controls and result bounds\n";
 }
 
 int main(int argc, char **argv) {

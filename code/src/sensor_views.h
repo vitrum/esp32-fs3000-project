@@ -20,14 +20,17 @@ public:
     lv_obj_set_style_border_width(list_, 0, 0);
     lv_obj_set_style_radius(list_, 0, 0);
     lv_obj_set_style_bg_opa(list_, LV_OPA_TRANSP, 0);
-    lv_obj_set_scroll_dir(list_, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(list_, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_clear_flag(list_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(list_, LV_SCROLLBAR_MODE_OFF);
     for (unsigned index = 0; index < kCount; ++index) {
-      titles_[index] = label(12, index * 108, 18, &lv_font_noto_sans_sc_14);
-      statuses_[index] = label(12, index * 108 + 20, 18, &lv_font_noto_sans_sc_14);
-      data_[index] = label(12, index * 108 + 40, 62, &lv_font_jetbrains_mono_14);
+      titles_[index] = label(8, index * 42, 18, &lv_font_noto_sans_sc_14);
+      lv_obj_set_width(titles_[index], 120);
+      statuses_[index] = label(132, index * 42, 18, &lv_font_noto_sans_sc_14);
+      lv_obj_set_width(statuses_[index], 100);
+      lv_obj_set_style_text_align(statuses_[index], LV_TEXT_ALIGN_RIGHT, 0);
+      data_[index] = label(8, index * 42 + 18, 18, &lv_font_jetbrains_mono_14);
       lv_obj_set_style_text_color(statuses_[index], lv_color_make(100, 116, 139), 0);
-      lv_label_set_long_mode(data_[index], LV_LABEL_LONG_WRAP);
+      lv_label_set_long_mode(data_[index], LV_LABEL_LONG_DOT);
       lv_label_set_text(data_[index], "--");
     }
   }
@@ -86,15 +89,15 @@ public:
       lv_obj_set_style_text_color(buttonLabels_[index], lv_color_make(30, 41, 59), 0);
     }
     language(false);
-    select(RiderPosture::Placement::BackStrap);
+    select(RiderPosture::Placement::Forearm);
   }
 
   void language(bool chinese) {
     if (!dropdown_) return;
     chinese_ = chinese;
     const uint16_t selected = lv_dropdown_get_selected(dropdown_);
-    lv_dropdown_set_options(dropdown_, chinese ? "上臂\n背部心率带\n头盔固定" :
-                                               "Upper arm\nBack HR strap\nHelmet mount");
+    lv_dropdown_set_options(dropdown_, chinese ? "右前臂（推荐）\n上臂\n背部心率带\n头盔固定" :
+                                               "Right forearm (recommended)\nUpper arm\nBack HR strap\nHelmet mount");
     lv_dropdown_set_selected(dropdown_, selected);
     lv_label_set_text(title_, chinese ? "佩戴方式" : "WEAR LOCATION");
     lv_label_set_text(buttonLabels_[0], chinese ? LV_SYMBOL_REFRESH " 直立标定" : LV_SYMBOL_REFRESH " UPRIGHT");
@@ -108,10 +111,15 @@ public:
   }
 
   void select(RiderPosture::Placement placement) {
-    if (dropdown_) lv_dropdown_set_selected(dropdown_, uint8_t(placement));
+    if (dropdown_) lv_dropdown_set_selected(dropdown_, optionFor(placement));
   }
   RiderPosture::Placement placement() const {
-    return RiderPosture::Placement(lv_dropdown_get_selected(dropdown_));
+    switch (lv_dropdown_get_selected(dropdown_)) {
+      case 0: return RiderPosture::Placement::Forearm;
+      case 1: return RiderPosture::Placement::UpperArm;
+      case 2: return RiderPosture::Placement::BackStrap;
+      default: return RiderPosture::Placement::Helmet;
+    }
   }
   void update(const RiderPosture::Estimate &estimate) {
     estimate_ = estimate;
@@ -149,6 +157,15 @@ public:
   lv_obj_t *result() const { return result_; }
   lv_obj_t *button(unsigned index) const { return buttons_[index]; }
 private:
+  static uint16_t optionFor(RiderPosture::Placement placement) {
+    switch (placement) {
+      case RiderPosture::Placement::Forearm: return 0;
+      case RiderPosture::Placement::UpperArm: return 1;
+      case RiderPosture::Placement::BackStrap: return 2;
+      case RiderPosture::Placement::Helmet: return 3;
+    }
+    return 0;
+  }
   lv_obj_t *title_ = nullptr, *dropdown_ = nullptr, *result_ = nullptr;
   lv_obj_t *buttons_[2] = {}, *buttonLabels_[2] = {};
   RiderPosture::Estimate estimate_;

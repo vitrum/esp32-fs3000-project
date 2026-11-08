@@ -8,6 +8,9 @@ inline unsigned hostNtpRequests = 0;
 inline std::string hostNtpServers[3];
 inline long hostNtpOffset = 0;
 inline int hostNtpDaylightOffset = 0;
+inline uint32_t hostSntpSyncIntervalMs = 3600000;
+inline unsigned hostSntpRestarts = 0;
+inline bool hostSntpRestartSuccess = true;
 
 inline void configTime(long offset, int daylight, const char *first,
                        const char *second, const char *third) {
@@ -21,3 +24,11 @@ inline void configTime(long offset, int daylight, const char *first,
 }
 
 inline sntp_sync_status_t sntp_get_sync_status() { return hostSntpStatus; }
+inline void sntp_set_sync_interval(uint32_t intervalMs) {
+  hostSntpSyncIntervalMs = intervalMs;
+}
+inline bool sntp_restart() {
+  ++hostSntpRestarts;
+  hostSntpStatus = SNTP_SYNC_STATUS_RESET;
+  return hostSntpRestartSuccess;
+}

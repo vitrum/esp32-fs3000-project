@@ -2,6 +2,7 @@
 #include "runtime_log.h"
 #include "config.h"
 #include <cstring>
+#include <time.h>
 #include "saved_connections.h"
 #include "dashboard_settings.h"
 
@@ -437,7 +438,7 @@ void DisplayLcd::refreshWifiStatus() {
 void DisplayLcd::updateOnlineDevices(bool powerConnected, bool powerResponding,
                                      bool heartConnected, bool heartResponding,
                                      bool postureConnected, bool postureResponding,
-                                     bool gpsPresent, bool gpsFixed,
+                                     bool networkConnected, bool timeSynced,
                                      bool windPresent, bool windResponding) {
   const SavedConnections::Role roles[] = {
       SavedConnections::Role::Power, SavedConnections::Role::Heart,
@@ -445,7 +446,7 @@ void DisplayLcd::updateOnlineDevices(bool powerConnected, bool powerResponding,
   const char *roleNames[] = {
       localized("Power meter", "功率计"),
       localized("Heart rate", "心率设备"),
-      localized("Wearable 6-axis", "穿戴六轴")};
+      localized("Forearm IMU", "前臂六轴")};
   const bool connected[] = {powerConnected, heartConnected, postureConnected};
   const bool responding[] = {powerResponding, heartResponding, postureResponding};
   onlineBleConnected_[0] = powerConnected;
@@ -454,8 +455,8 @@ void DisplayLcd::updateOnlineDevices(bool powerConnected, bool powerResponding,
   onlineBleResponding_[0] = powerResponding;
   onlineBleResponding_[1] = heartResponding;
   onlineBleResponding_[2] = postureResponding;
-  onlineGpsPresent_ = gpsPresent;
-  onlineGpsFixed_ = gpsFixed;
+  onlineNetworkConnected_ = networkConnected;
+  onlineTimeSynced_ = timeSynced;
   onlineWindPresent_ = windPresent;
   onlineWindResponding_ = windResponding;
   for (size_t i = 0; i < 3; ++i) {
@@ -467,9 +468,9 @@ void DisplayLcd::updateOnlineDevices(bool powerConnected, bool powerResponding,
     const char *deviceName = connectedBleNames_[index][0]
         ? connectedBleNames_[index] : roleNames[i];
     const char *status = !connected[i]
-        ? localized("Offline", "离线")
-        : responding[i] ? localized("Connected / OK", "已连接 / 响应正常")
-                        : localized("Connected / stale", "已连接 / 暂无新数据");
+        ? localized("OFF", "离线")
+        : responding[i] ? localized("OK", "正常")
+                        : localized("STALE", "无新数据");
     onlineView_.status(i, deviceName, status);
 
     char roleStatus[80];
@@ -490,20 +491,21 @@ void DisplayLcd::updateOnlineDevices(bool powerConnected, bool powerResponding,
       lv_label_set_text(deviceHubLabels_[index], hubText);
   }
 
-  const char *gpsStatus = !gpsPresent
-      ? localized("Offline", "离线")
-      : gpsFixed ? localized("Online / FIX", "在线 / 已定位")
-                 : localized("Online / searching", "在线 / 搜星中");
-  onlineView_.status(3, "GPS", gpsStatus);
+  const char *timeStatus = timeSynced
+      ? localized(networkConnected ? "NTP OK" : "HOLDOVER",
+                  networkConnected ? "已对时" : "已对时 / 保持")
+      : networkConnected ? localized("SYNC...", "对时中")
+                         : localized("NO NTP", "未对时");
+  onlineView_.status(3, localized("Network time", "网络时间"), timeStatus);
 
   const char *windStatus = !windPresent
-      ? localized("Offline", "离线")
-      : windResponding ? localized("Online / OK", "在线 / 响应正常")
-                       : localized("Online / stale", "在线 / 暂无新数据");
-  onlineView_.status(4, localized("Wind sensor", "风速计"), windStatus);
-  onlineView_.status(5, localized("Onboard 6-axis / QMI8658", "板载六轴 / QMI8658"),
-      !onlineBoardPresent_ ? localized("Offline", "离线") : onlineBoardResponding_
-          ? localized("Online / OK", "在线 / 响应正常") : localized("Online / stale", "在线 / 暂无新数据"));
+      ? localized("OFF", "离线")
+      : windResponding ? localized("OK", "正常")
+                       : localized("STALE", "无新数据");
+  onlineView_.status(4, localized("Wind", "风速计"), windStatus);
+  onlineView_.status(5, localized("Bike IMU", "车架六轴"),
+      !onlineBoardPresent_ ? localized("OFF", "离线") : onlineBoardResponding_
+          ? localized("OK", "正常") : localized("STALE", "无新数据"));
 }
 
 void DisplayLcd::updateRecentSensor(unsigned index, const char *text, uint32_t receivedMs) {
@@ -513,9 +515,9 @@ void DisplayLcd::updateRecentSensor(unsigned index, const char *text, uint32_t r
 void DisplayLcd::refreshRecentSensors(uint32_t now, bool boardPresent, bool boardResponding) {
   onlineBoardPresent_ = boardPresent;
   onlineBoardResponding_ = boardResponding;
-  onlineView_.status(5, localized("Onboard 6-axis / QMI8658", "板载六轴 / QMI8658"),
-      !boardPresent ? localized("Offline", "离线") : boardResponding
-          ? localized("Online / OK", "在线 / 响应正常") : localized("Online / stale", "在线 / 暂无新数据"));
+  onlineView_.status(5, localized("Bike IMU", "车架六轴"),
+      !boardPresent ? localized("OFF", "离线") : boardResponding
+          ? localized("OK", "正常") : localized("STALE", "无新数据"));
   for (unsigned index = 0; index < OnlineDevicesView::kCount; ++index) {
     char text[160];
     onlineReadings_[index].format(now, text, sizeof(text));
@@ -586,17 +588,15 @@ void DisplayLcd::updatePostureDeviceStatus(bool connected, bool responding,
   if (!bleRoleStatusLabels_[index]) return;
   char text[128];
   if (!connected || !responding)
-    snprintf(text, sizeof(text), "%.20s\n%s\nR --  P --\nY --",
-             connectedBleNames_[index][0] ? connectedBleNames_[index]
-                                          : localized("WT9011DCL-BT50", "WT9011DCL-BT50"),
-             connected ? localized("Data stale", "数据过期") : localized("Offline", "离线"));
+    snprintf(text, sizeof(text), "%s\n%s\nP --  Y --",
+             localized("Bike ref: onboard QMI8658", "车架基准：板载 QMI8658"),
+             localized("Right forearm: offline", "右前臂：未连接"));
   else
-    snprintf(text, sizeof(text), "%.20s\n%s\nR %+.1f P %+.1f\nY %+.1f",
-             connectedBleNames_[index][0] ? connectedBleNames_[index]
-                                          : localized("WT9011DCL-BT50", "WT9011DCL-BT50"),
-             responding ? localized("Connected / OK", "已连接 / 正常")
-                        : localized("Connected / stale", "已连接 / 数据过期"),
-             roll, pitch, yaw);
+    snprintf(text, sizeof(text), "%s\n%s\nP %+.1f  Y %+.1f",
+             localized("Bike ref: onboard QMI8658", "车架基准：板载 QMI8658"),
+             localized("Right forearm: connected", "右前臂：已连接"),
+             pitch, yaw);
+  (void)roll;
   if (strcmp(lv_label_get_text(bleRoleStatusLabels_[index]), text) != 0)
     lv_label_set_text(bleRoleStatusLabels_[index], text);
 }
@@ -968,19 +968,12 @@ bool DisplayLcd::takeSdListRequest(char *directory, size_t capacity) {
   return true;
 }
 
-// ---- GPS 页面 ----
-void DisplayLcd::onGpsButton(lv_event_t *) {
+// ---- Network time page ----
+void DisplayLcd::onTimeButton(lv_event_t *) {
   if (!g_display) return;
-  // 已完成检测且确认未找到模块 → 直接提示，不进入 GPS 页。
-  if (g_display->gpsDetectDone_ && !g_display->gpsModulePresent_) {
-    g_display->showNotice(g_display->localized(
-        "GPS module not found.\nCheck the UART wiring and power.",
-        "找不到 GPS 模块。\n请检查 UART 接线和供电。"));
-    return;
-  }
   g_display->hideDevicePanels();
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_clear_flag(g_display->gpsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->timePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::onNoticeDismiss(lv_event_t *) {
@@ -995,38 +988,17 @@ void DisplayLcd::showNotice(const char *message) {
   lv_obj_clear_flag(noticePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
-void DisplayLcd::onGpsBack(lv_event_t *) {
+void DisplayLcd::onTimeBack(lv_event_t *) {
   if (!g_display) return;
-  lv_obj_add_flag(g_display->gpsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->timePanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
-void DisplayLcd::onGpsRestartClicked(lv_event_t *) {
+void DisplayLcd::onTimeWifiClicked(lv_event_t *) {
   if (!g_display) return;
-  g_display->gpsRestartRequested_ = true;
-  lv_label_set_text(g_display->gpsFixLabel_,
-                    g_display->localized("Restarting GPS...", "正在重启 GPS..."));
-}
-
-bool DisplayLcd::takeGpsRestartRequest() {
-  if (!gpsRestartRequested_) return false;
-  gpsRestartRequested_ = false;
-  return true;
-}
-
-void DisplayLcd::showGpsPanel() {
-  if (!gpsPanel_) return;
-  if (rideLogPanel_) lv_obj_add_flag(rideLogPanel_, LV_OBJ_FLAG_HIDDEN);
-  hideDevicePanels();
-  lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(powerSourcePanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(bleDevicePanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(bleConfirmPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(virtualPowerPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(soundPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(sdPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_clear_flag(gpsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->timePanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->wifiPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::buildBleFavoriteButton(lv_obj_t *panel, SavedConnections::Role role) {
@@ -1091,7 +1063,7 @@ void DisplayLcd::buildDeviceHubPanel() {
   lv_obj_set_style_border_width(deviceHubPanel_, 0, 0);
   lv_obj_set_style_bg_color(deviceHubPanel_, lv_color_make(248, 250, 252), 0);
   buildPanelHeader(deviceHubPanel_, "BLUETOOTH DEVICES", onCancelSelection);
-  static const char *titles[] = {"POWER METER", "6-AXIS SENSOR", "HEART RATE"};
+  static const char *titles[] = {"POWER METER", "FOREARM IMU", "HEART RATE"};
   static const lv_color_t colors[] = {
       lv_color_make(37, 99, 235), lv_color_make(220, 38, 38),
       lv_color_make(13, 148, 136)};
@@ -1191,161 +1163,93 @@ void DisplayLcd::showSettings() {
   hideDevicePanels();
   lv_obj_add_flag(soundPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(sdPanel_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(gpsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(timePanel_, LV_OBJ_FLAG_HIDDEN);
   if (languagePanel_) lv_obj_add_flag(languagePanel_, LV_OBJ_FLAG_HIDDEN);
   if (wifiPanel_) lv_obj_add_flag(wifiPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
-void DisplayLcd::updateGpsStatus(bool enabled, bool fix, uint8_t sat, uint32_t hdop,
-                                 double lat, double lon, float altM, float speedMps,
-                                 const char *utc, const char *local, uint32_t ageMs) {
-  if (!gpsPanel_) return;
-
-  char buf[80];
-
-  // 定位状态
-  const char *fixText;
-  lv_color_t fixColor;
-  if (!enabled) {
-    fixText = localized("GPS offline", "GPS 离线");
-    fixColor = lv_color_make(148, 163, 184);
-  } else if (fix) {
-    fixText = localized("FIX ACQUIRED", "已定位");
-    fixColor = lv_color_make(22, 163, 74);
-  } else {
-    fixText = localized("Searching satellites...", "正在搜星...");
-    fixColor = lv_color_make(217, 119, 6);
+void DisplayLcd::updateNetworkTime(bool networkConnected, uint32_t utc) {
+  if (!timePanel_) return;
+  lv_label_set_text(timeStatusLabel_, utc
+      ? localized(networkConnected ? "NTP time synchronized" : "NTP synchronized / holdover",
+                  networkConnected ? "NTP 网络对时成功" : "NTP 已对时 / 本地保持")
+      : networkConnected ? localized("Waiting for NTP time", "等待 NTP 网络对时")
+                         : localized("Wi-Fi is disconnected", "Wi-Fi 未连接"));
+  lv_obj_set_style_text_color(timeStatusLabel_, utc
+      ? lv_color_make(22, 163, 74) : lv_color_make(217, 119, 6), 0);
+  if (!utc) {
+    lv_label_set_text(timeUtcLabel_, localized("UTC  --", "UTC  --"));
+    lv_label_set_text(timeInfoLabel_, localized("Syncs every 5 minutes while online.",
+                                                "联网时每 5 分钟自动对时。"));
+    return;
   }
-  lv_label_set_text(gpsFixLabel_, fixText);
-  lv_obj_set_style_text_color(gpsFixLabel_, fixColor, 0);
-  (void)ageMs;
-
-  // UTC 时间
-  snprintf(buf, sizeof(buf), "UTC  %s", (utc && utc[0]) ? utc : "--");
-  lv_label_set_text(gpsUtcLabel_, buf);
-
-  // 本地时间
-  snprintf(buf, sizeof(buf), "%s  %s",
-           localized("LOCAL", "本地"), (local && local[0]) ? local : "--");
-  lv_label_set_text(gpsLocalLabel_, buf);
-
-  // 经纬度
-  if (fix) {
-    snprintf(buf, sizeof(buf), "%.5f, %.5f", lat, lon);
-  } else {
-    snprintf(buf, sizeof(buf), "-- , --");
-  }
-  lv_label_set_text(gpsCoordLabel_, buf);
-
-  // 卫星 / HDOP
-  snprintf(buf, sizeof(buf), "%s %u    HDOP %.1f",
-           localized("SAT", "卫星"), (unsigned)sat, (double)hdop / 100.0);
-  lv_label_set_text(gpsSatLabel_, buf);
-
-  // 海拔
-  snprintf(buf, sizeof(buf), "%s  %.1f m", localized("ALT", "海拔"), (double)altM);
-  lv_label_set_text(gpsAltLabel_, buf);
-
-  // 地速
-  snprintf(buf, sizeof(buf), "%s  %.1f km/h", localized("SPD", "地速"),
-           (double)speedMps * 3.6);
-  lv_label_set_text(gpsSpeedLabel_, buf);
+  const time_t epoch = time_t(utc);
+  struct tm value;
+  char formatted[40];
+  if (gmtime_r(&epoch, &value) &&
+      strftime(formatted, sizeof(formatted), "UTC  %Y-%m-%d %H:%M:%S", &value))
+    lv_label_set_text(timeUtcLabel_, formatted);
+  lv_label_set_text(timeInfoLabel_, localized("NTP refresh: every 5 minutes",
+                                              "NTP 自动校准：每 5 分钟"));
 }
 
-void DisplayLcd::updateGpsIndicator(bool enabled, bool fix, uint8_t sat) {
-  if (!gpsIndicatorLabel_ || !gpsIndicatorSpinner_ || !gpsSatelliteLabel_) return;
-
-  char text[24];
-  if (!enabled) {
-    // GPS 关闭：灰色图标，无动画
-    lv_label_set_text(gpsSatelliteLabel_, "--");
-    lv_obj_clear_flag(gpsSatelliteLabel_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_white(), 0);
-    lv_obj_add_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);
-    gpsIndicatorFixed_ = false;
-  } else if (fix) {
-    // 已定位：绿色图标 + 卫星数，无动画
-    snprintf(text, sizeof(text), "%u", (unsigned)sat);
-    lv_label_set_text(gpsSatelliteLabel_, text);
-    lv_obj_clear_flag(gpsSatelliteLabel_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_white(), 0);
-    lv_obj_add_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);
-    gpsIndicatorFixed_ = true;
-  } else {
-    // 搜星中：橙色图标 + 旋转动画，无卫星数
-    lv_obj_add_flag(gpsSatelliteLabel_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_text_color(gpsIndicatorLabel_, lv_color_white(), 0);
-    lv_obj_clear_flag(gpsIndicatorSpinner_, LV_OBJ_FLAG_HIDDEN);
-    gpsIndicatorFixed_ = false;
-  }
+void DisplayLcd::updateTimeIndicator(bool synced) {
+  if (!networkIndicatorLabel_ || !statusBarTimeLabel_) return;
+  lv_label_set_text(networkIndicatorLabel_, LV_SYMBOL_WIFI);
+  lv_label_set_text(statusBarTimeLabel_, synced ? "OK" : "--");
 }
 
-void DisplayLcd::buildGpsPanel() {
-  gpsPanel_ = lv_obj_create(screen_);
-  lv_obj_set_size(gpsPanel_, 240, 320);
-  lv_obj_center(gpsPanel_);
-  lv_obj_clear_flag(gpsPanel_, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_scrollbar_mode(gpsPanel_, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_set_style_pad_all(gpsPanel_, 0, 0);
-  lv_obj_set_style_radius(gpsPanel_, 0, 0);
-  lv_obj_set_style_border_width(gpsPanel_, 0, 0);
-  lv_obj_set_style_bg_color(gpsPanel_, lv_color_make(248, 250, 252), 0);
-  lv_obj_set_style_bg_opa(gpsPanel_, LV_OPA_COVER, 0);
-  buildPanelHeader(gpsPanel_, "GPS", onGpsBack);
-  gpsTitle_ = lv_obj_get_child(gpsPanel_, 1);
+void DisplayLcd::buildTimePanel() {
+  timePanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(timePanel_, 240, 320);
+  lv_obj_center(timePanel_);
+  lv_obj_clear_flag(timePanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(timePanel_, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_style_pad_all(timePanel_, 0, 0);
+  lv_obj_set_style_radius(timePanel_, 0, 0);
+  lv_obj_set_style_border_width(timePanel_, 0, 0);
+  lv_obj_set_style_bg_color(timePanel_, lv_color_make(248, 250, 252), 0);
+  lv_obj_set_style_bg_opa(timePanel_, LV_OPA_COVER, 0);
+  buildPanelHeader(timePanel_, "NETWORK TIME", onTimeBack);
+  timeTitle_ = lv_obj_get_child(timePanel_, 1);
 
-  // 定位状态（大字）
-  gpsFixLabel_ = lv_label_create(gpsPanel_);
-  lv_label_set_text(gpsFixLabel_, "Searching satellites...");
-  lv_obj_set_width(gpsFixLabel_, 216);
-  lv_obj_set_style_text_font(gpsFixLabel_, &lv_font_jetbrains_mono_16, 0);
-  lv_obj_set_style_text_color(gpsFixLabel_, lv_color_make(217, 119, 6), 0);
-  lv_obj_align(gpsFixLabel_, LV_ALIGN_TOP_LEFT, 12, 56);
+  timeStatusLabel_ = lv_label_create(timePanel_);
+  lv_obj_set_width(timeStatusLabel_, 216);
+  lv_obj_set_height(timeStatusLabel_, 42);
+  lv_label_set_long_mode(timeStatusLabel_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(timeStatusLabel_, &lv_font_noto_sans_sc_14, 0);
+  lv_obj_align(timeStatusLabel_, LV_ALIGN_TOP_LEFT, 12, 72);
 
-  // 信息卡片容器
-  lv_obj_t *card = lv_obj_create(gpsPanel_);
-  lv_obj_set_size(card, 216, 138);
-  lv_obj_align(card, LV_ALIGN_TOP_LEFT, 12, 82);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_pad_all(card, 8, 0);
-  lv_obj_set_style_radius(card, 8, 0);
-  lv_obj_set_style_bg_color(card, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(card, lv_color_make(226, 232, 240), 0);
-  lv_obj_set_style_border_width(card, 1, 0);
-  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(card, 5, 0);
+  timeUtcLabel_ = lv_label_create(timePanel_);
+  lv_obj_set_width(timeUtcLabel_, 216);
+  lv_obj_set_height(timeUtcLabel_, 44);
+  lv_label_set_long_mode(timeUtcLabel_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(timeUtcLabel_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(timeUtcLabel_, lv_color_make(30, 41, 59), 0);
+  lv_obj_align(timeUtcLabel_, LV_ALIGN_TOP_LEFT, 12, 124);
+  lv_label_set_text(timeUtcLabel_, "UTC  --");
 
-  const char *initTexts[] = {"UTC  --", "LOCAL  --", "-- , --",
-                             "SAT 0    HDOP --", "ALT  -- m", "SPD  -- km/h"};
-  lv_obj_t **labels[] = {&gpsUtcLabel_, &gpsLocalLabel_, &gpsCoordLabel_,
-                         &gpsSatLabel_, &gpsAltLabel_, &gpsSpeedLabel_};
-  for (size_t i = 0; i < 6; ++i) {
-    lv_obj_t *lbl = lv_label_create(card);
-    lv_label_set_text(lbl, initTexts[i]);
-    lv_obj_set_width(lbl, 196);
-    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_font(lbl, &lv_font_jetbrains_mono_14, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_make(30, 41, 59), 0);
-    *labels[i] = lbl;
-  }
+  timeInfoLabel_ = lv_label_create(timePanel_);
+  lv_obj_set_width(timeInfoLabel_, 216);
+  lv_obj_set_height(timeInfoLabel_, 40);
+  lv_label_set_long_mode(timeInfoLabel_, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(timeInfoLabel_, &lv_font_noto_sans_sc_14, 0);
+  lv_obj_set_style_text_color(timeInfoLabel_, lv_color_make(71, 85, 105), 0);
+  lv_obj_align(timeInfoLabel_, LV_ALIGN_TOP_LEFT, 12, 176);
 
-  // 手动重启按钮
-  gpsRestartButton_ = lv_btn_create(gpsPanel_);
-  lv_obj_set_size(gpsRestartButton_, 216, 42);
-  lv_obj_set_style_radius(gpsRestartButton_, 0, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(gpsRestartButton_, lv_color_make(37, 99, 235), 0);
-  lv_obj_align(gpsRestartButton_, LV_ALIGN_TOP_LEFT, 12, 236);
-  lv_obj_add_event_cb(gpsRestartButton_, onGpsRestartClicked, LV_EVENT_CLICKED, nullptr);
-  gpsRestartLabel_ = lv_label_create(gpsRestartButton_);
-  lv_label_set_text(gpsRestartLabel_, LV_SYMBOL_REFRESH " RESTART GPS");
-  lv_obj_set_style_text_color(gpsRestartLabel_, lv_color_white(), 0);
-  lv_obj_set_style_text_font(gpsRestartLabel_, &lv_font_jetbrains_mono_14, 0);
-  lv_obj_center(gpsRestartLabel_);
+  lv_obj_t *wifiButton = lv_btn_create(timePanel_);
+  lv_obj_set_size(wifiButton, 216, 44);
+  lv_obj_align(wifiButton, LV_ALIGN_TOP_LEFT, 12, 236);
+  lv_obj_set_style_bg_color(wifiButton, lv_color_make(37, 99, 235), 0);
+  lv_obj_add_event_cb(wifiButton, onTimeWifiClicked, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *wifiLabel = lv_label_create(wifiButton);
+  lv_label_set_text(wifiLabel, "WI-FI SETTINGS");
+  lv_obj_set_style_text_color(wifiLabel, lv_color_white(), 0);
+  lv_obj_set_style_text_font(wifiLabel, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_center(wifiLabel);
 
-  lv_obj_add_flag(gpsPanel_, LV_OBJ_FLAG_HIDDEN);
-
+  lv_obj_add_flag(timePanel_, LV_OBJ_FLAG_HIDDEN);
   buildNoticePanel();
 }
 
@@ -1858,19 +1762,18 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_text_font(settingsSdButtonLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(settingsSdButtonLabel_);
 
-  // GPS 入口
-  settingsGpsButton_ = lv_btn_create(settingsPanel_);
-  lv_obj_set_size(settingsGpsButton_, kBtnW, kBtnH);
-  lv_obj_set_style_radius(settingsGpsButton_, 8, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(settingsGpsButton_, lv_color_make(21, 128, 61), 0);
-  lv_obj_align(settingsGpsButton_, LV_ALIGN_TOP_LEFT, kColX[1], kRowY[2]);
-  lv_obj_add_event_cb(settingsGpsButton_, onGpsButton, LV_EVENT_CLICKED, nullptr);
-  settingsGpsButtonLabel_ = lv_label_create(settingsGpsButton_);
-  lv_label_set_text(settingsGpsButtonLabel_, LV_SYMBOL_GPS "\nGPS");
-  lv_obj_set_style_text_color(settingsGpsButtonLabel_, lv_color_white(), 0);
-  lv_obj_set_style_text_align(settingsGpsButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(settingsGpsButtonLabel_, &lv_font_jetbrains_mono_14, 0);
-  lv_obj_center(settingsGpsButtonLabel_);
+  settingsTimeButton_ = lv_btn_create(settingsPanel_);
+  lv_obj_set_size(settingsTimeButton_, kBtnW, kBtnH);
+  lv_obj_set_style_radius(settingsTimeButton_, 8, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(settingsTimeButton_, lv_color_make(21, 128, 61), 0);
+  lv_obj_align(settingsTimeButton_, LV_ALIGN_TOP_LEFT, kColX[1], kRowY[2]);
+  lv_obj_add_event_cb(settingsTimeButton_, onTimeButton, LV_EVENT_CLICKED, nullptr);
+  settingsTimeButtonLabel_ = lv_label_create(settingsTimeButton_);
+  lv_label_set_text(settingsTimeButtonLabel_, LV_SYMBOL_WIFI "\nTIME");
+  lv_obj_set_style_text_color(settingsTimeButtonLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_align(settingsTimeButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(settingsTimeButtonLabel_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_center(settingsTimeButtonLabel_);
 
   lv_obj_t *logs = lv_btn_create(settingsPanel_);
   lv_obj_set_size(logs, 96, 52);
@@ -1962,7 +1865,7 @@ void DisplayLcd::buildSettingsPanel() {
   buildWifiPanel();
   buildSoundPanel();
   buildSdPanel();
-  buildGpsPanel();
+  buildTimePanel();
 }
 
 void DisplayLcd::buildLanguagePanel() {
@@ -2302,15 +2205,16 @@ void DisplayLcd::refreshLanguage() {
   lv_label_set_text(settingsSdButtonLabel_,
                     localized(LV_SYMBOL_OK "\nONLINE", LV_SYMBOL_OK "\n在线设备"));
   lv_label_set_text(settingsSoundButtonLabel_, localized(LV_SYMBOL_AUDIO "\nSOUND", LV_SYMBOL_AUDIO "\n声音"));
-  lv_label_set_text(settingsGpsButtonLabel_, LV_SYMBOL_GPS "\nGPS");
+  lv_label_set_text(settingsTimeButtonLabel_,
+                    localized(LV_SYMBOL_WIFI "\nTIME", LV_SYMBOL_WIFI "\n时间"));
   lv_obj_set_style_text_font(settingsTitle_, titleFont, 0);
-  for (auto *label : {settingsPowerButtonLabel_, settingsLanguageEntryLabel_, settingsWifiEntryLabel_, settingsSdButtonLabel_, settingsSoundButtonLabel_, settingsGpsButtonLabel_})
+  for (auto *label : {settingsPowerButtonLabel_, settingsLanguageEntryLabel_, settingsWifiEntryLabel_, settingsSdButtonLabel_, settingsSoundButtonLabel_, settingsTimeButtonLabel_})
     lv_obj_set_style_text_font(label, font, 0);
   lv_label_set_text(lv_obj_get_child(deviceHubPanel_, 1),
                     localized("BLUETOOTH DEVICES", "蓝牙设备"));
   const char *roleTitles[] = {
       localized("POWER SOURCE", "功率来源"),
-      localized("6-AXIS SENSOR", "穿戴六轴"),
+      localized("FOREARM IMU", "前臂六轴"),
       localized("HEART RATE", "心率设备")};
   lv_obj_t *rolePanels[] = {powerSourcePanel_, postureDevicePanel_, heartDevicePanel_};
   for (size_t i = 0; i < 3; ++i)
@@ -2331,18 +2235,19 @@ void DisplayLcd::refreshLanguage() {
     lv_label_set_text(settingsWifiButtonLabels_[index], index ? localized("ON", "开启") : localized("OFF", "关闭"));
     lv_obj_set_style_text_font(settingsWifiButtonLabels_[index], font, 0);
   }
-  lv_label_set_text(gpsTitle_, "GPS");
-  lv_label_set_text(gpsRestartLabel_, localized(LV_SYMBOL_REFRESH " RESTART GPS", LV_SYMBOL_REFRESH " 重启 GPS"));
+  lv_label_set_text(timeTitle_, localized("NETWORK TIME", "网络时间"));
+  lv_obj_set_style_text_font(timeTitle_, titleFont, 0);
+  lv_obj_set_style_text_font(timeStatusLabel_, font, 0);
+  lv_obj_set_style_text_font(timeUtcLabel_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_font(timeInfoLabel_, font, 0);
   setRecording(recording_, recordingArmed_);
   setFitSaving(fitSaving_);
   lv_label_set_text(stopRecordLabel_, localized(LV_SYMBOL_STOP " STOP", LV_SYMBOL_STOP " 停止"));
   lv_label_set_text(rideLogTitle_, localized("LOG", "日志"));
   lv_label_set_text(rideLogEntryLabel_, localized(LV_SYMBOL_LIST "\nLOG", LV_SYMBOL_LIST "\n记录日志"));
   lv_label_set_text(wifiSetupLabel_, localized("SET UP WI-FI", "配置网络"));
-  for (auto *label : {recordLabel_, stopRecordLabel_, fitSaveLabel_, rideLogTitle_, rideLogEntryLabel_, wifiSetupLabel_, rideLogText_, rideDurationLabel_, gpsRestartLabel_, gpsUtcLabel_, gpsLocalLabel_, gpsCoordLabel_, gpsSatLabel_, gpsAltLabel_, gpsSpeedLabel_})
+  for (auto *label : {recordLabel_, stopRecordLabel_, fitSaveLabel_, rideLogTitle_, rideLogEntryLabel_, wifiSetupLabel_, rideLogText_, rideDurationLabel_})
     lv_obj_set_style_text_font(label, font, 0);
-  lv_obj_set_style_text_font(gpsTitle_, titleFont, 0);
-  lv_obj_set_style_text_font(gpsFixLabel_, titleFont, 0);
   refreshRideLog();
   lv_label_set_text(soundTitle_, localized("SOUND", "声音"));
   lv_label_set_text(soundHint_, localized("Drag the slider to set volume.\nPreview tones are disabled.", "拖动滑块设置音量。\n试听提示音已禁用。"));
@@ -2380,7 +2285,7 @@ void DisplayLcd::refreshLanguage() {
     powerSourcePanel_, deviceHubPanel_, heartDevicePanel_, postureDevicePanel_,
     onlineDevicesPanel_, bleDevicePanel_, bleConfirmPanel_,
     bleLoadingPanel_, virtualPowerPanel_, settingsPanel_, soundPanel_, sdPanel_,
-    gpsPanel_, languagePanel_, wifiPanel_, rideLogPanel_
+    timePanel_, languagePanel_, wifiPanel_, rideLogPanel_
   };
   for (lv_obj_t *panel : panels) {
     lv_obj_t *backButton = lv_obj_get_child(panel, 0);
@@ -2392,7 +2297,7 @@ void DisplayLcd::refreshLanguage() {
   updateOnlineDevices(onlineBleConnected_[0], onlineBleResponding_[0],
                       onlineBleConnected_[1], onlineBleResponding_[1],
                       onlineBleConnected_[2], onlineBleResponding_[2],
-                      onlineGpsPresent_, onlineGpsFixed_,
+                      onlineNetworkConnected_, onlineTimeSynced_,
                       onlineWindPresent_, onlineWindResponding_);
   AppLog.println("[LANG] 12 done");
 }
@@ -2405,8 +2310,8 @@ void DisplayLcd::begin() {
     Preferences preferences;
     if (preferences.begin("aero-ui", true)) {
       chinese_ = preferences.getBool("zh", false);
-      const uint8_t placement = preferences.getUChar("imu-wear", 1);
-      if (placement <= 2) posturePlacement_ = RiderPosture::Placement(placement);
+      const uint8_t placement = preferences.getUChar("imu-wear", 3);
+      if (placement <= 3) posturePlacement_ = RiderPosture::Placement(placement);
       preferences.end();
     }
   }
@@ -2455,9 +2360,8 @@ void DisplayLcd::begin() {
 
   lv_obj_set_style_pad_all(screen_, 0, 0);
   dashboard_.create(screen_, onRideLogButton, onSettingsButton);
-  gpsIndicatorSpinner_ = dashboard_.spinner;
-  gpsIndicatorLabel_ = dashboard_.gps;
-  gpsSatelliteLabel_ = dashboard_.satellites;
+  networkIndicatorLabel_ = dashboard_.network;
+  statusBarTimeLabel_ = dashboard_.timeStatus;
   timeLabel_ = dashboard_.clock;
   statusLabel_ = dashboard_.sdIcon;
   powerSourceButton_ = dashboard_.settingsButton;

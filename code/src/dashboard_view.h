@@ -39,18 +39,10 @@ public:
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
-    gps = text(bar, 2, StatusLabelY, 18, StatusLabelHeight, &lv_font_jetbrains_mono_14);
-    lv_label_set_text(gps, LV_SYMBOL_GPS);
-    satellites = text(bar, 20, StatusLabelY, 26, StatusLabelHeight, &lv_font_jetbrains_mono_14);
-    lv_label_set_text(satellites, "--");
-    spinner = lv_spinner_create(bar, 1000, 60);
-    lv_obj_set_pos(spinner, 25, 6);
-    lv_obj_set_size(spinner, 16, 16);
-    lv_obj_set_style_arc_width(spinner, 2, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(spinner, 2, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(spinner, lv_color_white(), LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(spinner, lv_color_make(80, 80, 80), LV_PART_MAIN);
-    lv_obj_add_flag(spinner, LV_OBJ_FLAG_HIDDEN);
+    network = text(bar, 2, StatusLabelY, 18, StatusLabelHeight, &lv_font_jetbrains_mono_14);
+    lv_label_set_text(network, LV_SYMBOL_WIFI);
+    timeStatus = text(bar, 20, StatusLabelY, 26, StatusLabelHeight, &lv_font_jetbrains_mono_14);
+    lv_label_set_text(timeStatus, "--");
     sdButton = hotButton(screen, 48, sdCallback);
     sdIcon = text(bar, 61, StatusLabelY, 18, StatusLabelHeight, &lv_font_jetbrains_mono_14);
     lv_label_set_text(sdIcon, LV_SYMBOL_SAVE);
@@ -218,7 +210,7 @@ public:
   lv_obj_t *row(unsigned id) const { return rows_[id].box; }
   lv_obj_t *title(unsigned id) const { return rows_[id].title; }
   lv_obj_t *reading(unsigned id) const { return rows_[id].value; }
-  lv_obj_t *gps = nullptr, *satellites = nullptr, *spinner = nullptr, *clock = nullptr;
+  lv_obj_t *network = nullptr, *timeStatus = nullptr, *clock = nullptr;
   lv_obj_t *dot_ = nullptr;   // 录制中的闪烁小圆点
   // 电量图标对外暴露，便于测试断言格数与位置。
   lv_obj_t *batteryIcon_ = nullptr, *batteryCaps_ = nullptr;

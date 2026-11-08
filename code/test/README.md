@@ -37,6 +37,13 @@ Subsequent builds use Docker layers and the pip download cache.
 
 ## Coverage And Boundaries
 
+The `ui_sensors` native scenario verifies the six-row online-device list fits
+without scrolling and that right forearm is the default selectable BLE IMU
+placement. `system_wifi` verifies the production Wi-Fi code requests SNTP with
+a 300000 ms synchronization interval after connection. These tests use host
+LVGL/ESP service mocks; they do not prove physical display readability, RF
+coexistence, or actual NTP accuracy.
+
 ### Type-C SD Export
 
 The Waveshare schematic routes Type-C data to ESP32-S3 GPIO19/20, so its native
@@ -158,13 +165,16 @@ and device credential encryption are not provided by ignore rules or encoding.
 
 #### Online Devices And Wear Location
 
-ONLINE DEVICES has six scrollable entries: power, heart rate, wearable IMU,
-GPS, wind and onboard QMI8658. Names/status and latest readings are separate;
-the existing 1 Hz main-loop UI window refreshes data and receipt age in ms.
-Only valid input replaces the cached reading. Offline/stale status remains
-visible alongside the retained last sample; no sample displays `--`.
+ONLINE DEVICES shows six fixed rows without scrolling: power, heart rate,
+right-forearm IMU, network time, wind and the onboard bike-frame QMI8658.
+Names/status and latest readings are separate; the existing 1 Hz main-loop UI
+window refreshes data and receipt age in ms. Only valid input replaces the
+cached reading. Offline/stale status remains visible alongside the retained
+last sample; no sample displays `--`. The onboard IMU is the frame reference;
+the optional BLE IMU is worn on the right forearm.
 
-The wearable 6-axis page offers Upper arm, Back HR strap and Helmet mount.
+The wearable 6-axis page defaults to Right forearm and also offers Upper arm,
+Back HR strap and Helmet mount.
 Selection persists as `aero-ui/imu-wear`; a failed save restores the previous
 selection. Changing location clears calibration. Calibration is intentionally
 boot-local because the sensor mounting/orientation can change between rides.
@@ -412,15 +422,15 @@ claim of 100% line/branch or end-to-end hardware coverage.
 | Group | Scenarios |
 | --- | --- |
 | `ui_language` | Actual LVGL C rendering, production AeroZoneView and generated Chinese font; all UI CJK glyphs/icons, text metrics, all zones in both languages, 1600 refreshes, heap integrity and nonblank pixels |
-| `system_coexistence` | GPS UART receiver and BLE scan/notifications stay active while an HTTP callback thread submits 64 control requests, 64 WebSocket telemetry frames are produced and 64 CSV samples are written; continued recording during paced HTTP download; SD lock contention, competing/missing downloads, Wi-Fi loss/reconnect, scan cancellation and clean GPS/BLE shutdown |
+| `system_coexistence` | Host-only GPS parser and BLE scan/notifications stay active while an HTTP callback thread submits 64 control requests, 64 WebSocket telemetry frames are produced and 64 CSV samples are written; continued recording during paced HTTP download; SD lock contention, competing/missing downloads, Wi-Fi loss/reconnect, scan cancellation and clean test-module shutdown |
 | `system_wifi` | No credentials, preferences failure, STA initialization/start failure, low contiguous heap, mDNS failure, saved-network ordering, immediate failure/timeout progression, stop-after-list, manual reconnect, successful-connection persistence, SmartConfig timeout/manual retry/save failure, enable/disable, credential clearing, invalid controls/paths, escaped JSON and nonfinite telemetry |
-| `system_storage` | SPI/mount/task failure and startup worker retry/reuse, bounded CMD13 timeout recovery (no write-command or non-timeout retries), no automatic formatting, recording-directory file conflicts, GPS-over-fallback UTC priority, paused buffer overflow, date rollover, unique filenames, blocked writer recovery, short write/fsync recovery, session limits, repeated parent/child directory reads, empty versus missing directories, partial-list errors and recovery |
+| `system_storage` | SPI/mount/task failure and startup worker retry/reuse, bounded CMD13 timeout recovery (no write-command or non-timeout retries), no automatic formatting, recording-directory file conflicts, network/fallback UTC selection and legacy GPS-priority compatibility, paused buffer overflow, date rollover, unique filenames, blocked writer recovery, short write/fsync recovery, session limits, repeated parent/child directory reads, empty versus missing directories, partial-list errors and recovery |
 | `system_usb_storage` | Read-only USB export controller, boot-only ownership, partial/cross-sector reads, bounds/overflow, failures/eject and real CsvLogger mount/start exclusion |
 | `system_recording_lifecycle` | Production RideRecorder and raw Flash journal: validity-gated start, valid zero samples, duplicate START, skipped windows/duration, torn session/sample/ack writes, CRC corruption, full cache, SD recovery retry, four-sample and 65-sample reboot replay, shutdown FIT and delayed cache acknowledgement; three retained CSV/FIT pairs independently decoded |
 | `system_fit` | HTTP start request, real CSV recording and writer, 65 fixed samples split at UTC midnight, asynchronous FIT export, automatic stop/flush, overwrite protection, malformed CSV rejection, retained output and independent strict FIT decoding |
 | `system_wind_power_fit` | Real FS3000 frames and CPS/FTMS notification parsing feed CSV and FIT; every wind/power value is checked independently; power boundaries, quiet/full-scale wind, checksum/short packet protection, disconnect/reconnect and protocol switch |
-| `system_stage1_ble_wind_fit` | Wi-Fi off, GPS absent, raw FS3000 + CPS/FTMS packets, BLE disconnect/reconnect, one 65-row CSV, fallback UTC and independently decoded FIT |
-| `system_stage2_gps_ble_wind_fit` | Stage 1 measurement inputs plus background TinyGPSPlus NMEA reception, GPS UTC/local date, GPS speed override, checksum error, 5-second stream loss/recovery and uninterrupted 65-row CSV/FIT |
+| `system_stage1_ble_wind_fit` | Host recording fixture with Wi-Fi off, raw FS3000 + CPS/FTMS packets, BLE disconnect/reconnect, one 65-row CSV, fallback UTC and independently decoded FIT |
+| `system_stage2_gps_ble_wind_fit` | Legacy GPS parser regression fixture only; exercises TinyGPSPlus NMEA reception, GPS UTC/local date, GPS speed override, checksum error, 5-second stream loss/recovery and uninterrupted 65-row CSV/FIT. GPS is excluded from production firmware. |
 | `sensors_power` | FS3000 calibration knots/interpolation/clamping, invalid frames/checksum/offline/reprobe; wind magnitude and yaw sign; BME280 fallback/formula/refresh/invalid samples; boot latch, short/long press and shutdown GPIOs; disabled audio rejects playback without I2S allocation |
 | `concurrency` | GPS background reception, valid-NMEA presence, offline timeout, noise rejection, automatic reconnect after disconnect or initial absence, freshness/checksum/UART overflow/restart; HTTP download pacing, lock timeout, short read/open/seek errors; navigation release/bounce/timer wrap |
 | `ble_runtime` | Scan start/end/deadline/cancel/stop errors, adaptive scan windows, bounded packet inbox and generations, controller queue/cancellation/restart, CPS/FTMS/CSC/posture decoding, log replay/MTU/byte budget/backoff/commands/disconnect |
@@ -632,21 +642,24 @@ rows; production RideRecorder filters invalid windows before reaching the logger
 After a station connection the firmware starts ESP-IDF SNTP asynchronously with
 `ntp.aliyun.com`, `time.cloudflare.com` and `pool.ntp.org`. No blocking
 `getLocalTime()` wait is used. Until an actual SNTP completion the network clock
-is untrusted; DNS/server failure leaves the dashboard at `--:--:--` unless GPS
-provides time. SNTP manages retries and periodic resynchronization. A previously
-synchronized system clock continues through disconnection or Wi-Fi OFF, but is
-not retained across power loss. Reconnection requests synchronization again.
+is untrusted; DNS/server failure leaves the dashboard at `--:--:--` until network
+time synchronizes. SNTP manages retries and periodic resynchronization. A
+previously synchronized system clock continues through disconnection or Wi-Fi
+OFF, but is not retained across power loss. Reconnection requests synchronization
+again.
 
-The dashboard uses valid GPS UTC first, then synchronized network UTC, and shows
-UTC+8 `HH:MM:SS` at the top right. The small recording icon is gray when stopped
-and green while recording; tapping opens RIDE LOG and BACK returns to its origin.
-NTP can replace a fallback recording UTC anchor; GPS remains higher priority.
-Repeated NTP updates do not move an already selected network anchor. CSV date
+The dashboard uses synchronized network UTC and shows UTC+8 `HH:MM:SS` at the top
+right. The small recording icon is gray when stopped and green while recording;
+tapping opens RIDE LOG and BACK returns to its origin.
+NTP can replace a fallback recording UTC anchor. Repeated NTP updates do not
+move an already selected network anchor. Production firmware has no GPS time
+source. CSV date
 directories use UTC+8, FIT timestamps remain UTC, and sample timing stays based
 on `millis()` rather than a corrected wall clock.
 
 `system_wifi` covers pending/success/reconnect and retained time while offline;
-`system_storage` covers NTP/fallback/GPS priority and anchor retention;
+`system_storage` covers NTP/fallback selection and anchor retention (the GPS
+priority path remains only for host parser compatibility);
 `system_fit` independently decodes the real FIT generated from a network-reference
 fixture. The browser regression models server unavailability, completion and
 holdover, but does not contact real NTP servers. Physical verification: connect
@@ -751,32 +764,34 @@ Use the known-good card and existing production firmware, not `run.sh hardware`
 (that command replaces it with Unity firmware). Capture the serial monitor from
 boot. Leave Wi-Fi off and audio disabled in both initial stages.
 
-1. Stage 1: disconnect GPS, select the real BLE power meter (not VIRTUAL), verify
-  changing watts and source BLE, then record for at least 120 seconds. Include
-  coasting/zero watts and controlled airflow over the FS3000. Stop, save FIT,
-  retain CSV/FIT and serial logs. Require no SD errors or dropped samples;
-  compare steady power and wind values across monitor, CSV and decoded FIT.
-  Zero watts with BLE connected must stay valid; missing BLE must not become
-  valid zero power. No wheel-speed packets means zero speed/distance is expected.
-  Fallback UTC is not a real ride date. Back up the card before stage 2.
-2. Stage 2: power down before changing GPS wiring, then restart outside and wait
-  for fresh FIX/UTC. Repeat the same recording, confirm the UTC+8 date directory
-  and FIT UTC timestamps, and compare GPS ground speed separately from airspeed.
-  Exercise loss/recovery by safely interrupting only the NMEA stream (never
-  rewire power while running). Logging must continue, GPS must become offline,
-  ground speed must fall back to BLE wheel speed or zero, then recover.
-3. Accept each stage only after independently decoding its real FIT and comparing
-  count, power, airspeed, source IDs, UTC, duration and distance against retained
-  CSV/monitor data. Record device identities, firmware revision and test times.
-  These are manual gates; the automated simulation does not mark them passed.
+1. Connect the optional BLE IMU and verify that the onboard QMI8658 remains the
+  bike-frame reference while the BLE sensor is assigned to the right forearm.
+  Confirm the posture setup defaults to that placement and that disconnecting
+  the wearable does not disable the onboard sensor.
+2. Connect Wi-Fi with Internet/UDP 123 access. Wait for `[TIME] NTP synchronized`,
+  then observe at least two five-minute synchronization intervals. Compare the
+  displayed UTC/local time and a saved FIT timestamp against a trusted clock.
+  Disable Wi-Fi and confirm local time advances; after a cold offline boot, note
+  that the fixed fallback date is not a real ride date.
+3. Select the real BLE power meter (not VIRTUAL), verify changing watts and
+  source BLE, then record for at least 120 seconds. Include coasting/zero watts
+  and controlled airflow over the FS3000. Stop, save FIT, retain CSV/FIT and
+  serial logs. Require no SD errors or dropped samples; compare power and wind
+  across monitor, CSV and decoded FIT. Connected zero watts must stay valid;
+  missing BLE must not become valid zero power. Without BLE speed packets,
+  ground speed/distance should remain unavailable/zero, not be inferred.
+4. Independently decode the FIT and compare count, power, airspeed, source IDs,
+  UTC, duration and distance against retained CSV/monitor data. Record device
+  identities, firmware revision and test times. These manual gates are not
+  passed by host mocks or simulated fixtures.
 
 ### Remaining Hardware Gates
 
-- Run production firmware with an actual NMEA module, power/posture/heart BLE
-  sensors, Wi-Fi WebSocket clients/downloads and a FAT32 SD card simultaneously.
-  Repeat scans while checking power packet continuity and heart freshness.
+- Run production firmware with power/posture/heart BLE sensors, Wi-Fi
+  WebSocket clients/downloads and a FAT32 SD card simultaneously. Repeat scans
+  while checking power packet continuity and heart freshness.
 - During Wi-Fi reconnect and SD contention, compare sequence/sample counts,
-  GPS UART overflow statistics, BLE queue drops and CSV/FIT integrity. Record
+  NTP reconnect/sync logs, BLE queue drops and CSV/FIT integrity. Record
   observed discovery latency and disconnect rate; no simulated threshold is a
   substitute for those measurements.
 - Exercise LCD/touch page transitions, real I2C/SD electrical failures, power
@@ -828,8 +843,8 @@ The test Python environment is separate from IDF's Python environment.
 `pytest-embedded` services are pinned to 1.14.0 because the IDF 4.4.6 image uses
 Python 3.8; the current 2.x framework requires Python 3.10 or newer. pytest and
 esptool are pinned as well. QEMU archives are versioned and SHA256-checked.
-TinyGPSPlus 1.1.0 source is pinned to a specific upstream commit so native tests
-do not depend on a developer's local `.pio` cache.
+TinyGPSPlus 1.1.0 is pinned only for legacy GPS-parser host regression tests; it
+is not a production firmware dependency.
 
 References:
 

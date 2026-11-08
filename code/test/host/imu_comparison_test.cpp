@@ -101,6 +101,7 @@ bool failTaskCreation = false;
 
 static void postureTests() {
   RiderPosture estimator;
+  assert(estimator.placement() == RiderPosture::Placement::Forearm);
   ImuSample board, wearable;
   board.valid = wearable.valid = true;
   board.accelerationG[2] = wearable.accelerationG[2] = 1;
@@ -126,8 +127,8 @@ static void postureTests() {
   estimator.setPlacement(RiderPosture::Placement::Helmet);
   assert(estimator.update(2200, board, wearable).state == RiderPosture::State::NeedUpright);
   assert(estimator.update(2200, board, wearable).indirect);
-  for (auto placement : {RiderPosture::Placement::UpperArm, RiderPosture::Placement::BackStrap,
-                         RiderPosture::Placement::Helmet}) {
+  for (auto placement : {RiderPosture::Placement::Forearm, RiderPosture::Placement::UpperArm,
+                         RiderPosture::Placement::BackStrap, RiderPosture::Placement::Helmet}) {
     RiderPosture mounted;
     mounted.setPlacement(placement);
     board = wearable = ImuSample{};
@@ -145,9 +146,11 @@ static void postureTests() {
       mounted.update(now, board, wearable);
     }
     const auto classified = mounted.update(2200, board, wearable);
-    assert(classified.state == (placement == RiderPosture::Placement::Helmet
+    assert(classified.state == (placement == RiderPosture::Placement::Helmet ||
+                                placement == RiderPosture::Placement::Forearm
         ? RiderPosture::State::Forward : RiderPosture::State::Low));
-    assert(classified.indirect == (placement != RiderPosture::Placement::BackStrap));
+    assert(classified.indirect == (placement != RiderPosture::Placement::BackStrap &&
+                                   placement != RiderPosture::Placement::Forearm));
     board.accelerationG[0] = -std::sin(10.0f / 57.2957795f);
     board.accelerationG[2] = std::cos(10.0f / 57.2957795f);
     wearable.accelerationG[0] = -std::sin(40.0f / 57.2957795f);
@@ -165,10 +168,10 @@ static void postureTests() {
   assert(std::string(text) == "--");
   recent.capture("A +0.00 +0.00 +1.00 g", 100);
   recent.format(1100, text, sizeof(text));
-  assert(std::string(text) == "A +0.00 +0.00 +1.00 g\n1000 ms");
+  assert(std::string(text) == "A +0.00 +0.00 +1.00 g  1000ms");
   recent.capture("42 bpm", 0xFFFFFFF0u);
   recent.format(20, text, sizeof(text));
-  assert(std::string(text) == "42 bpm\n36 ms");
+  assert(std::string(text) == "42 bpm  36ms");
   recent.clear();
   recent.format(100, text, sizeof(text));
   assert(std::string(text) == "--");

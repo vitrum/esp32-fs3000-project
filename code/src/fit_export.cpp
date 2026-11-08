@@ -46,16 +46,16 @@ bool FitExport::start(CsvLogger &logger, bool timeValid) {
   // 用固定默认时间 + 当前 millis 作为锚点，保证 FIT 一定能生成。
   if (!logger.utcReference(utc, milliseconds) && FIT_DEFAULT_UTC != 0) {
     logger.useFallbackUtcReference(FIT_DEFAULT_UTC, millis());
-    AppLog.printf("[FIT] no GPS time; using default UTC %lu for this export\n",
+    AppLog.printf("[FIT] no network time; using configured fallback UTC %lu for this export\n",
                   (unsigned long)FIT_DEFAULT_UTC);
   }
 
-  // 错误提示要能区分「完全没时间」与「有 GPS 但记录期间没授时」。
+  // 错误提示要区分缺少 UTC 锚点与存储或记录失败。
   const char *error = nullptr;
   if (!logger.utcReference(utc, milliseconds)) {
-    // 走到这里说明既没有 GPS 参考，也没有可用的默认时间（FIT_DEFAULT_UTC==0）。
+    // 走到这里说明既没有网络时间，也没有可用的默认时间（FIT_DEFAULT_UTC==0）。
     error = timeValid ? "No trusted time for this recording."
-                      : "Acquire GPS time before saving FIT.";
+                      : "Connect to Wi-Fi for network time before saving FIT.";
   } else if (!sdCardReady()) {
     error = "SD card is not ready.";
   } else if (!logger.sampleCount()) {

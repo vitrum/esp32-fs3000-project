@@ -118,9 +118,12 @@ static void wifiTests() {
     WiFi.state = WL_CONNECTED;
     MDNS.fail = true;
     const auto requestsBeforeConnect = hostNtpRequests;
+    const auto restartsBeforeConnect = hostSntpRestarts;
     web.tick();
     assert(web.connected());
     assert(hostNtpRequests == requestsBeforeConnect + 1 && web.unixSec() == 0);
+    assert(hostSntpSyncIntervalMs == 300000 &&
+           hostSntpRestarts == restartsBeforeConnect + 1);
     assert(hostNtpOffset == 0 && hostNtpDaylightOffset == 0);
     for (const auto &server : hostNtpServers) assert(!server.empty());
     web.tick();
@@ -287,7 +290,7 @@ static void wifiTests() {
   }
   Preferences::bytes.clear();
   Preferences::values.clear();
-  std::cout << "PASS WiFi: lifecycle, startup cooldown, low heap, SmartConfig timeout/retry/persistence, reconnect, mDNS, HTTP validation, telemetry\n";
+  std::cout << "PASS WiFi: lifecycle, 5-minute NTP resync, startup cooldown, low heap, SmartConfig timeout/retry/persistence, reconnect, mDNS, HTTP validation, telemetry\n";
 }
 
 static void journalTests() {

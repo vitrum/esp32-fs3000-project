@@ -66,12 +66,6 @@
 #define AUDIO_VOLUME      55     // 0~100 默认音量
 #define AUDIO_SYSTEM_DIR  "/system"        // 系统音效目录（SD 卡内）
 
-// ============================================================================
-// GPS / 北斗双模模块（ATGM336H 等，中科微 AT6558 方案）
-// 接口：UART（标准 NMEA 0183 语句），3.3V TTL 电平，直接连 ESP32-S3。
-// 接线（板上 12PIN 排针的 UART 口：TXD=GPIO43 / RXD=GPIO44）：
-//   GPS TX  -> ESP32 RXD (GPIO44)
-//   GPS RX  -> ESP32 TXD (GPIO43)   [可选：用于发配置语句]
 #define BLE_DEVICE_NAME      "AeroProbe"
 #define BLE_WHEEL_CIRC_M     2.105f   // 轮周长(m)，700x25C 约 2.105，按实际外胎设置
 #define BLE_RECONNECT_MS     5000     // 未连接时的重试间隔
@@ -83,33 +77,21 @@
 #define BLE_OP_SCAN_DURATION_MS   6000 // 手动扫描时长
 #define BLE_OP_POSTURE_SCAN_MS    1500 // 姿态传感器扫描时长
 #define BLE_UI_TOUCH_GUARD_MS 450     // BLE 相关按钮的触控缓冲（忽略连击/误触）
-//   GPS VCC -> 3V3（若模块带 LDO 可 5V，先确认模块耐压）
-//   GPS GND -> GND
-// 注意：本版本不使用 PPS 秒脉冲（仅串口，精度到秒级）。
-//      如需高精度授时，可将 PPS 单独接到一个空闲 GPIO（如 IO15）并启用下方宏。
-// ============================================================================
-#define GPS_ENABLE     1        // 1=启用 GPS；0=关闭（省串口/内存）
-#define PIN_GPS_RX     44       // ESP32 收 <- GPS TX
-#define PIN_GPS_TX     43       // ESP32 发 -> GPS RX（配置用，可选）
-#define GPS_BAUD       9600     // ATGM336H 出厂默认 9600；如模块改为 38400 请同步
-// 是否使用 GPS 地速 v_g 参与 CdA 计算（无功率计轮速时尤其有用）
-#define GPS_USE_SPEED_FOR_VG 1
-// PPS 秒脉冲（本版本不启用）：接空闲 GPIO 后置 1
-#define GPS_USE_PPS    0
-#define PIN_GPS_PPS    15       // 仅 GPS_USE_PPS=1 时生效
+// Network time is synchronized over Wi-Fi using SNTP. Ground speed is provided
+// by the BLE power meter; the GPS hardware is not part of this build.
 
 // ----------------------------------------------------------------------------
-// 无 GPS 时间时的开机默认时间（测试阶段用）
+// 无网络授时时使用的固定 UTC 日期
 // ----------------------------------------------------------------------------
-// FIT 文件需要一个绝对 UTC 起点，否则无法生成合法的时间戳。若一直等不到
-// GPS 授时，测试阶段允许退回一个固定的「开机默认 UTC 时间」：
+// FIT 文件需要一个绝对 UTC 起点，否则无法生成合法的时间戳。未成功 NTP
+// 授时时，退回一个固定的「开机默认 UTC 时间」：
 //   - 每个样本的时间轴仍是「开机后经过的真实时长」，只是被平移到这个默认
 //     起点上，因此 FIT 内部的相对时间（时长/速度/距离）依然正确；
 //   - 绝对日期不正确，仅影响 FIT 显示的年月日。
 // 值为 Unix 秒（自 1970-01-01 UTC）。默认 2024-01-01 00:00:00 UTC。
-// 把它设为 0 即恢复旧行为：没有 GPS 授时不允许保存 FIT。
+// 把它设为 0：没有网络授时则不允许保存 FIT。
 #define FIT_DEFAULT_UTC           1704067200u   // 2024-01-01 00:00:00 UTC
-// GPS 授时优先：只要 GPS 时间有效就使用 GPS 时间，仅在不可用时才用默认值。
+// NTP 授时优先：只要网络时间有效就使用 NTP 时间，仅在不可用时才用默认值。
 
 // ============================================================================
 // FS3000 空气流速传感器

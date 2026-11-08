@@ -33,7 +33,6 @@
 #include "display_lcd.h"
 #include "power_key.h"
 #include "audio.h"
-#include "gps_time.h"
 #include "usb_sd_storage.h"
 #include "board_imu.h"
 #include "imu_comparison_logger.h"
@@ -57,7 +56,6 @@ RecordingJournal recordingJournal;
 RideRecorder recorder(logger, fitExport, recordingJournal);
 DisplayLcd   lcd;
 PowerKey     powerKey;
-GpsTime      gps;
 BoardImu boardImu;
 ImuComparison imuComparison;
 ImuComparisonLogger imuLogger;
@@ -113,6 +111,22 @@ static bool takeBleOutcome(BleOutcome &out) {
 
 static void requestBleCancel() {
   bleManager.cancel();
+}
+
+static uint32_t networkTimeUtc() {
+#if WIFI_WEB_ENABLE
+  return wifiWeb.unixSec();
+#else
+  return 0;
+#endif
+}
+
+static bool networkConnected() {
+#if WIFI_WEB_ENABLE
+  return wifiWeb.connected();
+#else
+  return false;
+#endif
 }
 
 // Keep historical CSV source IDs: 0=none, 1=BLE, 2=reserved, 3=virtual.
@@ -206,10 +220,6 @@ void setup() {
     lcd.showUsbStorage(usbSdStorage.ready(), usbSdStorage.ejected(), usbSdStorage.hostConnected());
     return;
   }
-
-  // GPS UART 先启动并进行限时、非阻塞探测；不等待定位。
-  // 放在可能耗时的 SD 初始化之前，避免错过模块输出的 NMEA 数据。
-  gps.begin();
 
   // 原型阶段单风速传感器；Wire1 由 LCD 初始化为 CST328 触摸总线
   Wire.begin(PIN_I2C1_SDA, PIN_I2C1_SCL, 400000);
@@ -330,22 +340,13 @@ void loop() {
 
   // 音频解码/播放泵 + 状态回显
   audio.tick();
-  // 保持接收任务运行，以便离线模块重新接入后自动恢复。
-  if (gps.enabled()) {
-    gps.tick();
-    gps.pollPresence();
-  }
-  // 回填检测结果，供 GPS 页面显示或提示未找到模块。
-  lcd.setGpsModulePresent(gps.modulePresent(), gps.presenceChecked());
-  if (!recorder.busy() && gps.timeValid())
-    logger.setUtcReference(gps.unixSec(), now);
 #if WIFI_WEB_ENABLE
   if (!recorder.busy() && wifiWeb.unixSec() != 0)
     logger.setNetworkUtcReference(wifiWeb.unixSec(), now);
 #endif
-  // 测试阶段兜底：拿不到 GPS 授时就用开机默认时间做 FIT 锚点。
+  // 无网络时间时使用配置的固定 UTC 兜底，满足离线 FIT 导出。
   // 样本时间轴来自 millis()，相对时间正确，仅绝对日期不准。
-  // 放在 GPS 之后，确保真实授时优先（useFallback 不会覆盖已存在的 GPS 时间）。
+  // 放在 NTP 之后，确保真实授时优先（useFallback 不会覆盖已存在的 NTP 时间）。
   if (!recorder.busy() && logger.ok() && FIT_DEFAULT_UTC != 0)
     logger.useFallbackUtcReference(FIT_DEFAULT_UTC, now);
   if (lcd.takeFitSaveRequest()) {
@@ -492,14 +493,6 @@ void loop() {
     float rho     = env.rhoKgM3();
     int   src     = pmSrc();
 
-#if GPS_USE_SPEED_FOR_VG
-    // 有 GPS 定位时用 GPS 地速替代功率计轮速（多数功率计不发轮速，
-    // 此时原 vg=0 会让 CdA 失效；GPS 地速更可靠）。
-    if (gps.hasFix()) {
-      vg = gps.speedMps();
-    }
-#endif
-
     const bool windValid = lastWindValidMs != 0 &&
                            now - lastWindValidMs <= 2000;
     if (!recorder.busy()) {
@@ -516,17 +509,16 @@ void loop() {
   lcd.update(wv, windValid, pmPower(), pmCadence(), powerMeter.speed(),
          posture.pitchDeg(), env.rhoKgM3(), pmSrc(), recorder.recording());
   lcd.updateHeartRate(heartRate.bpm(), heartRate.valid(now));
-  const bool gpsPresent = gps.enabled() &&
-      (!gps.presenceChecked() || gps.modulePresent());
   const bool windResponding = lastWindValidMs != 0 &&
       now - lastWindValidMs <= 2000;
   const uint32_t sensorUiMs = millis();
   const ImuSample boardUi = boardImu.sample(sensorUiMs);
   const ImuSample wearableUi = posture.imuSample(sensorUiMs);
+  const uint32_t sensorNetworkUtc = networkTimeUtc();
   lcd.updateOnlineDevices(powerMeter.connected(), powerMeter.measurementValid(now),
                           heartRate.connected(), heartRate.valid(now),
                           posture.connected(), wearableUi.valid,
-                          gpsPresent, gps.hasFix(),
+                          networkConnected(), sensorNetworkUtc != 0,
                           windSensor.present(), windResponding);
   lcd.updateHeartDeviceStatus(heartRate.connected(), heartRate.valid(now),
                               heartRate.bpm());
@@ -535,8 +527,8 @@ void loop() {
                                 posture.yawDeg());
   char recentData[128];
   if (powerMeter.measurementValid(sensorUiMs)) {
-    snprintf(recentData, sizeof(recentData), "%.0f W  %.0f rpm\n%.1f km/h",
-             powerMeter.power(), powerMeter.cadence(), powerMeter.speed() * 3.6f);
+    snprintf(recentData, sizeof(recentData), "%.0fW %.0frpm",
+             powerMeter.power(), powerMeter.cadence());
     lcd.updateRecentSensor(0, recentData, powerMeter.measurementMs());
   }
   if (heartRate.valid(sensorUiMs)) {
@@ -546,18 +538,27 @@ void loop() {
   for (unsigned index = 0; index < 2; ++index) {
     const ImuSample &sample = index ? boardUi : wearableUi;
     if (!sample.valid) continue;
-    snprintf(recentData, sizeof(recentData), "A %+.2f %+.2f %+.2f g\nG %+.0f %+.0f %+.0f d/s",
-             sample.accelerationG[0], sample.accelerationG[1], sample.accelerationG[2],
-             sample.angularVelocityDps[0], sample.angularVelocityDps[1], sample.angularVelocityDps[2]);
+    if (index)
+      snprintf(recentData, sizeof(recentData), "A %+.2f %+.2f %+.2f g",
+               sample.accelerationG[0], sample.accelerationG[1], sample.accelerationG[2]);
+    else
+      snprintf(recentData, sizeof(recentData), "P%+.0f R%+.0f Y%+.0f",
+               posture.pitchDeg(), posture.rollDeg(), posture.yawDeg());
     lcd.updateRecentSensor(index ? 5 : 2, recentData, sample.receivedMs);
   }
-  if (gps.hasFix()) {
-    snprintf(recentData, sizeof(recentData), "%.5f %.5f\n%.1f km/h SAT %u",
-             gps.latitude(), gps.longitude(), gps.speedMps() * 3.6f, unsigned(gps.satellites()));
-    lcd.updateRecentSensor(3, recentData, sensorUiMs - gps.fixAgeMs());
+  if (sensorNetworkUtc) {
+    time_t epoch = time_t(sensorNetworkUtc);
+    struct tm utc;
+    if (gmtime_r(&epoch, &utc)) {
+      strftime(recentData, sizeof(recentData), "%H:%M:%S UTC", &utc);
+      lcd.updateRecentSensor(3, recentData, sensorUiMs);
+    }
+  } else {
+    lcd.updateRecentSensor(3, "UTC --", sensorUiMs);
   }
   if (windResponding) {
-    snprintf(recentData, sizeof(recentData), "%.2f m/s\nRAW %u", wv.vAir, unsigned(windSensor.lastRaw()));
+    snprintf(recentData, sizeof(recentData), "%.2fm/s RAW%u",
+             wv.vAir, unsigned(windSensor.lastRaw()));
     lcd.updateRecentSensor(4, recentData, lastWindValidMs);
   }
   lcd.refreshRecentSensors(sensorUiMs, boardImu.ready(), boardUi.valid);
@@ -565,13 +566,13 @@ void loop() {
 #if WIFI_WEB_ENABLE
     wifiWeb.broadcastTelemetry(now, power, pmCadence(), vg, vAir, windValid,
                  yaw, post, rho, src, recorder.recording(), lcd.estimatedCda(),
-                 gps.timeValid() ? gps.unixSec() : wifiWeb.unixSec(), recorder.waiting(),
+                 sensorNetworkUtc, recorder.waiting(),
                  recorder.busy(), recorder.duration(now), recorder.skipped(), heartRate.bpm(), heartRate.valid(now));
 #endif
 
     const char *sourceName = src == 3 ? "VIRTUAL" : (src == 1 ? "BLE" : "--");
     const uint8_t *frame = windSensor.lastFrame();
-    AppLog.printf("%lu P=%5.0fW(%s) cad=%4.0f vg=%4.2f vAir=%4.2f yaw=%+5.1f pos=%+5.1f rho=%.3f windSamples=%lu fs=%s err=%s short=%lu checksum=%lu bytes=%u raw=%02X%02X%02X%02X%02X sd=%s gps=%s fix=%u sat=%u hdop=%u lat=%.5f lon=%.5f gspd=%.2f utc=%lu\n",
+    AppLog.printf("%lu P=%5.0fW(%s) cad=%4.0f vg=%4.2f vAir=%4.2f yaw=%+5.1f pos=%+5.1f rho=%.3f windSamples=%lu fs=%s err=%s short=%lu checksum=%lu bytes=%u raw=%02X%02X%02X%02X%02X sd=%s ntp=%u utc=%lu\n",
                   (unsigned long)now, power,
                   sourceName,
                   pmCadence(), vg, vAir, yaw, post, rho,
@@ -582,11 +583,7 @@ void loop() {
                   (unsigned long)windSensor.checksumErrors(),
                   windSensor.lastBytesReceived(), frame[0], frame[1], frame[2],
                   frame[3], frame[4], logger.ok() ? "OK" : "OFF",
-                  gps.hasFix() ? "FIX" : (gps.modulePresent() ? "NOFIX" : "OFF"),
-                  (unsigned)gps.hasFix(),
-                  (unsigned)gps.satellites(), (unsigned)gps.hdop(),
-                  gps.latitude(), gps.longitude(), gps.speedMps(),
-                  (unsigned long)gps.unixSec());
+                  unsigned(sensorNetworkUtc != 0), (unsigned long)sensorNetworkUtc);
 
     win = Window();
     windWindowSamples = 0;
@@ -618,36 +615,14 @@ void loop() {
     }
   }
 
-  // GPS 手动重启请求（来自 GPS 页面按钮）
-  if (lcd.takeGpsRestartRequest()) {
-    gps.restart();
-  }
-
-  // GPS 状态回填到 GPS 页面（1Hz）
+  // Network time is maintained by SNTP; refresh the display and date once per second.
   {
-    static uint32_t lastGpsUiMs = 0;
-    if (now - lastGpsUiMs >= LOG_WINDOW_MS) {
-      lastGpsUiMs = now;
-      char utcStr[24] = {};
-      char localStr[24] = {};
-      gps.formatDateTime(utcStr, sizeof(utcStr));
-      // 本地时间：固定 UTC+8（中国标准时间）。如需可调，改为配置项。
-      gps.formatLocalDateTime(localStr, sizeof(localStr), 8 * 60);
-      // 把本地日期（"YYYY-MM-DD"）交给日志器：有定位时按日期建子目录。
-      // localStr 形如 "YYYY-MM-DD HH:MM:SS"（无定位时为 "--"）。
-      const bool gpsOnline = gps.enabled() &&
-                 (!gps.presenceChecked() || gps.modulePresent());
-      lcd.updateGpsStatus(gpsOnline, gps.hasFix(), gps.satellites(),
-                          gps.hdop(), gps.latitude(), gps.longitude(),
-                          gps.altitudeM(), gps.speedMps(), utcStr, localStr,
-                          gps.fixAgeMs());
-      // 主界面顶部 GPS 状态图标：探测期间显示搜星中，未找到后显示关闭态。
-      lcd.updateGpsIndicator(gpsOnline,
-                             gps.hasFix(), gps.satellites());
-      uint32_t clockUtc = gps.timeValid() ? gps.unixSec() : 0;
-    #if WIFI_WEB_ENABLE
-      if (clockUtc == 0) clockUtc = wifiWeb.unixSec();
-    #endif
+    static uint32_t lastTimeUiMs = 0;
+    if (now - lastTimeUiMs >= LOG_WINDOW_MS) {
+      lastTimeUiMs = now;
+      const uint32_t clockUtc = networkTimeUtc();
+      lcd.updateNetworkTime(networkConnected(), clockUtc);
+      lcd.updateTimeIndicator(clockUtc != 0);
       lcd.updateClock(clockUtc);
       if (!recorder.busy() && clockUtc != 0) {
         const time_t localTime = (time_t)((uint64_t)clockUtc + 8 * 3600);

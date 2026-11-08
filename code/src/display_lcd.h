@@ -46,7 +46,7 @@ public:
   void updateOnlineDevices(bool powerConnected, bool powerResponding,
                            bool heartConnected, bool heartResponding,
                            bool postureConnected, bool postureResponding,
-                           bool gpsPresent, bool gpsFixed,
+                           bool networkConnected, bool timeSynced,
                            bool windPresent, bool windResponding);
   void updateHeartDeviceStatus(bool connected, bool responding, uint16_t bpm);
   void updatePostureDeviceStatus(bool connected, bool responding,
@@ -99,32 +99,13 @@ public:
   void setFitSaving(bool saving);
   void showFitResult(const char *message);
 
-  // ---- GPS 页面 ----
-  // 用户在 GPS 页点击"重启 GPS"：主循环据此调用 gps.restart()。
-  bool takeGpsRestartRequest();
-  // 主循环轮询 GPS 状态并回填到页面（仅在 GPS 页可见时刷新）。
-  // fix：是否已定位；sat：卫星数；hdop：HDOP 值；
-  // lat/lon：经纬度；altM：海拔(m)；speedMps：地速(m/s)；
-  // utc：UTC 时间字符串；local：本地时间字符串；ageMs：定位年龄(ms)。
-  void updateGpsStatus(bool enabled, bool fix, uint8_t sat, uint32_t hdop,
-                       double lat, double lon, float altM, float speedMps,
-                       const char *utc, const char *local, uint32_t ageMs);
-  // 直接打开 GPS 页面（供 BOOT 键快捷进入）。
-  void showGpsPanel();
+  void updateNetworkTime(bool networkConnected, uint32_t utc);
+  void updateTimeIndicator(bool synced);
   // 直接打开设置页面（供 BOOT 键使用）。
   void showSettings();
-  // 更新主界面顶部的 GPS 状态图标（非阻塞）：enabled=GPS 是否启用；
-  // fix=是否已定位；sat=卫星数。搜星中显示旋转动画，定位后显示绿色图标+卫星数。
-  void updateGpsIndicator(bool enabled, bool fix, uint8_t sat);
   void updateClock(uint32_t utc);
   void updateHeartRate(uint16_t bpm, bool valid) { dashboard_.heart(bpm, valid); }
   float estimatedCda() const { return estimatedCda_; }
-  // 主循环回填 GPS 模块检测结果。present=是否找到；done=是否已完成一次判定。
-  // 用于"点击 GPS 按钮时提示找不到模块"。
-  void setGpsModulePresent(bool present, bool done) {
-    gpsModulePresent_ = present;
-    gpsDetectDone_ = done;
-  }
 private:
   Arduino_DataBus *_bus = nullptr;
   Arduino_GFX     *_gfx = nullptr;
@@ -154,11 +135,8 @@ private:
   lv_obj_t *cadenceValueLabel_ = nullptr;
   lv_obj_t *timeLabel_ = nullptr;
   lv_obj_t *statusLabel_ = nullptr;
-  // 主界面顶部 GPS 状态指示（图标 + 卫星数 + 搜星动画）
-  lv_obj_t *gpsIndicatorSpinner_ = nullptr;
-  lv_obj_t *gpsIndicatorLabel_ = nullptr;
-  lv_obj_t *gpsSatelliteLabel_ = nullptr;
-  bool      gpsIndicatorFixed_ = false;   // 当前是否显示为已定位（避免重复刷新）
+  lv_obj_t *networkIndicatorLabel_ = nullptr;
+  lv_obj_t *statusBarTimeLabel_ = nullptr;
   lv_obj_t *powerSourceButton_ = nullptr;
   lv_obj_t *powerSourceLabel_ = nullptr;
   lv_obj_t *powerSourcePanel_ = nullptr;
@@ -169,7 +147,7 @@ private:
   OnlineDevicesView onlineView_;
   PostureSetupView postureSetup_;
   RecentSensorReading onlineReadings_[OnlineDevicesView::kCount];
-  RiderPosture::Placement posturePlacement_ = RiderPosture::Placement::BackStrap;
+  RiderPosture::Placement posturePlacement_ = RiderPosture::Placement::Forearm;
   int postureCalibrationRequest_ = -1;
   bool onlineBoardPresent_ = false, onlineBoardResponding_ = false;
   static void onPosturePlacement(lv_event_t *event);
@@ -209,7 +187,7 @@ private:
   lv_obj_t *settingsPowerLabel_ = nullptr;
   lv_obj_t *settingsPowerButton_ = nullptr;
   lv_obj_t *settingsPowerButtonLabel_ = nullptr;
-  // 设置主页 3×2 入口按钮（功率/语言/Wi-Fi/声音/SD/GPS）
+  // 设置主页 3×2 入口按钮
   lv_obj_t *settingsLanguageEntryButton_ = nullptr;
   lv_obj_t *settingsLanguageEntryLabel_ = nullptr;
   lv_obj_t *settingsWifiEntryButton_ = nullptr;
@@ -232,19 +210,13 @@ private:
   lv_obj_t *settingsSdButtonLabel_ = nullptr;
   lv_obj_t *settingsSoundButton_ = nullptr;
   lv_obj_t *settingsSoundButtonLabel_ = nullptr;
-  lv_obj_t *settingsGpsButton_ = nullptr;
-  lv_obj_t *settingsGpsButtonLabel_ = nullptr;
-  lv_obj_t *gpsPanel_ = nullptr;
-  lv_obj_t *gpsTitle_ = nullptr;
-  lv_obj_t *gpsFixLabel_ = nullptr;
-  lv_obj_t *gpsUtcLabel_ = nullptr;
-  lv_obj_t *gpsLocalLabel_ = nullptr;
-  lv_obj_t *gpsCoordLabel_ = nullptr;
-  lv_obj_t *gpsSatLabel_ = nullptr;
-  lv_obj_t *gpsAltLabel_ = nullptr;
-  lv_obj_t *gpsSpeedLabel_ = nullptr;
-  lv_obj_t *gpsRestartButton_ = nullptr;
-  lv_obj_t *gpsRestartLabel_ = nullptr;
+  lv_obj_t *settingsTimeButton_ = nullptr;
+  lv_obj_t *settingsTimeButtonLabel_ = nullptr;
+  lv_obj_t *timePanel_ = nullptr;
+  lv_obj_t *timeTitle_ = nullptr;
+  lv_obj_t *timeStatusLabel_ = nullptr;
+  lv_obj_t *timeUtcLabel_ = nullptr;
+  lv_obj_t *timeInfoLabel_ = nullptr;
   lv_obj_t *soundPanel_ = nullptr;
   lv_obj_t *soundTitle_ = nullptr;
   lv_obj_t *soundVolumeLabel_ = nullptr;
@@ -321,8 +293,8 @@ private:
   bool bleScanCompleted_ = false;
   bool onlineBleConnected_[3] = {};
   bool onlineBleResponding_[3] = {};
-  bool onlineGpsPresent_ = false;
-  bool onlineGpsFixed_ = false;
+  bool onlineNetworkConnected_ = false;
+  bool onlineTimeSynced_ = false;
   bool onlineWindPresent_ = false;
   bool onlineWindResponding_ = false;
   uint32_t currentZone_ = 0;
@@ -355,10 +327,7 @@ private:
 
   // ---- SD 浏览状态 ----
   bool sdListRequested_ = false;
-  bool gpsRestartRequested_ = false;
-  bool gpsModulePresent_ = false;
-  bool gpsDetectDone_ = false;
-  lv_obj_t *noticePanel_ = nullptr;      // 通用提示弹窗（如"找不到 GPS 模块"）
+  lv_obj_t *noticePanel_ = nullptr;
   lv_obj_t *noticeLabel_ = nullptr;
   lv_obj_t *noticeBackLabel_ = nullptr;
   char sdCurrentDirectory_[128] = "/";
@@ -409,9 +378,9 @@ private:
   static void onSdBack(lv_event_t *event);
   static void onSdFileClicked(lv_event_t *event);
   static void onSdUpClicked(lv_event_t *event);
-  static void onGpsButton(lv_event_t *event);
-  static void onGpsBack(lv_event_t *event);
-  static void onGpsRestartClicked(lv_event_t *event);
+  static void onTimeButton(lv_event_t *event);
+  static void onTimeBack(lv_event_t *event);
+  static void onTimeWifiClicked(lv_event_t *event);
   static void onNoticeDismiss(lv_event_t *event);
   void showNotice(const char *message);
   static uint16_t rgb565FromLvColor(lv_color_t c);
@@ -431,7 +400,7 @@ private:
   void buildWifiPanel();
   void buildSoundPanel();
   void buildSdPanel();
-  void buildGpsPanel();
+  void buildTimePanel();
   void buildNoticePanel();
   void refreshSoundVolume();
   void refreshSdList();
