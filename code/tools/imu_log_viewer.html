@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>双 IMU 姿态日志查看器</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1220;
+      --panel: #111c2f;
+      --panel-raised: #17243a;
+      --line: #27364d;
+      --text: #e7eef9;
+      --muted: #91a1b8;
+      --board: #7aa2ff;
+      --arm: #4de0bd;
+      --relative: #ffbd69;
+      --danger: #ff827c;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(ellipse at 10% -15%, #193054 0, transparent 38rem),
+        var(--bg);
+      color: var(--text);
+      font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main { width: min(1180px, calc(100% - 32px)); margin: 30px auto 54px; }
+    h1 { margin: 0; font-size: clamp(24px, 4vw, 36px); letter-spacing: -.03em; }
+    h2 { margin: 0; font-size: 15px; }
+    p { margin: 0; }
+    .intro { color: var(--muted); margin-top: 7px; }
+    .panel {
+      margin-top: 18px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      box-shadow: 0 16px 42px #0002;
+    }
+
+    .drop-zone {
+      display: flex;
+      min-height: 92px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 16px 18px;
+      border: 1px dashed #496284;
+      border-radius: 12px;
+      background: #101c2e;
+      transition: border-color .15s, background .15s;
+    }
+    .drop-zone.dragging { border-color: var(--arm); background: #132d35; }
+    .drop-zone strong { display: block; font-size: 15px; }
+    .drop-zone span { display: block; margin-top: 3px; color: var(--muted); }
+    button, .file-button {
+      display: inline-flex;
+      min-height: 40px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 14px;
+      border: 1px solid #385477;
+      border-radius: 9px;
+      background: #1b3150;
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button:hover, .file-button:hover { background: #264269; }
+    button:disabled { opacity: .45; cursor: default; }
+    input[type=file] { display: none; }
+
+    .notice {
+      margin-top: 12px;
+      padding: 11px 13px;
+      border: 1px solid #344964;
+      border-radius: 10px;
+      background: #101b2c;
+      color: #b7c5d8;
+    }
+    .notice strong { color: var(--text); }
+    .notice.error { border-color: #783e46; color: #ffc0bb; }
+    .notice.success { border-color: #28655b; color: #a7f0dc; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .metric {
+      min-width: 0;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--panel-raised);
+    }
+    .metric span { display: block; color: var(--muted); font-size: 12px; }
+    .metric strong { display: block; margin-top: 4px; font-size: 20px; font-variant-numeric: tabular-nums; }
+
+    .section-head, .playback {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 12px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .swatch { width: 9px; height: 9px; border-radius: 50%; }
+    canvas {
+      display: block;
+      width: 100%;
+      border: 1px solid #23344b;
+      border-radius: 10px;
+      background: #0d1727;
+    }
+    #chart { height: 420px; margin-top: 12px; }
+    #pose { height: 280px; margin-top: 12px; }
+    .playback { margin-top: 12px; }
+    .playback-main { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+    input[type=range] { width: 100%; accent-color: var(--arm); }
+    .time-readout { min-width: 126px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+    .selection {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .value-card {
+      padding: 11px 13px;
+      border-radius: 10px;
+      background: var(--panel-raised);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .value-card strong { display: block; margin-top: 3px; color: var(--text); font-size: 17px; font-variant-numeric: tabular-nums; }
+    .footnote { margin-top: 12px; color: var(--muted); font-size: 12px; }
+    .hint { margin-top: 8px; color: var(--muted); font-size: 12px; }
+
+    @media (max-width: 760px) {
+      main { width: min(100% - 20px, 1180px); margin-top: 18px; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .selection { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .section-head { align-items: flex-start; flex-direction: column; }
+      .drop-zone { align-items: flex-start; flex-direction: column; }
+      .drop-zone .file-button { width: 100%; }
+      #chart { height: 390px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>双 IMU 姿态日志</h1>
+      <p class="intro">将主机板载 IMU 与前臂 BLE IMU 的同步记录对齐，查看姿态变化和时间关系。</p>
+    </header>
+
+    <section class="panel" aria-label="CSV 上传">
+      <div class="drop-zone" id="dropZone">
+        <div>
+          <strong>选择或拖入 IMU CSV</strong>
+          <span>文件只在本机浏览器读取，不会上传到网络。</span>
+        </div>
+        <label class="file-button" for="fileInput">选择 CSV 文件</label>
+        <input id="fileInput" type="file" accept=".csv,text/csv">
+      </div>
+      <div id="status" class="notice" role="status">等待选择 CSV。支持项目的 IMU 对比日志格式。</div>
+      <div class="metrics" aria-live="polite">
+        <div class="metric"><span>记录行</span><strong id="rowCount">—</strong></div>
+        <div class="metric"><span>有效同步对</span><strong id="pairCount">—</strong></div>
+        <div class="metric"><span>未配对 / 已过滤</span><strong id="skipCount">—</strong></div>
+        <div class="metric"><span>覆盖时长</span><strong id="duration">—</strong></div>
+        <div class="metric"><span>同步最大偏差</span><strong id="maxSkew">—</strong></div>
+      </div>
+      <p class="hint" id="fileSummary">时间轴来自 t_ms，仅表示本次开机后的毫秒数；它不是日历时间。</p>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <h2>姿态变化时间线</h2>
+        <div class="legend" aria-label="曲线图例">
+          <span><i class="swatch" style="background:var(--board)"></i>主机板载 IMU</span>
+          <span><i class="swatch" style="background:var(--arm)"></i>前臂 BLE IMU</span>
+          <span><i class="swatch" style="background:var(--relative)"></i>前臂变化 − 主机变化</span>
+        </div>
+      </div>
+      <canvas id="chart" aria-label="主机和前臂 IMU 俯仰与横滚变化图"></canvas>
+      <div class="playback">
+        <div class="playback-main">
+          <button id="playButton" type="button" disabled>播放</button>
+          <input id="sampleSlider" type="range" min="0" max="0" value="0" disabled aria-label="选择日志时间">
+        </div>
+        <div class="time-readout" id="timeReadout">—</div>
+      </div>
+      <div class="selection">
+        <div class="value-card">主机俯仰变化<strong id="boardPitch">—</strong></div>
+        <div class="value-card">前臂俯仰变化<strong id="armPitch">—</strong></div>
+        <div class="value-card">俯仰变化差（示意）<strong id="relativePitch">—</strong></div>
+        <div class="value-card">同步偏差<strong id="selectedSkew">—</strong></div>
+      </div>
+      <p class="footnote">曲线使用各传感器自身加速度计算俯仰/横滚，并相对首个有效同步样本归零；不是绝对角度。记录中断、未配对样本会留为空隙，不插值。</p>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <h2>车架与前臂关系示意</h2>
+        <div class="legend"><span>选中样本的相对俯仰变化：<strong id="poseAngle">—</strong></span></div>
+      </div>
+      <canvas id="pose" aria-label="固定主机参考与前臂变化角的二维示意图"></canvas>
+      <p class="footnote">车架保持为参考线；前臂线仅根据“前臂俯仰变化 − 主机俯仰变化”绘制相对首样本的变化示意。绑带方向、两传感器坐标轴和前臂段标定信息不在 CSV 内，因此图形不是实际关节夹角，也不是空间位置重建。</p>
+    </section>
+  </main>
+
+  <script>
+    "use strict";
+    const requiredColumns = [
+      "t_ms", "board_t_ms", "wt_t_ms", "board_valid", "wt_valid", "paired", "skew_ms",
+      "board_ax_g", "board_ay_g", "board_az_g",
+      "wt_ax_g", "wt_ay_g", "wt_az_g"
+    ];
+    const colors = {
+      board: "#7aa2ff",
+      arm: "#4de0bd",
+      relative: "#ffbd69",
+      grid: "#26364b",
+      text: "#91a1b8",
+      cursor: "#d7e3f3"
+    };
+    const elements = Object.fromEntries([
+      "fileInput", "dropZone", "status", "rowCount", "pairCount", "skipCount",
+      "duration", "maxSkew", "fileSummary", "chart", "pose", "sampleSlider",
+      "playButton", "timeReadout", "boardPitch", "armPitch", "relativePitch",
+      "selectedSkew", "poseAngle"
+    ].map(id => [id, document.getElementById(id)]));
+    let samples = [];
+    let animation = 0;
+
+    function parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let field = "";
+      let quoted = false;
+      for (let index = 0; index < text.length; index++) {
+        const character = text[index];
+        if (quoted) {
+          if (character === '"' && text[index + 1] === '"') {
+            field += '"';
+            index++;
+          } else if (character === '"') {
+            quoted = false;
+          } else {
+            field += character;
+          }
+        } else if (character === '"' && field.length === 0) {
+          quoted = true;
+        } else if (character === ",") {
+          row.push(field);
+          field = "";
+        } else if (character === "\n" || character === "\r") {
+          if (character === "\r" && text[index + 1] === "\n") index++;
+          row.push(field);
+          if (row.some(value => value.trim() !== "")) rows.push(row);
+          row = [];
+          field = "";
+        } else {
+          field += character;
+        }
+      }
+      if (quoted) throw new Error("CSV 存在未闭合的引号。");
+      row.push(field);
+      if (row.some(value => value.trim() !== "")) rows.push(row);
+      if (rows.length < 2) throw new Error("CSV 没有数据行。");
+      return rows;
+    }
+
+    function finite(row, column, index) {
+      const value = Number(row[column]);
+      if (!Number.isFinite(value)) throw new Error(`第 ${index + 2} 行的 ${column} 不是有效数字。`);
+      return value;
+    }
+
+    function wrapDegrees(value) {
+      return ((value + 180) % 360 + 360) % 360 - 180;
+    }
+
+    function accelAngles(row, sensor, index) {
+      const x = finite(row, `${sensor}_ax_g`, index);
+      const y = finite(row, `${sensor}_ay_g`, index);
+      const z = finite(row, `${sensor}_az_g`, index);
+      const norm = Math.hypot(x, y, z);
+      if (norm < 0.05) throw new Error(`第 ${index + 2} 行的 ${sensor} 加速度向量无效。`);
+      return {
+        pitch: Math.atan2(-x, Math.hypot(y, z)) * 180 / Math.PI,
+        roll: Math.atan2(y, z) * 180 / Math.PI,
+        norm
+      };
+    }
+
+    function loadCsv(text, name) {
+      const rows = parseCsv(text.replace(/^\uFEFF/, ""));
+      const headers = rows[0].map(value => value.trim());
+      const duplicate = headers.find((header, index) => headers.indexOf(header) !== index);
+      if (duplicate) throw new Error(`CSV 表头重复：${duplicate}`);
+      const missing = requiredColumns.filter(column => !headers.includes(column));
+      if (missing.length) throw new Error(`缺少所需字段：${missing.join(", ")}`);
+      const parsed = [];
+      let rejected = 0;
+      let maxSkew = 0;
+      let dynamic = 0;
+
+      for (let index = 1; index < rows.length; index++) {
+        if (rows[index].length !== headers.length)
+          throw new Error(`第 ${index + 1} 行列数与表头不一致。`);
+        const record = Object.fromEntries(headers.map((header, column) => [header, rows[index][column].trim()]));
+        if (![record.board_valid, record.wt_valid, record.paired].every(value => value === "0" || value === "1"))
+          throw new Error(`第 ${index + 1} 行包含无效的传感器状态标记。`);
+        if (record.paired !== "1" || record.board_valid !== "1" || record.wt_valid !== "1") {
+          rejected++;
+          continue;
+        }
+        const time = finite(record, "t_ms", index);
+        const skew = finite(record, "skew_ms", index);
+        const boardTime = finite(record, "board_t_ms", index);
+        const wearableTime = finite(record, "wt_t_ms", index);
+        const boardAge = (time - boardTime + 0x100000000) % 0x100000000;
+        const wearableAge = (time - wearableTime + 0x100000000) % 0x100000000;
+        if (Math.max(boardAge, wearableAge) > 250 ||
+            Math.abs(skew) > 100 ||
+            skew !== wearableAge - boardAge)
+          throw new Error(`第 ${index + 2} 行的同步时间戳不一致或已过期。`);
+        const board = accelAngles(record, "board", index);
+        const arm = accelAngles(record, "wt", index);
+        maxSkew = Math.max(maxSkew, Math.abs(skew));
+        if (board.norm < 0.9 || board.norm > 1.1 || arm.norm < 0.9 || arm.norm > 1.1) dynamic++;
+        parsed.push({
+          time, skew,
+          board, arm,
+          rawIndex: index - 1
+        });
+      }
+      if (parsed.length < 2) throw new Error("没有足够的有效同步样本（至少需要 2 对）。");
+
+      const first = parsed[0];
+      let previousTime = first.time;
+      let elapsed = 0;
+      for (const sample of parsed) {
+        if (sample === first) {
+          sample.elapsed = 0;
+        } else {
+          const delta = sample.time - previousTime;
+          elapsed += delta < -0x80000000 ? delta + 0x100000000 : delta;
+          sample.elapsed = elapsed;
+          previousTime = sample.time;
+        }
+        sample.boardPitch = wrapDegrees(sample.board.pitch - first.board.pitch);
+        sample.armPitch = wrapDegrees(sample.arm.pitch - first.arm.pitch);
+        sample.boardRoll = wrapDegrees(sample.board.roll - first.board.roll);
+        sample.armRoll = wrapDegrees(sample.arm.roll - first.arm.roll);
+        sample.relativePitch = wrapDegrees(sample.armPitch - sample.boardPitch);
+        sample.relativeRoll = wrapDegrees(sample.armRoll - sample.boardRoll);
+      }
+      samples = parsed;
+      elements.rowCount.textContent = rows.length - 1;
+      elements.pairCount.textContent = parsed.length;
+      elements.skipCount.textContent = rejected;
+      elements.duration.textContent = `${(elapsed / 1000).toFixed(1)} 秒`;
+      elements.maxSkew.textContent = `${maxSkew.toFixed(0)} ms`;
+      elements.fileSummary.textContent =
+        `${name} · 配对样本中有 ${dynamic} 对的任一加速度模长超出 0.9–1.1 g，姿态角可能受动态加速度影响。`;
+      elements.sampleSlider.max = String(parsed.length - 1);
+      elements.sampleSlider.value = "0";
+      elements.sampleSlider.disabled = false;
+      elements.playButton.disabled = false;
+      elements.playButton.textContent = "播放";
+      elements.status.className = "notice success";
+      elements.status.textContent =
+        `已读取 ${rows.length - 1} 条记录，采用 ${parsed.length} 对有效同步数据；${rejected} 条未配对/无效记录已排除。`;
+      renderSelection(0);
+    }
+
+    function setStatus(message, error = false) {
+      elements.status.className = error ? "notice error" : "notice";
+      elements.status.textContent = message;
+    }
+
+    function formatSigned(value) {
+      return `${value >= 0 ? "+" : ""}${value.toFixed(1)}°`;
+    }
+
+    function renderSelection(index) {
+      if (!samples.length) return;
+      const sample = samples[Math.max(0, Math.min(samples.length - 1, index))];
+      elements.sampleSlider.value = String(samples.indexOf(sample));
+      elements.timeReadout.textContent = `${(sample.elapsed / 1000).toFixed(2)} s`;
+      elements.boardPitch.textContent = formatSigned(sample.boardPitch);
+      elements.armPitch.textContent = formatSigned(sample.armPitch);
+      elements.relativePitch.textContent = formatSigned(sample.relativePitch);
+      elements.selectedSkew.textContent = `${sample.skew.toFixed(0)} ms`;
+      elements.poseAngle.textContent = formatSigned(sample.relativePitch);
+      drawChart(samples.indexOf(sample));
+      drawPose(sample.relativePitch, sample.relativeRoll);
+    }
+
+    function setupCanvas(canvas, height) {
+      const ratio = Math.max(1, window.devicePixelRatio || 1);
+      const width = Math.max(300, canvas.clientWidth);
+      canvas.style.height = `${height}px`;
+      if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
+        canvas.width = Math.round(width * ratio);
+        canvas.height = Math.round(height * ratio);
+      }
+      const context = canvas.getContext("2d");
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.clearRect(0, 0, width, height);
+      return { context, width, height };
+    }
+
+    function drawChart(cursorIndex = 0) {
+      if (!samples.length) return;
+      const { context: ctx, width, height } = setupCanvas(elements.chart, 420);
+      const left = 54, right = width - 18;
+      const plots = [
+        { top: 38, bottom: 188, title: "俯仰变化  ·  °", fields: ["boardPitch", "armPitch", "relativePitch"] },
+        { top: 245, bottom: 388, title: "横滚变化  ·  °", fields: ["boardRoll", "armRoll", "relativeRoll"] }
+      ];
+      const duration = Math.max(1, samples[samples.length - 1].elapsed);
+      const colorsForLine = [colors.board, colors.arm, colors.relative];
+      const labels = ["主机", "前臂", "前臂 − 主机"];
+
+      ctx.font = "12px system-ui, sans-serif";
+      ctx.textBaseline = "middle";
+      for (const plot of plots) {
+        let min = Infinity, max = -Infinity;
+        for (const sample of samples) {
+          for (const field of plot.fields) {
+            min = Math.min(min, sample[field]);
+            max = Math.max(max, sample[field]);
+          }
+        }
+        const span = Math.max(20, max - min);
+        min = Math.floor((min - span * 0.08) / 10) * 10;
+        max = Math.ceil((max + span * 0.08) / 10) * 10;
+        if (max - min < 20) { min -= 10; max += 10; }
+        const yFor = value => plot.bottom - (value - min) / (max - min) * (plot.bottom - plot.top);
+        const xFor = sample => left + sample.elapsed / duration * (right - left);
+
+        ctx.fillStyle = "#dce7f5";
+        ctx.font = "600 12px system-ui, sans-serif";
+        ctx.fillText(plot.title, left, plot.top - 20);
+        ctx.font = "11px system-ui, sans-serif";
+        for (let tick = 0; tick <= 4; tick++) {
+          const value = max - (max - min) * tick / 4;
+          const y = yFor(value);
+          ctx.strokeStyle = colors.grid;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(left, y);
+          ctx.lineTo(right, y);
+          ctx.stroke();
+          ctx.fillStyle = colors.text;
+          ctx.textAlign = "right";
+          ctx.fillText(`${value.toFixed(0)}°`, left - 9, y);
+        }
+        ctx.textAlign = "center";
+        for (let tick = 0; tick <= 4; tick++) {
+          const x = left + (right - left) * tick / 4;
+          ctx.strokeStyle = "#1c2a3e";
+          ctx.beginPath();
+          ctx.moveTo(x, plot.top);
+          ctx.lineTo(x, plot.bottom);
+          ctx.stroke();
+          ctx.fillStyle = colors.text;
+          ctx.fillText(`${(duration * tick / 4 / 1000).toFixed(0)}s`, x, plot.bottom + 14);
+        }
+
+        for (let line = 0; line < plot.fields.length; line++) {
+          const field = plot.fields[line];
+          ctx.strokeStyle = colorsForLine[line];
+          ctx.lineWidth = line === 2 ? 1.6 : 1.8;
+          ctx.setLineDash(line === 2 ? [5, 4] : []);
+          ctx.beginPath();
+          let drawing = false;
+          let previousElapsed = -Infinity;
+          for (const sample of samples) {
+            if (sample.elapsed - previousElapsed > 500) drawing = false;
+            const x = xFor(sample), y = yFor(sample[field]);
+            if (!drawing) { ctx.moveTo(x, y); drawing = true; }
+            else ctx.lineTo(x, y);
+            previousElapsed = sample.elapsed;
+          }
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+
+        const selected = samples[cursorIndex];
+        const cursorX = xFor(selected);
+        ctx.strokeStyle = colors.cursor;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.moveTo(cursorX, plot.top);
+        ctx.lineTo(cursorX, plot.bottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        for (let line = 0; line < plot.fields.length; line++) {
+          ctx.fillStyle = colorsForLine[line];
+          ctx.beginPath();
+          ctx.arc(cursorX, yFor(selected[plot.fields[line]]), 3.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.textAlign = "left";
+        ctx.font = "10px system-ui, sans-serif";
+        let legendX = left;
+        const legendY = plot.bottom + 31;
+        for (let line = 0; line < labels.length; line++) {
+          ctx.fillStyle = colorsForLine[line];
+          ctx.fillRect(legendX, legendY - 4, 8, 8);
+          ctx.fillStyle = colors.text;
+          ctx.fillText(labels[line], legendX + 13, legendY);
+          legendX += line === 2 ? 108 : 68;
+        }
+      }
+      ctx.textAlign = "start";
+    }
+
+    function drawPose(relativePitch, relativeRoll) {
+      const { context: ctx, width, height } = setupCanvas(elements.pose, 280);
+      const cx = width * 0.51, cy = height * 0.66;
+      const scale = Math.min(width * 0.33, height * 0.44);
+      const angle = Math.max(-80, Math.min(80, relativePitch)) * Math.PI / 180;
+
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#60738e";
+      ctx.beginPath();
+      ctx.moveTo(width * 0.12, cy + 40);
+      ctx.lineTo(width * 0.88, cy + 40);
+      ctx.stroke();
+      ctx.fillStyle = colors.text;
+      ctx.font = "12px system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("车架参考（主机）", width * 0.12, cy + 62);
+
+      const wheelY = cy + 37;
+      for (const wheelX of [width * 0.27, width * 0.69]) {
+        ctx.beginPath();
+        ctx.arc(wheelX, wheelY, 24, 0, Math.PI * 2);
+        ctx.strokeStyle = "#354861";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      ctx.strokeStyle = "#60738e";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(width * 0.27, wheelY);
+      ctx.lineTo(cx, cy - 18);
+      ctx.lineTo(width * 0.69, wheelY);
+      ctx.moveTo(cx, cy - 18);
+      ctx.lineTo(width * 0.48, cy - 45);
+      ctx.moveTo(width * 0.48, cy - 45);
+      ctx.lineTo(width * 0.55, cy - 45);
+      ctx.stroke();
+
+      ctx.fillStyle = colors.board;
+      ctx.beginPath();
+      ctx.arc(cx, cy - 18, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = colors.text;
+      ctx.textAlign = "left";
+      ctx.fillText("板载 IMU", cx + 11, cy - 20);
+
+      const elbowX = cx - scale * 0.62;
+      const elbowY = cy - scale * 0.75;
+      const forearmLength = scale * 0.72;
+      const wristX = elbowX + Math.cos(angle) * forearmLength;
+      const wristY = elbowY - Math.sin(angle) * forearmLength;
+      const upperArmX = elbowX - scale * 0.38;
+      const upperArmY = elbowY - scale * 0.32;
+      ctx.strokeStyle = "#8191a8";
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.moveTo(upperArmX, upperArmY);
+      ctx.lineTo(elbowX, elbowY);
+      ctx.stroke();
+      ctx.strokeStyle = colors.arm;
+      ctx.lineWidth = 10;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(elbowX, elbowY);
+      ctx.lineTo(wristX, wristY);
+      ctx.stroke();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "#65768c";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(elbowX, elbowY);
+      ctx.lineTo(elbowX + forearmLength, elbowY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = colors.arm;
+      const sensorX = elbowX + Math.cos(angle) * forearmLength * 0.58;
+      const sensorY = elbowY - Math.sin(angle) * forearmLength * 0.58;
+      ctx.save();
+      ctx.translate(sensorX, sensorY);
+      ctx.rotate(-angle);
+      ctx.fillRect(-10, -5, 20, 10);
+      ctx.restore();
+      ctx.fillStyle = colors.text;
+      ctx.textAlign = "left";
+      ctx.fillText("前臂 IMU", sensorX + 13, sensorY - 13);
+      ctx.fillText("肘部（示意）", elbowX - 18, elbowY + 19);
+
+      ctx.strokeStyle = colors.relative;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy - 18, Math.min(scale * 0.46, 42), -angle, 0, angle < 0);
+      ctx.stroke();
+      ctx.fillStyle = colors.relative;
+      ctx.textAlign = "left";
+      ctx.fillText(`Δ俯仰 ${formatSigned(relativePitch)}  ·  Δ横滚 ${formatSigned(relativeRoll)}`,
+        16, 20);
+      ctx.fillStyle = colors.text;
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.fillText("基准：首个有效同步样本", 16, 40);
+      ctx.lineCap = "butt";
+    }
+
+    function stopPlayback() {
+      if (animation) cancelAnimationFrame(animation);
+      animation = 0;
+      elements.playButton.textContent = "播放";
+    }
+
+    function togglePlayback() {
+      if (animation) { stopPlayback(); return; }
+      if (!samples.length) return;
+      elements.playButton.textContent = "暂停";
+      let previous = 0;
+      let lastStep = performance.now();
+      const tick = now => {
+        if (!animation) return;
+        if (now - lastStep >= 45) {
+          previous = Math.min(samples.length - 1, previous + Math.max(1, Math.floor((now - lastStep) / 45)));
+          lastStep = now;
+          renderSelection(previous);
+          if (previous >= samples.length - 1) { stopPlayback(); return; }
+        }
+        animation = requestAnimationFrame(tick);
+      };
+      previous = Number(elements.sampleSlider.value);
+      animation = requestAnimationFrame(tick);
+    }
+
+    function readFile(file) {
+      if (!file) return;
+      if (!file.name.toLowerCase().endsWith(".csv")) {
+        setStatus("请选择 .csv 文件。", true);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onerror = () => setStatus("无法读取此文件。", true);
+      reader.onload = () => {
+        try {
+          stopPlayback();
+          loadCsv(String(reader.result), file.name);
+        } catch (error) {
+          if (samples.length) {
+            renderSelection(Number(elements.sampleSlider.value));
+            setStatus(`${error instanceof Error ? error.message : String(error)}（已保留上一份有效数据）`, true);
+          } else {
+            elements.rowCount.textContent = "—";
+            elements.pairCount.textContent = "—";
+            elements.skipCount.textContent = "—";
+            elements.duration.textContent = "—";
+            elements.maxSkew.textContent = "—";
+            elements.fileSummary.textContent =
+              "时间轴来自 t_ms，仅表示本次开机后的毫秒数；它不是日历时间。";
+            elements.sampleSlider.disabled = true;
+            elements.playButton.disabled = true;
+            elements.timeReadout.textContent = "—";
+            elements.boardPitch.textContent = "—";
+            elements.armPitch.textContent = "—";
+            elements.relativePitch.textContent = "—";
+            elements.selectedSkew.textContent = "—";
+            elements.poseAngle.textContent = "—";
+            drawEmpty();
+            setStatus(error instanceof Error ? error.message : String(error), true);
+          }
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function drawEmpty() {
+      const { context: chart, width, height } = setupCanvas(elements.chart, 420);
+      chart.fillStyle = colors.text;
+      chart.font = "14px system-ui, sans-serif";
+      chart.textAlign = "center";
+      chart.fillText("上传一份双 IMU CSV 以查看姿态变化", width / 2, height / 2);
+      const { context: pose, width: poseWidth, height: poseHeight } = setupCanvas(elements.pose, 280);
+      pose.fillStyle = colors.text;
+      pose.font = "14px system-ui, sans-serif";
+      pose.textAlign = "center";
+      pose.fillText("等待日志数据", poseWidth / 2, poseHeight / 2);
+    }
+
+    elements.fileInput.addEventListener("change", event => readFile(event.target.files[0]));
+    elements.sampleSlider.addEventListener("input", event => renderSelection(Number(event.target.value)));
+    elements.playButton.addEventListener("click", togglePlayback);
+    elements.dropZone.addEventListener("dragover", event => {
+      event.preventDefault();
+      elements.dropZone.classList.add("dragging");
+    });
+    elements.dropZone.addEventListener("dragleave", () => elements.dropZone.classList.remove("dragging"));
+    elements.dropZone.addEventListener("drop", event => {
+      event.preventDefault();
+      elements.dropZone.classList.remove("dragging");
+      readFile(event.dataTransfer.files[0]);
+    });
+    window.addEventListener("resize", () => samples.length ? renderSelection(Number(elements.sampleSlider.value)) : drawEmpty());
+    drawEmpty();
+  </script>
+</body>
+</html>
