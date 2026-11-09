@@ -123,8 +123,11 @@
       background: #0d1727;
     }
     #chart { height: 420px; margin-top: 12px; }
-    #pose { height: 280px; margin-top: 12px; }
-    .playback { margin-top: 12px; }
+    .pose-views { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+    .pose-views canvas { height: 280px; }
+    .grip-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+    .grip-control strong { color: var(--text); }
+    .playback { margin-bottom: 14px; }
     .playback-main { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
     input[type=range] { width: 100%; accent-color: var(--arm); }
     .time-readout { min-width: 126px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
@@ -152,6 +155,7 @@
       .section-head { align-items: flex-start; flex-direction: column; }
       .drop-zone { align-items: flex-start; flex-direction: column; }
       .drop-zone .file-button { width: 100%; }
+      .pose-views { grid-template-columns: 1fr; }
       #chart { height: 390px; }
     }
   </style>
@@ -184,6 +188,29 @@
     </section>
 
     <section class="panel">
+      <div class="playback">
+        <div class="playback-main">
+          <button id="playButton" type="button" disabled>播放</button>
+          <input id="sampleSlider" type="range" min="0" max="0" value="0" disabled aria-label="选择日志时间">
+        </div>
+        <div class="time-readout" id="timeReadout">—</div>
+      </div>
+      <div class="section-head">
+        <h2>车架与前臂关系示意</h2>
+        <div class="legend"><span>选中样本的相对俯仰变化：<strong id="poseAngle">—</strong></span></div>
+      </div>
+      <div class="grip-control">
+        <span>右手抓握位置</span>
+        <strong id="gripValue" aria-live="polite">手变（默认，无法判断）</strong>
+      </div>
+      <div class="pose-views">
+        <canvas id="pose" aria-label="车架和右前臂的侧视变化示意图"></canvas>
+        <canvas id="poseTop" aria-label="车架和右前臂传感器位置的俯视示意图"></canvas>
+      </div>
+      <p class="footnote">抓握位置读取 CSV 可选列 grip_position（tops、hoods 或 drops）；缺失或无法识别时默认手变。现有 IMU 数据本身无法可靠判断抓握位置。前臂以假设的车把抓点为参考，虚线示意前臂 IMU 与码表之间的距离。侧视采用前臂与主机的俯仰变化差；俯视以前臂航向首样本为基准，并假设航向正向对应右肘向外。示意角度分别限幅 ±80° 和 ±55°，数值仍显示原始变化。CSV 不包含真实位置、前臂长度、车架航向、传感器安装方向或角度时间戳，距离和肘部位置不能视为实测；车架转向与航向漂移也会影响俯视结果。</p>
+    </section>
+
+    <section class="panel">
       <div class="section-head">
         <h2>姿态变化时间线</h2>
         <div class="legend" aria-label="曲线图例">
@@ -193,13 +220,6 @@
         </div>
       </div>
       <canvas id="chart" aria-label="主机和前臂 IMU 俯仰与横滚变化图"></canvas>
-      <div class="playback">
-        <div class="playback-main">
-          <button id="playButton" type="button" disabled>播放</button>
-          <input id="sampleSlider" type="range" min="0" max="0" value="0" disabled aria-label="选择日志时间">
-        </div>
-        <div class="time-readout" id="timeReadout">—</div>
-      </div>
       <div class="selection">
         <div class="value-card">主机俯仰变化<strong id="boardPitch">—</strong></div>
         <div class="value-card">前臂俯仰变化<strong id="armPitch">—</strong></div>
@@ -209,14 +229,6 @@
       <p class="footnote">曲线使用各传感器自身加速度计算俯仰/横滚，并相对首个有效同步样本归零；不是绝对角度。记录中断、未配对样本会留为空隙，不插值。</p>
     </section>
 
-    <section class="panel">
-      <div class="section-head">
-        <h2>车架与前臂关系示意</h2>
-        <div class="legend"><span>选中样本的相对俯仰变化：<strong id="poseAngle">—</strong></span></div>
-      </div>
-      <canvas id="pose" aria-label="固定主机参考与前臂变化角的二维示意图"></canvas>
-      <p class="footnote">车架保持为参考线；前臂线仅根据“前臂俯仰变化 − 主机俯仰变化”绘制相对首样本的变化示意。绑带方向、两传感器坐标轴和前臂段标定信息不在 CSV 内，因此图形不是实际关节夹角，也不是空间位置重建。</p>
-    </section>
   </main>
 
   <script>
@@ -236,12 +248,22 @@
     };
     const elements = Object.fromEntries([
       "fileInput", "dropZone", "status", "rowCount", "pairCount", "skipCount",
-      "duration", "maxSkew", "fileSummary", "chart", "pose", "sampleSlider",
+      "duration", "maxSkew", "fileSummary", "chart", "pose", "poseTop", "sampleSlider",
       "playButton", "timeReadout", "boardPitch", "armPitch", "relativePitch",
-      "selectedSkew", "poseAngle"
+      "selectedSkew", "poseAngle", "gripValue"
     ].map(id => [id, document.getElementById(id)]));
     let samples = [];
     let animation = 0;
+    let currentGrip = "hoods";
+    const grips = {
+      tops: { sideX: 9, sideY: -12, topX: 32, topY: 95 },
+      hoods: { sideX: 27, sideY: -12, topX: 65, topY: 75 },
+      drops: { sideX: 27, sideY: 8, topX: 65, topY: 110 }
+    };
+
+    function selectedGrip() {
+      return grips[currentGrip];
+    }
 
     function parseCsv(text) {
       const rows = [];
@@ -338,11 +360,15 @@
           throw new Error(`第 ${index + 2} 行的同步时间戳不一致或已过期。`);
         const board = accelAngles(record, "board", index);
         const arm = accelAngles(record, "wt", index);
+        const yawValue = record.wt_yaw_deg;
+        const yaw = yawValue !== undefined && yawValue !== "" && Number.isFinite(Number(yawValue))
+          ? Number(yawValue) : null;
         maxSkew = Math.max(maxSkew, Math.abs(skew));
         if (board.norm < 0.9 || board.norm > 1.1 || arm.norm < 0.9 || arm.norm > 1.1) dynamic++;
         parsed.push({
           time, skew,
-          board, arm,
+          board, arm, yaw,
+          grip: ["tops", "hoods", "drops"].includes(record.grip_position) ? record.grip_position : null,
           rawIndex: index - 1
         });
       }
@@ -366,6 +392,8 @@
         sample.armRoll = wrapDegrees(sample.arm.roll - first.arm.roll);
         sample.relativePitch = wrapDegrees(sample.armPitch - sample.boardPitch);
         sample.relativeRoll = wrapDegrees(sample.armRoll - sample.boardRoll);
+        sample.yawChange = sample.yaw !== null && first.yaw !== null
+          ? wrapDegrees(sample.yaw - first.yaw) : null;
       }
       samples = parsed;
       elements.rowCount.textContent = rows.length - 1;
@@ -405,13 +433,18 @@
       elements.relativePitch.textContent = formatSigned(sample.relativePitch);
       elements.selectedSkew.textContent = `${sample.skew.toFixed(0)} ms`;
       elements.poseAngle.textContent = formatSigned(sample.relativePitch);
+      currentGrip = sample.grip || "hoods";
+      elements.gripValue.textContent = sample.grip
+        ? `${{ tops: "上把", hoods: "手变", drops: "下把" }[sample.grip]}（数据标注）`
+        : "手变（默认，无法判断）";
       drawChart(samples.indexOf(sample));
       drawPose(sample.relativePitch, sample.relativeRoll);
+      drawPoseTop(sample.yawChange);
     }
 
     function setupCanvas(canvas, height) {
       const ratio = Math.max(1, window.devicePixelRatio || 1);
-      const width = Math.max(300, canvas.clientWidth);
+      const width = canvas.clientWidth;
       canvas.style.height = `${height}px`;
       if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
         canvas.width = Math.round(width * ratio);
@@ -533,60 +566,84 @@
 
     function drawPose(relativePitch, relativeRoll) {
       const { context: ctx, width, height } = setupCanvas(elements.pose, 280);
-      const cx = width * 0.51, cy = height * 0.66;
-      const scale = Math.min(width * 0.33, height * 0.44);
+      const cx = width / 2;
+      const scale = Math.min(1, (width - 32) / 300);
       const angle = Math.max(-80, Math.min(80, relativePitch)) * Math.PI / 180;
-
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = "#60738e";
-      ctx.beginPath();
-      ctx.moveTo(width * 0.12, cy + 40);
-      ctx.lineTo(width * 0.88, cy + 40);
-      ctx.stroke();
-      ctx.fillStyle = colors.text;
-      ctx.font = "12px system-ui, sans-serif";
-      ctx.textAlign = "left";
-      ctx.fillText("车架参考（主机）", width * 0.12, cy + 62);
-
-      const wheelY = cy + 37;
-      for (const wheelX of [width * 0.27, width * 0.69]) {
+      const wheelY = 208;
+      const rearX = cx - 100 * scale;
+      const frontX = cx + 100 * scale;
+      const wheelRadius = 43 * scale;
+      ctx.lineCap = "round";
+      for (const wheelX of [rearX, frontX]) {
         ctx.beginPath();
-        ctx.arc(wheelX, wheelY, 24, 0, Math.PI * 2);
-        ctx.strokeStyle = "#354861";
-        ctx.lineWidth = 2;
+        ctx.arc(wheelX, wheelY, wheelRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = "#52667d";
+        ctx.lineWidth = 3;
         ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(wheelX, wheelY, wheelRadius - 5 * scale, 0, Math.PI * 2);
+        ctx.strokeStyle = "#273b50";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = "#8191a8";
+        ctx.beginPath();
+        ctx.arc(wheelX, wheelY, 3 * scale, 0, Math.PI * 2);
+        ctx.fill();
       }
-      ctx.strokeStyle = "#60738e";
-      ctx.lineWidth = 4;
+      const crankX = cx - 12 * scale;
+      const crankY = wheelY - 5 * scale;
+      const seatX = cx - 37 * scale;
+      const seatY = wheelY - 67 * scale;
+      const headX = cx + 54 * scale;
+      const headY = wheelY - 68 * scale;
+      ctx.strokeStyle = "#8191a8";
+      ctx.lineWidth = 4 * scale;
       ctx.beginPath();
-      ctx.moveTo(width * 0.27, wheelY);
-      ctx.lineTo(cx, cy - 18);
-      ctx.lineTo(width * 0.69, wheelY);
-      ctx.moveTo(cx, cy - 18);
-      ctx.lineTo(width * 0.48, cy - 45);
-      ctx.moveTo(width * 0.48, cy - 45);
-      ctx.lineTo(width * 0.55, cy - 45);
+      ctx.moveTo(rearX, wheelY);
+      ctx.lineTo(seatX, seatY);
+      ctx.lineTo(crankX, crankY);
+      ctx.lineTo(rearX, wheelY);
+      ctx.moveTo(seatX, seatY);
+      ctx.lineTo(headX, headY);
+      ctx.lineTo(crankX, crankY);
+      ctx.moveTo(headX, headY);
+      ctx.lineTo(frontX, wheelY);
+      ctx.moveTo(seatX, seatY);
+      ctx.lineTo(seatX - 5 * scale, seatY - 12 * scale);
+      ctx.moveTo(seatX - 18 * scale, seatY - 12 * scale);
+      ctx.lineTo(seatX + 4 * scale, seatY - 12 * scale);
+      ctx.moveTo(headX, headY);
+      ctx.lineTo(headX + 7 * scale, headY - 12 * scale);
+      ctx.lineTo(headX + 27 * scale, headY - 12 * scale);
+      ctx.lineTo(headX + 30 * scale, headY + 2 * scale);
+      ctx.lineTo(headX + 27 * scale, headY + 8 * scale);
+      ctx.lineTo(headX + 17 * scale, headY + 8 * scale);
+      ctx.stroke();
+      ctx.lineWidth = 2 * scale;
+      ctx.beginPath();
+      ctx.arc(crankX, crankY, 9 * scale, 0, Math.PI * 2);
+      ctx.moveTo(crankX, crankY);
+      ctx.lineTo(crankX + 11 * scale, crankY + 9 * scale);
+      ctx.lineTo(crankX + 17 * scale, crankY + 9 * scale);
       ctx.stroke();
 
       ctx.fillStyle = colors.board;
       ctx.beginPath();
-      ctx.arc(cx, cy - 18, 7, 0, Math.PI * 2);
+      ctx.arc(headX, headY, 5, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = colors.text;
+      ctx.font = "11px system-ui, sans-serif";
       ctx.textAlign = "left";
-      ctx.fillText("板载 IMU", cx + 11, cy - 20);
 
-      const elbowX = cx - scale * 0.62;
-      const elbowY = cy - scale * 0.75;
-      const forearmLength = scale * 0.72;
-      const wristX = elbowX + Math.cos(angle) * forearmLength;
-      const wristY = elbowY - Math.sin(angle) * forearmLength;
-      const upperArmX = elbowX - scale * 0.38;
-      const upperArmY = elbowY - scale * 0.32;
+      const grip = selectedGrip();
+      const wristX = headX + grip.sideX * scale;
+      const wristY = headY + grip.sideY * scale;
+      const forearmLength = 72 * scale;
+      const elbowX = wristX - Math.cos(angle) * forearmLength;
+      const elbowY = wristY + Math.sin(angle) * forearmLength;
       ctx.strokeStyle = "#8191a8";
       ctx.lineWidth = 8;
       ctx.beginPath();
-      ctx.moveTo(upperArmX, upperArmY);
+      ctx.moveTo(cx - 74 * scale, 65);
       ctx.lineTo(elbowX, elbowY);
       ctx.stroke();
       ctx.strokeStyle = colors.arm;
@@ -596,39 +653,109 @@
       ctx.moveTo(elbowX, elbowY);
       ctx.lineTo(wristX, wristY);
       ctx.stroke();
-      ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = "#65768c";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(elbowX, elbowY);
-      ctx.lineTo(elbowX + forearmLength, elbowY);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = colors.arm;
-      const sensorX = elbowX + Math.cos(angle) * forearmLength * 0.58;
-      const sensorY = elbowY - Math.sin(angle) * forearmLength * 0.58;
+      ctx.fillStyle = colors.relative;
+      const sensorX = elbowX + (wristX - elbowX) * 0.58;
+      const sensorY = elbowY + (wristY - elbowY) * 0.58;
       ctx.save();
       ctx.translate(sensorX, sensorY);
       ctx.rotate(-angle);
       ctx.fillRect(-10, -5, 20, 10);
       ctx.restore();
+      ctx.strokeStyle = colors.board;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(headX, headY);
+      ctx.lineTo(sensorX, sensorY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#dce7f5";
+      ctx.beginPath();
+      ctx.arc(wristX, wristY, 4, 0, Math.PI * 2);
+      ctx.fill();
       ctx.fillStyle = colors.text;
       ctx.textAlign = "left";
-      ctx.fillText("前臂 IMU", sensorX + 13, sensorY - 13);
-      ctx.fillText("肘部（示意）", elbowX - 18, elbowY + 19);
-
-      ctx.strokeStyle = colors.relative;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(cx, cy - 18, Math.min(scale * 0.46, 42), -angle, 0, angle < 0);
-      ctx.stroke();
+      ctx.fillText("白点：手  ·  蓝点：码表  ·  橙色：前臂 IMU", 16, height - 12);
       ctx.fillStyle = colors.relative;
       ctx.textAlign = "left";
       ctx.fillText(`Δ俯仰 ${formatSigned(relativePitch)}  ·  Δ横滚 ${formatSigned(relativeRoll)}`,
         16, 20);
       ctx.fillStyle = colors.text;
       ctx.font = "11px system-ui, sans-serif";
-      ctx.fillText("基准：首个有效同步样本", 16, 40);
+      ctx.fillText("侧视 · 基准：首个有效同步样本", 16, 40);
+      ctx.lineCap = "butt";
+    }
+
+    function drawPoseTop(yawChange = null) {
+      const { context: ctx, width, height } = setupCanvas(elements.poseTop, 280);
+      const cx = width / 2;
+      const scale = Math.min((width - 32) / 360, 1);
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.fillStyle = colors.text;
+      ctx.textAlign = "left";
+      ctx.fillText("俯视 · 前进方向 ↑", 16, 22);
+      ctx.fillText(yawChange === null ? "前臂航向不可用" : `前臂航向变化 ${formatSigned(yawChange)} · 撑开 / 夹紧示意`, 16, 40);
+
+      ctx.strokeStyle = "#60738e";
+      ctx.lineWidth = 5;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(cx, 50);
+      ctx.lineTo(cx, height - 35);
+      ctx.moveTo(cx - 65 * scale, 95);
+      ctx.lineTo(cx + 65 * scale, 95);
+      ctx.moveTo(cx + 65 * scale, 75);
+      ctx.lineTo(cx + 65 * scale, 110);
+      ctx.moveTo(cx - 65 * scale, 75);
+      ctx.lineTo(cx - 65 * scale, 110);
+      ctx.stroke();
+
+      ctx.fillStyle = colors.board;
+      ctx.beginPath();
+      ctx.arc(cx, 95, 7, 0, Math.PI * 2);
+      ctx.fill();
+
+      const angle = (12 + Math.max(-55, Math.min(55, yawChange === null ? 0 : yawChange))) * Math.PI / 180;
+      const grip = selectedGrip();
+      const wristX = cx + grip.topX * scale;
+      const wristY = 95 + (grip.topY - 95) * scale;
+      const elbowX = wristX + Math.sin(angle) * 100 * scale;
+      const elbowY = wristY + Math.cos(angle) * 100 * scale;
+      ctx.strokeStyle = "#8191a8";
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.moveTo(cx + 45 * scale, 244);
+      ctx.lineTo(elbowX, elbowY);
+      ctx.stroke();
+      ctx.strokeStyle = yawChange === null ? "#60738e" : colors.arm;
+      ctx.lineWidth = 10;
+      ctx.beginPath();
+      ctx.moveTo(elbowX, elbowY);
+      ctx.lineTo(wristX, wristY);
+      ctx.stroke();
+      const sensorX = elbowX + (wristX - elbowX) * 0.58;
+      const sensorY = elbowY + (wristY - elbowY) * 0.58;
+      ctx.save();
+      ctx.translate(sensorX, sensorY);
+      ctx.rotate(Math.atan2(wristY - elbowY, wristX - elbowX));
+      ctx.fillStyle = yawChange === null ? "#8191a8" : colors.relative;
+      ctx.fillRect(-10, -5, 20, 10);
+      ctx.restore();
+      ctx.strokeStyle = colors.board;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(cx, 95);
+      ctx.lineTo(sensorX, sensorY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#dce7f5";
+      ctx.beginPath();
+      ctx.arc(wristX, wristY, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = colors.text;
+      ctx.textAlign = "left";
+      ctx.fillText("白点：手  ·  蓝点：码表  ·  橙色：前臂 IMU", 16, height - 12);
       ctx.lineCap = "butt";
     }
 
@@ -709,6 +836,7 @@
       pose.font = "14px system-ui, sans-serif";
       pose.textAlign = "center";
       pose.fillText("等待日志数据", poseWidth / 2, poseHeight / 2);
+      drawPoseTop();
     }
 
     elements.fileInput.addEventListener("change", event => readFile(event.target.files[0]));
