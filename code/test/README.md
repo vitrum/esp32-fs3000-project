@@ -237,6 +237,54 @@ sensors rigidly together for agreement tests. A body sensor versus a bike
 sensor measures different motion; native-axis subtraction is not calibration.
 Physical QMI8658 wiring/scale, touch coexistence and paired RF/SD operation
 still require board validation.
+
+#### BVH format and viewer
+
+BVH (Biovision Hierarchy) is a text-based skeletal animation format with two
+sections:
+
+- `HIERARCHY` defines a `ROOT`, nested `JOINT` relationships, each joint's
+  `OFFSET` from its parent, and the ordered `CHANNELS` that can animate it.
+  `End Site` marks the endpoint of a leaf bone.
+- `MOTION` declares the number of frames and `Frame Time`, followed by one
+  numeric row per frame. Values must follow the channel order declared while
+  traversing the hierarchy; a mismatch can make the pose appear distorted.
+
+BVH does not prescribe a universal length unit or model geometry. Viewers draw
+the connected joint segments, so offsets determine both the proportions and
+visible stick figure. This project's export uses centimeter-scale offsets and
+explicitly checks channel count and ordering.
+
+The generated `.bvh` can be opened with
+[BVHView](https://github.com/orangeduck/BVHView), a lightweight BVH animation
+viewer built with raylib. The project README provides a
+[browser demo](https://theorangeduck.com/media/uploads/BVHView/bvhview.html)
+and desktop build instructions.
+When checking this export, load the complete file and confirm the foot-level
+origin, full head-to-feet framing, and playback before interpreting the motion.
+
+Convert a comparison CSV to a human-only pose BVH and lossless-source HDF5 with
+`python -m pip install -r tools/requirements-imu-convert.txt` followed by
+`python tools/imu_to_bvh_hdf5.py <comparison.csv>`. The HDF5 stores all source
+rows, original timestamps/flags, raw sensor vectors, device-reported wearable
+angles, estimated orientations and BVH resampling metadata. BVH has independent
+`Ground` root at foot level, a `Hips` joint 95 cm above it, human head/torso/
+arms/legs only, and no bicycle geometry. This keeps the BVH origin at the feet
+so players frame the full body rather than centering the origin at the waist.
+The hips and lower body remain still; the torso has a fixed 35-degree forward
+cycling lean. The upper arms and left forearm remain in a static riding pose; the
+wearable-minus-board relative roll/pitch animates the right forearm. One
+forearm IMU cannot independently identify shoulder motion or elbow flexion, so
+those are not fabricated. BVH yaw is omitted because six-axis yaw is
+unreferenced and drifts. Fixed-rate motion uses a complementary tilt estimate
+and holds the last pair across gaps over 250 ms. This is a human-shaped visual
+proxy, not calibrated motion capture; the log's first synchronized sample is
+the relative-orientation baseline, not a known upright calibration. The HDF5
+`bvh/frame_channels` dataset stores the exact BVH channel rows and channel-name
+order.
+`python tools/test_imu_to_bvh_hdf5.py` exercises conversion, time-counter wrap,
+timestamp validation, human skeleton shape, fixed lower body, IMU angle mapping,
+channel consistency and overwrite protection.
 The official schematic maps IMU_SDA/IMU_SCL to GPIO11/GPIO10; this shares
 the existing `Wire` bus with FS3000/BME280. Touch remains on `Wire1` GPIO1/3.
 
