@@ -446,7 +446,7 @@ void DisplayLcd::updateOnlineDevices(bool powerConnected, bool powerResponding,
   const char *roleNames[] = {
       localized("Power meter", "功率计"),
       localized("Heart rate", "心率设备"),
-      localized("Forearm IMU", "前臂六轴")};
+      localized("Online IMU", "在线IMU")};
   const bool connected[] = {powerConnected, heartConnected, postureConnected};
   const bool responding[] = {powerResponding, heartResponding, postureResponding};
   onlineBleConnected_[0] = powerConnected;

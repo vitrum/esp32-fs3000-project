@@ -327,7 +327,7 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     setError("BLE scan failed: NimBLE scan is unavailable");
     return false;
   }
-  if (!bleScanner.run(durationMs ? durationMs : 6000, true, cancel)) {
+  if (!bleScanner.run(durationMs ? durationMs : 10000, true, cancel)) {
     setError(bleScanner.state() == BleScanState::Cancelled ? "Scan cancelled" : bleScanner.error());
     return false;
   }
@@ -372,7 +372,7 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
 
   for (int i = 0; i < results.getCount(); ++i) {
     const NimBLEAdvertisedDevice *ad = results.getDevice(i);
-    if (!ad || !ad->isConnectable()) continue;
+    if (!ad) continue;
 
     const bool cyclingPower = ad->isAdvertisingService(kSvcCP);
     const bool fitnessMachine = ad->isAdvertisingService(kSvcFTMS);
@@ -386,8 +386,15 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
       ad->isAdvertisingService(NimBLEUUID("0xffe0")) ||
       lowerName.find("wt") != std::string::npos;
     const bool heartRate = ad->isAdvertisingService(NimBLEUUID("0x180d"));
-    const bool supported = cyclingPower || fitnessMachine || speedCadence || postureSensor || heartRate;
+    // Favero Assioma 支持标准的 Cycling Power Service (0x1818)，
+    // 但某些固件版本可能不在广告包中暴露，因此通过品牌名称识别。
+    const bool faveroAssioma =
+      lowerName.find("assioma") != std::string::npos ||
+      lowerName.find("favero") != std::string::npos;
+    const bool supported = cyclingPower || fitnessMachine || speedCadence || postureSensor || heartRate || faveroAssioma;
     if (name.empty() && !supported) continue;
+    // 允许 Favero Assioma 设备即使不标记为 connectable 也能被发现
+    if (!ad->isConnectable() && !faveroAssioma) continue;
 
     const std::string address = ad->getAddress().toString();
     const uint8_t addressType = (uint8_t)ad->getAddress().getType();
