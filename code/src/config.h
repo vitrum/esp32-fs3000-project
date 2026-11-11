@@ -47,6 +47,11 @@
 #define PIN_PWR_CONTROL   7
 #define PWR_LONG_PRESS_MS 5000   // 长按关机阈值(ms)
 
+// ---- PWR_KEY 功能开关 ----
+// 设为 0 屏蔽 Reset 按钮：GPIO6 不响应任何操作，系统无法通过 PWR_KEY 关机。
+// 用于修复硬件故障（按钮卡住、误触等）。
+#define POWER_KEY_ENABLED 1
+
 // ---- BOOT 按钮（板上 BOOT 键，GPIO0）----
 // 按下为低电平。本固件用它打开设置页（短按触发一次）。
 #define PIN_BOOT_KEY      0

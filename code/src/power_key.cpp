@@ -6,6 +6,7 @@
 static const uint8_t kActiveLevel = LOW;
 
 void PowerKey::begin() {
+#if POWER_KEY_ENABLED
   // 电源保持控制脚：输出，默认拉低（不保持，避免异常上电）
   pinMode(PIN_PWR_CONTROL, OUTPUT);
   digitalWrite(PIN_PWR_CONTROL, LOW);
@@ -23,9 +24,16 @@ void PowerKey::begin() {
   } else {
     AppLog.println("[PWR] boot without key press -> power NOT latched");
   }
+#else
+  AppLog.println("[PWR] POWER_KEY_ENABLED=0 -> power key disabled");
+#endif
 }
 
 void PowerKey::tick() {
+#if !POWER_KEY_ENABLED
+  return;  // Power key disabled
+#endif
+
   if (_shuttingDown) return;
 
   const bool pressed = (digitalRead(PIN_PWR_KEY) == kActiveLevel);
