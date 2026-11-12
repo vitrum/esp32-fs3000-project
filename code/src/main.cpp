@@ -14,6 +14,7 @@
 #include <Wire.h>
 #include <cstring>
 #include <errno.h>
+#include <stdlib.h>
 #include <time.h>
 #include <esp_heap_caps.h>
 #include <esp_system.h>
@@ -756,11 +757,12 @@ void loop() {
         char status[48];
         snprintf(status, sizeof(status), "%u device(s) found",
                  (unsigned)outcome.deviceCount);
-        lcd.setBleDevices(outcome.devices, outcome.deviceCount, status);
         if (manualScanRole == SavedConnections::Role::Power)
           scanFavoriteConnections.beginScan(outcome.devices, outcome.deviceCount);
         else
           scanFavoriteConnections.cancel();
+        lcd.setBleDevices(outcome.devices, outcome.deviceCount, status);
+        outcome.devices = nullptr;
       } else {
         powerConnected = powerMeter.connected();
         manualPairingActive = false;
@@ -773,6 +775,7 @@ void loop() {
                                     ? outcome.error
                                     : "BLE operation failed without a reported reason.");
     }
+    free(outcome.devices);
   }
 
   powerConnected = powerMeter.connected();

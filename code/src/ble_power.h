@@ -5,7 +5,23 @@
 #include <atomic>
 
 class BleCancellation;
-static constexpr size_t kBleDeviceCapacity = 16;
+static constexpr size_t kBleDevicePageSize = 4;
+
+class BleDevicePages {
+public:
+  void reset() { page_ = 0; }
+  void move(bool next, size_t count) {
+    if (next && page_ + 1 < pages(count)) ++page_;
+    else if (!next && page_ > 0) --page_;
+  }
+  size_t page() const { return page_; }
+  size_t offset() const { return page_ * kBleDevicePageSize; }
+  static size_t pages(size_t count) {
+    return count / kBleDevicePageSize + (count % kBleDevicePageSize != 0);
+  }
+private:
+  size_t page_ = 0;
+};
 
 struct BlePowerDevice {
   char name[32];
@@ -21,15 +37,18 @@ struct BlePowerDevice {
   bool postureSensor;
   bool favorite;
   bool heartRate;
+  bool supported;
+  // Assioma 双脚踏识别：0=非Assioma, 1=左脚踏(L), 2=右脚踏(R)
+  // 支持 AssiomaPRO\d+L/R 等任意数字的型号
+  uint8_t assiomaLR;  // 0=none, 1=left, 2=right
 };
 
 // BLE GATT Central supporting Cycling Power, FTMS trainers, and CSC sensors.
 class BlePowerMeter {
 public:
   void begin(const char *deviceName, float wheelCircM);
-  // 扫描可连接设备。durationMs 由调用方（BLE 工作线程）指定，避免模块内
-  // 硬编码时长与队列/取消逻辑脱节。
-  bool scanDevices(BlePowerDevice *devices, size_t capacity, size_t &count,
+  // 成功时 devices 由调用方通过 free() 释放。
+  bool scanDevices(BlePowerDevice *&devices, size_t &count,
                    uint32_t durationMs, const BleCancellation *cancel = nullptr);
   void processData();
   uint32_t droppedPackets() const;

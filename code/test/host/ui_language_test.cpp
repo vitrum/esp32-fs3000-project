@@ -344,18 +344,26 @@ static void checkSensorViews(lv_obj_t *screen) {
   lv_obj_set_style_pad_all(panel, 0, 0);
   lv_obj_set_style_border_width(panel, 0, 0);
   OnlineDevicesView online;
-  online.create(panel);
+  online.create(panel, "20261112183608");
   const char *names[] = {"功率计", "心率设备", "前臂六轴", "网络时间", "风速计", "车架六轴"};
   for (unsigned index = 0; index < OnlineDevicesView::kCount; ++index) {
     online.status(index, names[index], "已连接 / 响应正常");
     online.data(index, "P+42 R+13 Y-3  42ms");
   }
   lv_obj_update_layout(panel);
+  assert(!strcmp(lv_label_get_text(online.version()), "V 20261112183608"));
+  lv_area_t versionArea;
+  lv_obj_get_coords(online.version(), &versionArea);
   assert(!lv_obj_has_flag(online.list(), LV_OBJ_FLAG_SCROLLABLE));
   assert(lv_obj_get_y(online.reading(5)) > lv_obj_get_y(online.reading(4)));
   lv_area_t listArea, finalRow;
   lv_obj_get_coords(online.list(), &listArea);
   lv_obj_get_coords(online.reading(5), &finalRow);
+  assert(versionArea.y2 < listArea.y1);
+  lv_point_t versionTextSize;
+  lv_txt_get_size(&versionTextSize, lv_label_get_text(online.version()),
+                  &lv_font_jetbrains_mono_14, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  assert(versionTextSize.x <= lv_obj_get_width(online.version()));
   assert(finalRow.y2 <= listArea.y2);
   saveSensorFrame("online-sensors-top.ppm");
   lv_obj_del(panel);

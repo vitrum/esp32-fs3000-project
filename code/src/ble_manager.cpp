@@ -3,6 +3,7 @@
 #include "runtime_log.h"
 #include "saved_connections.h"
 #include <freertos/task.h>
+#include <stdlib.h>
 
 void BleManager::releaseQueues() {
   if (commands_) vQueueDelete(commands_);
@@ -96,7 +97,7 @@ void BleManager::work() {
       switch (command.kind) {
         case BleOpKind::Scan:
           state_.store(BleManagerState::Scanning);
-          out.success = power_.scanDevices(out.devices, kBleDeviceCapacity, out.deviceCount,
+          out.success = power_.scanDevices(out.devices, out.deviceCount,
                                             BLE_OP_SCAN_DURATION_MS, &cancellation);
           if (!out.success) snprintf(out.error, sizeof(out.error), "%s", power_.lastError());
           break;
@@ -126,6 +127,9 @@ void BleManager::work() {
     }
     out.cancelled = cancellation.cancelled();
     if (out.cancelled) {
+      free(out.devices);
+      out.devices = nullptr;
+      out.deviceCount = 0;
       if (command.kind == BleOpKind::Connect) power_.disconnect();
       if (command.kind == BleOpKind::Posture) posture_.disconnect();
       if (command.kind == BleOpKind::Heart && heart_) heart_->disconnect();

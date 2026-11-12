@@ -24,7 +24,7 @@ struct BleOutcome {
   char address[18] = {};
   uint8_t addressType = 0xFF;
   size_t deviceCount = 0;
-  BlePowerDevice devices[kBleDeviceCapacity] = {};
+  BlePowerDevice *devices = nullptr;
   char error[320] = {};
 };
 
@@ -33,6 +33,7 @@ public:
   BleManager(BlePowerMeter &power, BlePosture &posture, BleHeartRate *heart = nullptr) : power_(power), posture_(posture), heart_(heart) {}
   bool begin();
   bool enqueue(BleOpKind kind, const char *address = nullptr, uint8_t type = 0xFF);
+  // The receiver owns and must free out.devices after consuming a scan outcome.
   bool takeOutcome(BleOutcome &out);
   void cancel() { generation_.fetch_add(1); }
   bool busy() const { return pending_.load() != 0; }

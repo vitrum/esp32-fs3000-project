@@ -41,7 +41,8 @@ public:
   void showBleLoading(const char *status);
   void finishBleCancelled();
   void showBleConnectFailure(const char *error);
-  void setBleDevices(const BlePowerDevice *devices, size_t count, const char *status);
+  // Takes ownership of devices, allocated with malloc/calloc.
+  void setBleDevices(BlePowerDevice *devices, size_t count, const char *status);
   void closePowerMeterPanels();
   void updateOnlineDevices(bool powerConnected, bool powerResponding,
                            bool heartConnected, bool heartResponding,
@@ -256,7 +257,7 @@ private:
   lv_obj_t *bleLoadingBackLabel_ = nullptr;
   lv_obj_t *bleConfirmNameLabel_ = nullptr;
   lv_obj_t *bleConfirmAddressLabel_ = nullptr;
-  lv_obj_t *bleDeviceButtons_[kBleDeviceCapacity] = {};
+  lv_obj_t *bleDeviceButtons_[kBleDevicePageSize] = {};
   lv_obj_t *bleDeviceList_ = nullptr;
   lv_obj_t *bleFavoriteButtons_[3] = {};
   lv_obj_t *bleFavoriteLabels_[3] = {};
@@ -310,8 +311,9 @@ private:
   bool wifiSetupRequested_ = false;
   bool bleOperationActive_ = false;
   char requestedBleAddress_[18] = {};
-  BlePowerDevice bleDevices_[kBleDeviceCapacity] = {};
+  BlePowerDevice *bleDevices_ = nullptr;
   size_t bleDeviceCount_ = 0;
+  BleDevicePages bleDevicePages_;
   size_t selectedBleDevice_ = 0;
   bool touchReady_ = false;
   UiNavigationGuard navigationGuard_;
@@ -361,6 +363,7 @@ private:
   static void onWifiSelected(lv_event_t *event);
   static void onBleSelected(lv_event_t *event);
   static void onBleScanAgain(lv_event_t *event);
+  static void onBlePage(lv_event_t *event);
   static void onBleDeviceSelected(lv_event_t *event);
   static void onBleConfirm(lv_event_t *event);
   static void onBleBack(lv_event_t *event);

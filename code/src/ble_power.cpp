@@ -6,6 +6,7 @@
 #include "ble_scan.h"
 #include "saved_connections.h"
 #include <algorithm>
+#include <stdlib.h>
 
 namespace {
 BleInbox<12> powerInbox;
@@ -23,6 +24,29 @@ uint16_t s_lastCrankTime = 0;
 
 bool hasBytes(size_t length, size_t index, size_t count) {
   return index <= length && count <= length - index;
+}
+
+// 识别 Assioma 双脚踏设备的侧别（左/右）
+// 支持 AssiomaPRO\d+L, AssiomaPRO\d+R 等任意数字型号
+// 返回值: 0=非Assioma, 1=左脚踏(L), 2=右脚踏(R)
+uint8_t detectAssiomaLR(const std::string &name) {
+  std::string lower = name;
+  std::transform(lower.begin(), lower.end(), lower.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+
+  // 检查是否包含 "assioma" 字符串
+  size_t pos = lower.find("assioma");
+  if (pos == std::string::npos) return 0;
+
+  // 查找设备名称中最后一个 L 或 R（假设在末尾表示左右脚踏）
+  // AssiomaPRO31392L -> L (left)
+  // AssiomaPRO31391R -> R (right)
+  if (!name.empty()) {
+    char last = name.back();
+    if (last == 'L' || last == 'l') return 1;  // Left
+    if (last == 'R' || last == 'r') return 2;  // Right
+  }
+  return 0;  // Assioma but no L/R identifier
 }
 
 uint16_t readU16(const uint8_t *data, size_t index) {
@@ -301,7 +325,7 @@ void BlePowerMeter::parseSpeedCadence(uint8_t *data, size_t length) {
 void BlePowerMeter::begin(const char *deviceName, float wheelCircM) {
   s_wheelCirc = wheelCircM;
   NimBLEDevice::init(deviceName);
-  NimBLEDevice::getScan()->setMaxResults(20);
+  NimBLEDevice::getScan()->setMaxResults(0xFF);
 }
 
 void BlePowerMeter::clearScanResults() {
@@ -309,14 +333,10 @@ void BlePowerMeter::clearScanResults() {
   if (scan && !scan->isScanning()) scan->clearResults();
 }
 
-bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
-                                size_t &count, uint32_t durationMs,
+bool BlePowerMeter::scanDevices(BlePowerDevice *&devices, size_t &count, uint32_t durationMs,
                                 const BleCancellation *cancel) {
+  devices = nullptr;
   count = 0;
-  if (!devices || capacity == 0) {
-    setError("BLE scan failed: invalid output buffer");
-    return false;
-  }
 
   if (!NimBLEDevice::isInitialized()) {
     setError("BLE scan failed: BLE stack is not initialized");
@@ -333,30 +353,25 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
   }
   NimBLEScanResults results = scan->getResults();
 
-  // 注意：NimBLEScanResults 持有的是扫描缓存里的指针。这里先把需要的字段
-  // 全部拷进本地结构，再与上一次的「用户选择列表」做去重，最后才
-  // clearResults()，避免任何 ad->getName() 落在缓存释放之后。
-  struct Candidate {
-    char name[32];
-    char address[18];
-    int8_t rssi;
-    bool cyclingPower;
-    bool fitnessMachine;
-    bool speedCadence;
-    bool postureSensor;
-    bool supported;
-    bool heartRate;
-    uint8_t addressType;
-  };
-  static Candidate candidates[32];
-  size_t candidateCount = 0;
+  // 扫描缓存清理前复制字段，结果由调用方持有。
+  const size_t resultCount = results.getCount();
+  if (resultCount) {
+    devices = static_cast<BlePowerDevice *>(calloc(resultCount, sizeof(BlePowerDevice)));
+    if (!devices) {
+      scan->clearResults();
+      setError("BLE scan failed: insufficient memory for results");
+      return false;
+    }
+  }
   SavedConnections saved;
   if (!saved.loadFavorites()) {
     scan->clearResults();
+    free(devices);
+    devices = nullptr;
     setError("Could not load BLE favorites");
     return false;
   }
-  auto preferred = [&saved](const Candidate &left, const Candidate &right) {
+  auto preferred = [&saved](const BlePowerDevice &left, const BlePowerDevice &right) {
     const bool leftFavorite =
         saved.isFavorite(left.address, left.addressType, SavedConnections::Role::Power) ||
         saved.isFavorite(left.address, left.addressType, SavedConnections::Role::Heart) ||
@@ -388,74 +403,54 @@ bool BlePowerMeter::scanDevices(BlePowerDevice *devices, size_t capacity,
     const bool heartRate = ad->isAdvertisingService(NimBLEUUID("0x180d"));
     // Favero Assioma 支持标准的 Cycling Power Service (0x1818)，
     // 但某些固件版本可能不在广告包中暴露，因此通过品牌名称识别。
-    const bool faveroAssioma =
+    // 使用通用的 detectAssiomaLR() 识别左右脚踏（支持任意数字序列号）
+    const uint8_t assiomaLR = detectAssiomaLR(name);
+    const bool faveroAssioma = assiomaLR > 0 ||
       lowerName.find("assioma") != std::string::npos ||
       lowerName.find("favero") != std::string::npos;
     const bool supported = cyclingPower || fitnessMachine || speedCadence || postureSensor || heartRate || faveroAssioma;
-    if (name.empty() && !supported) continue;
-    // 允许 Favero Assioma 设备即使不标记为 connectable 也能被发现
-    if (!ad->isConnectable() && !faveroAssioma) continue;
-
     const std::string address = ad->getAddress().toString();
     const uint8_t addressType = (uint8_t)ad->getAddress().getType();
-    const bool favorite = saved.isFavorite(address.c_str(), addressType,
-                                            SavedConnections::Role::Power) ||
-        saved.isFavorite(address.c_str(), addressType, SavedConnections::Role::Heart) ||
-        saved.isFavorite(address.c_str(), addressType, SavedConnections::Role::Posture);
-    if (lowerName.find("bike") != std::string::npos && !favorite) continue;
     bool alreadyAdded = false;
-    for (size_t j = 0; j < candidateCount; ++j) {
-      if (address == candidates[j].address && ad->getAddress().getType() == candidates[j].addressType) {
+    for (size_t j = 0; j < count; ++j) {
+      if (address == devices[j].address && addressType == devices[j].addressType) {
         alreadyAdded = true;
         break;
       }
     }
     if (alreadyAdded) continue;
 
-    Candidate c{};
+    BlePowerDevice c{};
     snprintf(c.name, sizeof(c.name), "%s",
              name.empty() ? "Unnamed BLE device" : name.c_str());
     snprintf(c.address, sizeof(c.address), "%s", address.c_str());
     c.rssi = ad->getRSSI();
     c.cyclingPower = cyclingPower;
     c.fitnessMachine = fitnessMachine;
+    c.assiomaLR = assiomaLR;
     c.speedCadence = speedCadence;
     c.postureSensor = postureSensor;
     c.supported = supported;
     c.heartRate = heartRate;
     // 关键：记录真实地址类型，供后续 connect 使用（见 BlePowerDevice 注释）。
-    c.addressType = (uint8_t)ad->getAddress().getType();
-    if (candidateCount < 32) candidates[candidateCount++] = c;
-    else if (preferred(c, candidates[candidateCount - 1])) candidates[candidateCount - 1] = c;
-    std::stable_sort(candidates, candidates + candidateCount, preferred);
+    c.addressType = addressType;
+    c.favorite = saved.isFavorite(c.address, c.addressType, SavedConnections::Role::Power);
+    devices[count++] = c;
   }
   scan->clearResults();
+  if (count > 1) std::stable_sort(devices, devices + count, preferred);
 
-    for (size_t i = 0; i < candidateCount && count < capacity; ++i) {
-      const Candidate &c = candidates[i];
-
-      BlePowerDevice &device = devices[count++];
-      snprintf(device.name, sizeof(device.name), "%s", c.name);
-      snprintf(device.address, sizeof(device.address), "%s", c.address);
-      device.rssi = c.rssi;
-      device.cyclingPower = c.cyclingPower;
-      device.fitnessMachine = c.fitnessMachine;
-      device.speedCadence = c.speedCadence;
-      device.postureSensor = c.postureSensor;
-      device.addressType = c.addressType;
-      device.favorite = saved.isFavorite(c.address, c.addressType,
-                                         SavedConnections::Role::Power);
-      device.heartRate = c.heartRate;
-    }
-
-  AppLog.printf("[BLE] scan complete: %u connectable device(s)\n",
+  AppLog.printf("[BLE] scan complete: %u device(s)\n",
                 (unsigned)count);
   for (size_t i = 0; i < count; ++i) {
     char typeBuffer[24];
     const char *typeName =
         bleAddrTypeName(devices[i].addressType, typeBuffer, sizeof(typeBuffer));
-    AppLog.printf("[BLE] %u: %s, %s [%s], RSSI %d dBm%s%s\n",
-                  (unsigned)(i + 1), devices[i].name, devices[i].address,
+    const char *assiomaSide = "";
+    if (devices[i].assiomaLR == 1) assiomaSide = " (L)";
+    else if (devices[i].assiomaLR == 2) assiomaSide = " (R)";
+    AppLog.printf("[BLE] %u: %s%s, %s [%s], RSSI %d dBm%s%s\n",
+                  (unsigned)(i + 1), devices[i].name, assiomaSide, devices[i].address,
                   typeName, devices[i].rssi,
                   devices[i].cyclingPower ? " CPS" : "",
                   devices[i].fitnessMachine ? " FTMS" :

@@ -1,8 +1,13 @@
 import importlib.util
+from datetime import datetime
 from pathlib import Path
+import runpy
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("env_config", ROOT / "tools/env_config.py")
@@ -91,6 +96,27 @@ class EnvConfigTests(unittest.TestCase):
             with self.assertRaises(ValueError) as error:
                 env_config.read_settings(self.path, {})
             self.assertNotIn("private-value", str(error.exception))
+
+    def test_build_hook_updates_timestamp_on_each_build(self):
+        class BuildEnv:
+            def subst(inner_self, value):
+                return str(self.root / ("build" if value == "$BUILD_DIR" else "project"))
+
+            def Append(inner_self, **kwargs):
+                pass
+
+        script = types.ModuleType("SCons.Script")
+        script.Import = lambda name: None
+        scons = types.ModuleType("SCons")
+        for expected in ("20261112010203", "20261112010204"):
+            build_time = datetime(2026, 11, 12, 1, 2, int(expected[-2:]))
+            fake_datetime = types.ModuleType("datetime")
+            fake_datetime.datetime = types.SimpleNamespace(now=lambda: build_time)
+            with patch.dict(sys.modules, {"SCons": scons, "SCons.Script": script,
+                                         "datetime": fake_datetime, "env_config": env_config}):
+                runpy.run_path(str(ROOT / "tools/load_env.py"), init_globals={"env": BuildEnv()})
+            header = self.root / "build/generated/aero_build_version.h"
+            self.assertIn(f'#define AERO_BUILD_VERSION "{expected}"', header.read_text())
 
 
 if __name__ == "__main__":

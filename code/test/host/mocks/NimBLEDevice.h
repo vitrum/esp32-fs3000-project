@@ -66,7 +66,7 @@ public:
 };
 class NimBLEScan {
 public:
-  void setMaxResults(uint8_t) {}
+  void setMaxResults(uint8_t value) { maxResults = value; }
   void clearResults() { if (!active) results.devices.clear(); }
   void setScanCallbacks(NimBLEScanCallbacks *value, bool) { callbacks = value; }
   void setActiveScan(bool value) { activeScan = value; }
@@ -99,6 +99,7 @@ public:
   std::atomic<unsigned> starts{0};
   unsigned stops = 0;
   bool failStart = false, failStop = false, manualCompletion = false, activeScan = false;
+  uint8_t maxResults = 0;
   uint16_t interval = 0, window = 0;
 };
 class NimBLEClient;

@@ -12,10 +12,16 @@ LV_FONT_DECLARE(lv_font_noto_sans_sc_14);
 class OnlineDevicesView {
 public:
   static constexpr unsigned kCount = 6;
-  void create(lv_obj_t *panel) {
+  void create(lv_obj_t *panel, const char *version) {
+    version_ = lv_label_create(panel);
+    lv_obj_set_pos(version_, 8, 54);
+    lv_obj_set_size(version_, 224, 18);
+    lv_obj_set_style_text_font(version_, &lv_font_jetbrains_mono_14, 0);
+    lv_obj_set_style_text_color(version_, lv_color_make(100, 116, 139), 0);
+    lv_label_set_text_fmt(version_, "V %s", version);
     list_ = lv_obj_create(panel);
-    lv_obj_set_pos(list_, 0, 54);
-    lv_obj_set_size(list_, 240, 266);
+    lv_obj_set_pos(list_, 0, 74);
+    lv_obj_set_size(list_, 240, 246);
     lv_obj_set_style_pad_all(list_, 0, 0);
     lv_obj_set_style_border_width(list_, 0, 0);
     lv_obj_set_style_radius(list_, 0, 0);
@@ -23,12 +29,12 @@ public:
     lv_obj_clear_flag(list_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(list_, LV_SCROLLBAR_MODE_OFF);
     for (unsigned index = 0; index < kCount; ++index) {
-      titles_[index] = label(8, index * 42, 18, &lv_font_noto_sans_sc_14);
+      titles_[index] = label(8, index * 38, 18, &lv_font_noto_sans_sc_14);
       lv_obj_set_width(titles_[index], 120);
-      statuses_[index] = label(132, index * 42, 18, &lv_font_noto_sans_sc_14);
+      statuses_[index] = label(132, index * 38, 18, &lv_font_noto_sans_sc_14);
       lv_obj_set_width(statuses_[index], 100);
       lv_obj_set_style_text_align(statuses_[index], LV_TEXT_ALIGN_RIGHT, 0);
-      data_[index] = label(8, index * 42 + 18, 18, &lv_font_jetbrains_mono_14);
+      data_[index] = label(8, index * 38 + 18, 18, &lv_font_jetbrains_mono_14);
       lv_obj_set_style_text_color(statuses_[index], lv_color_make(100, 116, 139), 0);
       lv_label_set_long_mode(data_[index], LV_LABEL_LONG_DOT);
       lv_label_set_text(data_[index], "--");
@@ -43,6 +49,7 @@ public:
     if (index < kCount && list_) set(data_[index], value);
   }
   lv_obj_t *list() const { return list_; }
+  lv_obj_t *version() const { return version_; }
   lv_obj_t *reading(unsigned index) const { return data_[index]; }
   lv_obj_t *title(unsigned index) const { return titles_[index]; }
 private:
@@ -59,6 +66,7 @@ private:
     return result;
   }
   lv_obj_t *list_ = nullptr;
+  lv_obj_t *version_ = nullptr;
   lv_obj_t *titles_[kCount] = {}, *statuses_[kCount] = {}, *data_[kCount] = {};
 };
 

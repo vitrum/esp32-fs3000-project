@@ -1,7 +1,9 @@
 #include "display_lcd.h"
+#include "aero_build_version.h"
 #include "runtime_log.h"
 #include "config.h"
 #include <cstring>
+#include <stdlib.h>
 #include <time.h>
 #include "saved_connections.h"
 #include "dashboard_settings.h"
@@ -703,10 +705,20 @@ void DisplayLcd::onBleScanAgain(lv_event_t *) {
       : "Scanning for BLE devices...");
 }
 
+void DisplayLcd::onBlePage(lv_event_t *event) {
+  if (!g_display || !g_display->bleScanTouch_.accept(millis())) return;
+  const bool next = (uintptr_t)lv_event_get_user_data(event) != 0;
+  g_display->bleDevicePages_.move(next, g_display->bleDeviceCount_);
+  lv_obj_scroll_to_y(g_display->bleDeviceList_, 0, LV_ANIM_OFF);
+  g_display->bleDeviceTouch_.reset(millis());
+  g_display->refreshLanguage();
+}
+
 void DisplayLcd::onBleDeviceSelected(lv_event_t *event) {
   if (!g_display) return;
   if (!g_display->bleDeviceTouch_.accept(millis())) return;
-  size_t index = (size_t)(uintptr_t)lv_event_get_user_data(event);
+  size_t index = g_display->bleDevicePages_.offset() +
+      (size_t)(uintptr_t)lv_event_get_user_data(event);
   if (index >= g_display->bleDeviceCount_) return;
 
   g_display->selectedBleDevice_ = index;
@@ -1153,7 +1165,7 @@ void DisplayLcd::buildOnlineDevicesPanel() {
   lv_obj_set_style_border_width(onlineDevicesPanel_, 0, 0);
   lv_obj_set_style_bg_color(onlineDevicesPanel_, lv_color_make(248, 250, 252), 0);
   buildPanelHeader(onlineDevicesPanel_, "ONLINE DEVICES", onOnlineDevicesBack);
-  onlineView_.create(onlineDevicesPanel_);
+  onlineView_.create(onlineDevicesPanel_, AERO_BUILD_VERSION);
   lv_obj_add_flag(onlineDevicesPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1450,7 +1462,7 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_align(bleDeviceHint_, LV_ALIGN_TOP_LEFT, 12, 56);
 
   lv_obj_t *scanButton = lv_btn_create(bleDevicePanel_);
-  lv_obj_set_size(scanButton, 216, 32);
+  lv_obj_set_size(scanButton, 120, 32);
   lv_obj_set_style_radius(scanButton, 0, LV_PART_MAIN);
   lv_obj_align(scanButton, LV_ALIGN_TOP_LEFT, 12, 80);
   lv_obj_set_style_bg_color(scanButton, lv_color_make(37, 99, 235), 0);
@@ -1461,6 +1473,16 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_text_color(scanLabel, lv_color_white(), 0);
   lv_obj_set_style_text_font(scanLabel, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(scanLabel);
+
+  for (size_t i = 0; i < 2; ++i) {
+    lv_obj_t *pageButton = lv_btn_create(bleDevicePanel_);
+    lv_obj_set_size(pageButton, 40, 32);
+    lv_obj_align(pageButton, LV_ALIGN_TOP_LEFT, 140 + i * 48, 80);
+    lv_obj_add_event_cb(pageButton, onBlePage, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
+    lv_obj_t *label = lv_label_create(pageButton);
+    lv_label_set_text(label, i ? ">" : "<");
+    lv_obj_center(label);
+  }
 
   bleStatusLabel_ = lv_label_create(bleDevicePanel_);
   lv_label_set_text(bleStatusLabel_, "No scan yet");
@@ -1478,12 +1500,12 @@ void DisplayLcd::buildPowerSourcePanel() {
   lv_obj_set_style_bg_opa(bleDeviceList_, LV_OPA_TRANSP, 0);
   lv_obj_set_scroll_dir(bleDeviceList_, LV_DIR_VER);
   lv_obj_set_scrollbar_mode(bleDeviceList_, LV_SCROLLBAR_MODE_AUTO);
-  for (size_t i = 0; i < kBleDeviceCapacity; ++i) {
+  for (size_t i = 0; i < kBleDevicePageSize; ++i) {
     bleDeviceButtons_[i] = lv_btn_create(bleDeviceList_);
-    lv_obj_set_size(bleDeviceButtons_[i], 212, 44);
+    lv_obj_set_size(bleDeviceButtons_[i], 212, 42);
     lv_obj_set_style_radius(bleDeviceButtons_[i], 0, LV_PART_MAIN);
     lv_obj_align(bleDeviceButtons_[i], LV_ALIGN_TOP_LEFT, 4,
-           (lv_coord_t)(i * 48));
+           (lv_coord_t)(i * 44));
     lv_obj_set_style_bg_color(bleDeviceButtons_[i], lv_color_make(239, 244, 248), 0);
     lv_obj_set_style_pad_all(bleDeviceButtons_[i], 1, 0);
     lv_obj_set_style_border_color(bleDeviceButtons_[i], lv_color_make(203, 213, 225), 0);
@@ -2109,28 +2131,28 @@ void DisplayLcd::setLanguage(bool chinese) {
 void DisplayLcd::refreshBleDeviceButtons() {
   SavedConnections saved;
   saved.loadFavorites();
-  for (size_t i = 0; i < kBleDeviceCapacity; ++i) {
+  for (size_t i = 0; i < kBleDevicePageSize; ++i) {
     lv_obj_t *button = bleDeviceButtons_[i];
     lv_obj_t *label = lv_obj_get_child(button, 0);
-    if (i >= bleDeviceCount_) {
+    const size_t index = bleDevicePages_.offset() + i;
+    if (index >= bleDeviceCount_) {
       lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
       continue;
     }
-    const char *profile = bleDevices_[i].heartRate ? "HRS / bpm" : bleDevices_[i].cyclingPower
-                              ? (bleDevices_[i].fitnessMachine
+    BlePowerDevice &device = bleDevices_[index];
+    const char *profile = device.heartRate ? "HRS / bpm" : device.cyclingPower
+                              ? (device.fitnessMachine
                                      ? localized("CPS + FTMS", "功率计 + 骑行台")
                                      : localized("CPS", "功率计"))
-                              : (bleDevices_[i].fitnessMachine
+                              : (device.fitnessMachine
                                      ? localized("FTMS trainer", "FTMS 骑行台")
-                                     : (bleDevices_[i].speedCadence
+                                     : (device.speedCadence
                                             ? localized("CSC cadence only", "CSC 仅踏频")
                                             : localized("BLE device", "蓝牙设备")));
     char text[64];
-    bleDevices_[i].favorite = saved.isFavorite(bleDevices_[i].address,
-                                                bleDevices_[i].addressType,
-                                                activeBleRole_);
+    device.favorite = saved.isFavorite(device.address, device.addressType, activeBleRole_);
     snprintf(text, sizeof(text), "%s%s\n%s  %d dBm",
-         bleDevices_[i].favorite ? "* " : "", bleDevices_[i].name, profile, bleDevices_[i].rssi);
+         device.favorite ? "* " : "", device.name, profile, device.rssi);
     lv_label_set_text(label, text);
     lv_obj_clear_flag(button, LV_OBJ_FLAG_HIDDEN);
   }
@@ -2168,10 +2190,12 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_set_style_text_font(bleDeviceHint_, font, 0);
   lv_obj_set_style_text_font(bleScanLabel_, font, 0);
   if (!bleScanCompleted_) lv_label_set_text(bleStatusLabel_, localized("No scan yet", "尚未扫描"));
-  else if (!bleDeviceCount_) lv_label_set_text(bleStatusLabel_, localized("No connectable BLE devices found", "未找到可连接的蓝牙设备"));
+  else if (!bleDeviceCount_) lv_label_set_text(bleStatusLabel_, localized("No BLE devices found", "未找到蓝牙设备"));
   else {
-    char status[40];
-    snprintf(status, sizeof(status), chinese_ ? "找到 %u 个设备" : "%u device(s) found", (unsigned)bleDeviceCount_);
+    char status[64];
+    snprintf(status, sizeof(status), chinese_ ? "%u 个设备  %u/%u" : "%u devices  %u/%u",
+             (unsigned)bleDeviceCount_, (unsigned)(bleDevicePages_.page() + 1),
+             (unsigned)BleDevicePages::pages(bleDeviceCount_));
     lv_label_set_text(bleStatusLabel_, status);
   }
   lv_obj_set_style_text_font(bleStatusLabel_, font, 0);
@@ -2186,7 +2210,7 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_set_style_text_font(bleLoadingTitle_, titleFont, 0);
   lv_obj_set_style_text_font(bleLoadingBackLabel_, font, 0);
   lv_obj_set_style_text_font(bleLoadingLabel_, font, 0);
-  for (size_t index = 0; index < kBleDeviceCapacity; ++index)
+  for (size_t index = 0; index < kBleDevicePageSize; ++index)
     lv_obj_set_style_text_font(lv_obj_get_child(bleDeviceButtons_[index], 0), font, 0);
   lv_label_set_text(virtualTitle_, localized("VIRTUAL POWER", "虚拟功率计"));
   lv_label_set_text(virtualPowerTitle_, localized("POWER", "功率"));
@@ -2463,7 +2487,7 @@ void DisplayLcd::showBleConnectFailure(const char *error) {
   lv_obj_clear_flag(bleLoadingPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
-void DisplayLcd::setBleDevices(const BlePowerDevice *devices, size_t count,
+void DisplayLcd::setBleDevices(BlePowerDevice *devices, size_t count,
                                const char *status) {
   bleOperationActive_ = false;
   bleRequestInFlight_ = false;
@@ -2471,15 +2495,10 @@ void DisplayLcd::setBleDevices(const BlePowerDevice *devices, size_t count,
   bleDeviceTouch_.reset(millis());
   bleScanTouch_.reset(millis());
   bleScanCompleted_ = true;
-  bleDeviceCount_ = 0;
-  for (size_t i = 0; devices && i < count && bleDeviceCount_ < kBleDeviceCapacity; ++i) {
-    const BlePowerDevice &device = devices[i];
-    const bool matches = activeBleRole_ == SavedConnections::Role::Power
-        ? (device.cyclingPower || device.fitnessMachine || device.speedCadence)
-        : activeBleRole_ == SavedConnections::Role::Heart
-            ? device.heartRate : device.postureSensor;
-    if (matches) bleDevices_[bleDeviceCount_++] = device;
-  }
+  free(bleDevices_);
+  bleDevices_ = devices;
+  bleDeviceCount_ = devices ? count : 0;
+  bleDevicePages_.reset();
   lv_obj_scroll_to_y(bleDeviceList_, 0, LV_ANIM_OFF);
   if (bleStatusLabel_ && status && status[0] && bleDeviceCount_ == 0)
     lv_label_set_text(bleStatusLabel_, status);

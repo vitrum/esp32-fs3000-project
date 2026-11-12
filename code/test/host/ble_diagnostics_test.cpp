@@ -195,6 +195,22 @@ static void controlTests() {
   assert(manager.enqueue(BleOpKind::Scan));
   const auto empty = outcome(manager);
   assert(empty.success && empty.deviceCount == 0 && !manager.busy());
+  for (unsigned index = 0; index < 6; ++index) {
+    NimBLEAdvertisedDevice advertisement;
+    char address[18];
+    snprintf(address, sizeof(address), "22:33:44:55:66:%02x", index);
+    advertisement.address = NimBLEAddress(address, 0);
+    advertisement.name = index == 5 ? "" : "Bike";
+    advertisement.connectable = index != 5;
+    advertisement.services.clear();
+    NimBLEDevice::scan.results.devices.push_back(advertisement);
+  }
+  assert(manager.enqueue(BleOpKind::Scan));
+  auto scanned = outcome(manager);
+  assert(scanned.success && scanned.deviceCount == 6);
+  assert(!strcmp(scanned.devices[0].name, "Bike"));
+  assert(!strcmp(scanned.devices[5].name, "Unnamed BLE device"));
+  free(scanned.devices);
   NimBLEDevice::nextService = "0x180d";
   NimBLEDevice::nextCharacteristic = "0x2a37";
   assert(manager.enqueue(BleOpKind::Heart, "44:55:66:77:88:99", 1));
@@ -404,6 +420,22 @@ static void controlTests() {
 }
 
 static void favoriteTests() {
+  BleDevicePages pages;
+  assert(BleDevicePages::pages(0) == 0);
+  assert(BleDevicePages::pages(4) == 1);
+  assert(BleDevicePages::pages(9) == 3);
+  pages.move(false, 9);
+  assert(pages.offset() == 0);
+  pages.move(true, 9);
+  assert(pages.offset() == 4);
+  pages.move(true, 9);
+  pages.move(true, 9);
+  assert(pages.offset() == 8);
+  pages.move(false, 9);
+  assert(pages.offset() == 4);
+  pages.reset();
+  pages.move(true, 4);
+  assert(pages.offset() == 0);
   SavedConnections saved;
   assert(saved.loadFavorites());
   assert(saved.setFavorite("EE:EB:71:2B:2B:95", 1, "WT901BLE67", true, SavedConnections::Role::Posture));
@@ -453,6 +485,7 @@ static void favoriteTests() {
   Preferences::failWrite = false;
   BlePowerMeter power;
   power.begin("favorites-test", 2.1f);
+  assert(NimBLEDevice::scan.maxResults == 0xFF);
   auto &devices = NimBLEDevice::scan.results.devices;
   for (unsigned index = 0; index < 48; ++index) {
     NimBLEAdvertisedDevice device;
@@ -467,14 +500,28 @@ static void favoriteTests() {
   favorite.name = "My BIKE Power";
   favorite.address = NimBLEAddress("AA:22:33:44:55:66", 1);
   devices.push_back(favorite);
-  BlePowerDevice output[kBleDeviceCapacity]{};
+  NimBLEAdvertisedDevice unnamed;
+  unnamed.name = "";
+  unnamed.services.clear();
+  unnamed.address = NimBLEAddress("AA:22:33:44:55:67", 0);
+  unnamed.connectable = false;
+  devices.push_back(unnamed);
+  BlePowerDevice *output = nullptr;
   size_t count = 0;
-  assert(power.scanDevices(output, kBleDeviceCapacity, count, 1));
-  assert(count == kBleDeviceCapacity && output[0].favorite && output[0].addressType == 1);
-  for (size_t index = 1; index < count; ++index) assert(!strcmp(output[index].name, "Sensor"));
+  assert(power.scanDevices(output, count, 1));
+  assert(count == 50 && output[0].favorite && output[0].addressType == 1);
+  assert(!strcmp(output[1].name, "Sensor"));
+  assert(!strcmp(output[2].name, "Shared bIkE"));
+  assert(!strcmp(output[count - 1].name, "Unnamed BLE device"));
+  assert(!strcmp(output[count - 1].address, "AA:22:33:44:55:67"));
+  free(output);
   auto &bytes = Preferences::bytes["aero-links/favorites"];
   bytes.back() ^= 1;
   assert(!saved.loadFavorites());
+  devices.push_back(unnamed);
+  output = nullptr;
+  assert(!power.scanDevices(output, count, 1));
+  assert(!output && count == 0);
   bytes.back() ^= 1;
   assert(reboot.setFavorite("aa:22:33:44:55:66", 1, "My Bike Power", false));
   assert(saved.loadFavorites() && saved.favoriteCount() == 0);
@@ -493,7 +540,7 @@ static void favoriteTests() {
   Preferences::bytes.erase("aero-links/dev-wt901");
   Preferences::bytes.erase("aero-links/favorites");
   NimBLEDevice::initialized = false;
-  std::cout << "PASS BLE favorites: reboot, CRC, write failure, capacity, typed address, bike filtering, favorite priority beyond scan capacity\n";
+  std::cout << "PASS BLE favorites: reboot, CRC, write failure, typed address, unfiltered names, unnamed nonconnectable devices, favorite priority\n";
 }
 
 int main() {
