@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>IMU 查看器测试加载</title>
+  <style>
+    body {
+      font-family: system-ui;
+      padding: 20px;
+      background: #0b1220;
+      color: #e7eef9;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    button {
+      padding: 10px 20px;
+      background: #1b3150;
+      color: #e7eef9;
+      border: 1px solid #385477;
+      border-radius: 8px;
+      cursor: pointer;
+      margin: 5px;
+    }
+    button:hover {
+      background: #264269;
+    }
+    .log {
+      background: #111c2f;
+      border: 1px solid #27364d;
+      border-radius: 8px;
+      padding: 10px;
+      margin: 10px 0;
+      max-height: 300px;
+      overflow-y: auto;
+      font-size: 12px;
+      font-family: monospace;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .status {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 8px;
+      border: 1px solid #27364d;
+    }
+    .success {
+      background: #1d4d3d;
+      border-color: #4de0bd;
+      color: #a7f0dc;
+    }
+    .error {
+      background: #4d1f1f;
+      border-color: #ff827c;
+      color: #ffc0bb;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>IMU 查看器 - 文件加载测试</h1>
+    <div class="status" id="status">准备就绪</div>
+    <div>
+      <button onclick="testLoadFromServer()">📥 从服务器加载 test_data.csv</button>
+      <button onclick="testLoadFromIframe()">🔗 在 iframe 中打开查看器</button>
+      <button onclick="copyToClipboard()">📋 复制测试命令</button>
+    </div>
+    <div id="log" class="log"></div>
+    <div id="preview" style="margin-top: 20px; display: none;">
+      <h3>CSV 预览</h3>
+      <div id="previewContent" style="background: #111c2f; padding: 10px; border-radius: 8px; max-height: 200px; overflow-y: auto; font-size: 12px; font-family: monospace; white-space: pre-wrap;"></div>
+    </div>
+  </div>
+
+  <script>
+    function log(msg) {
+      const logDiv = document.getElementById('log');
+      const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+      logDiv.textContent += `[${timestamp}] ${msg}\n`;
+      logDiv.scrollTop = logDiv.scrollHeight;
+      console.log(msg);
+    }
+
+    function setStatus(msg, type = 'info') {
+      const status = document.getElementById('status');
+      status.textContent = msg;
+      status.className = 'status ' + (type === 'error' ? 'error' : type === 'success' ? 'success' : '');
+    }
+
+    async function testLoadFromServer() {
+      log('=== 从服务器加载测试 CSV ===');
+      setStatus('加载中...', 'info');
+      
+      try {
+        log('正在获取 test_data.csv...');
+        const response = await fetch('test_data.csv');
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const content = await response.text();
+        log(`✓ 已加载文件，大小: ${(content.length / 1024 / 1024).toFixed(1)} MB`);
+
+        const lines = content.split('\n').filter(l => l.trim());
+        log(`✓ 总行数: ${lines.length}`);
+
+        // Parse header
+        const headers = lines[0].split(',');
+        log(`✓ 表头列数: ${headers.length}`);
+        log(`  示例字段: ${headers.slice(0, 5).join(', ')}, ...`);
+
+        // Show first 3 rows
+        log(`\n首 3 行数据:`);
+        for (let i = 0; i < Math.min(3, lines.length); i++) {
+          const fields = lines[i].split(',');
+          log(`  行${i}: ${fields.slice(0, 5).join(', ')} ...`);
+        }
+
+        // Check required columns
+        const required = ['t_ms', 'board_t_ms', 'wt_t_ms', 'board_valid', 'wt_valid', 'paired', 'skew_ms', 'board_ax_g', 'board_ay_g', 'board_az_g', 'wt_ax_g', 'wt_ay_g', 'wt_az_g'];
+        const missing = required.filter(col => !headers.includes(col));
+        
+        if (missing.length > 0) {
+          log(`⚠ 缺少列: ${missing.join(', ')}`);
+          setStatus('加载失败: 缺少列', 'error');
+        } else {
+          log(`✓ 所有必需列已找到`);
+          
+          // Show preview
+          const previewDiv = document.getElementById('preview');
+          const previewContent = document.getElementById('previewContent');
+          previewContent.textContent = lines.slice(0, 10).join('\n');
+          previewDiv.style.display = 'block';
+          
+          setStatus('✓ 文件加载成功！可在查看器中使用此文件', 'success');
+        }
+
+      } catch (error) {
+        log(`✗ 错误: ${error.message}`);
+        setStatus(`加载失败: ${error.message}`, 'error');
+      }
+    }
+
+    function testLoadFromIframe() {
+      log('=== 在 iframe 中打开查看器 ===');
+      setStatus('打开中...', 'info');
+      
+      // Create new window instead of iframe
+      const win = window.open('imu_log_viewer.html', 'imu_viewer', 'width=1200,height=800');
+      if (win) {
+        log(`✓ 已打开新窗口`);
+        setStatus('✓ 查看器已在新窗口中打开 - 请使用"选择 CSV 文件"按钮上传 test_data.csv', 'success');
+      } else {
+        log(`✗ 无法打开新窗口（可能被浏览器阻止）`);
+        setStatus('无法打开新窗口', 'error');
+      }
+    }
+
+    function copyToClipboard() {
+      const cmd = `# 在项目 tools 目录运行本地服务器\ncd /Users/vitrum/Development/AI/esp32-fs3000-project/code/tools\npython3 -m http.server 8765\n\n# 然后在浏览器打开\nhttp://localhost:8765/imu_log_viewer.html`;
+      
+      navigator.clipboard.writeText(cmd).then(() => {
+        setStatus('✓ 命令已复制到剪贴板', 'success');
+        log('已复制命令到剪贴板');
+      }).catch(err => {
+        setStatus('复制失败', 'error');
+        log(`错误: ${err.message}`);
+      });
+    }
+
+    log('测试页面已加载');
+    log('点击按钮开始测试...');
+  </script>
+</body>
+</html>

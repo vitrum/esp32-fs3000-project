@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IMU 查看器 - 调试模式</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0b1220;
+      color: #e7eef9;
+      font: 14px/1.5 system-ui;
+      padding: 20px;
+    }
+    .debug-panel {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #111c2f;
+      border: 1px solid #27364d;
+      border-radius: 12px;
+      padding: 20px;
+    }
+    h1 { margin: 0 0 20px 0; }
+    .buttons { display: flex; gap: 10px; margin: 20px 0; flex-wrap: wrap; }
+    button {
+      padding: 10px 20px;
+      background: #1b3150;
+      color: #e7eef9;
+      border: 1px solid #385477;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    button:hover { background: #264269; }
+    .log {
+      background: #0a0f18;
+      border: 1px solid #27364d;
+      border-radius: 8px;
+      padding: 10px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-size: 12px;
+      font-family: monospace;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      margin: 10px 0;
+    }
+    .status {
+      padding: 10px;
+      border-radius: 8px;
+      margin: 10px 0;
+      border: 1px solid #27364d;
+    }
+    .success { background: #1d4d3d; border-color: #4de0bd; color: #a7f0dc; }
+    .error { background: #4d1f1f; border-color: #ff827c; color: #ffc0bb; }
+    iframe { width: 100%; height: 600px; border: 1px solid #27364d; border-radius: 8px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="debug-panel">
+    <h1>IMU 查看器 - 调试模式</h1>
+    <div class="status" id="status">准备就绪</div>
+    <div class="buttons">
+      <button onclick="testDirectLoad()">📥 直接加载 CSV</button>
+      <button onclick="testViaUrl()">🔗 通过 URL 参数打开</button>
+      <button onclick="testDragDrop()">📤 测试拖放上传</button>
+    </div>
+    <div id="log" class="log"></div>
+    <div style="text-align: center; margin-top: 20px;">
+      <strong>iframe 中的查看器：</strong>
+    </div>
+    <iframe id="viewer" src="imu_log_viewer.html"></iframe>
+  </div>
+
+  <script>
+    function log(msg) {
+      const logDiv = document.getElementById('log');
+      const time = new Date().toISOString().split('T')[1].split('.')[0];
+      logDiv.textContent += `[${time}] ${msg}\n`;
+      logDiv.scrollTop = logDiv.scrollHeight;
+      console.log(msg);
+    }
+
+    function setStatus(msg, type = 'info') {
+      const status = document.getElementById('status');
+      status.textContent = msg;
+      status.className = 'status ' + (type === 'success' ? 'success' : type === 'error' ? 'error' : '');
+    }
+
+    async function testDirectLoad() {
+      log('=== 直接加载测试 ===');
+      setStatus('加载中...', 'info');
+      try {
+        const response = await fetch('test_data.csv');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const text = await response.text();
+        const lines = text.split('\n');
+        log(`✓ 已加载 ${lines.length} 行`);
+        
+        // Try to load into iframe
+        log('尝试注入到 iframe 中...');
+        const iframe = document.getElementById('viewer');
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+        if (iframeDoc.readyState === 'loading') {
+          log('⚠ iframe 仍在加载，等待...');
+          iframe.onload = () => {
+            log('iframe 加载完成，注入数据...');
+            try {
+              iframeDoc.querySelector('#fileInput').files = new DataTransfer().addFile(new File([text], 'test_data.csv', {type: 'text/csv'}));
+              iframeDoc.querySelector('#fileInput').dispatchEvent(new Event('change', {bubbles: true}));
+              log('✓ 已注入数据');
+            } catch (e) {
+              log(`✗ 注入失败: ${e.message}`);
+            }
+          };
+        }
+        setStatus('✓ 测试完成', 'success');
+      } catch (error) {
+        log(`✗ 错误: ${error.message}`);
+        setStatus('失败', 'error');
+      }
+    }
+
+    async function testViaUrl() {
+      log('=== 通过 URL 参数打开 ===');
+      setStatus('打开中...', 'info');
+      try {
+        const url = `imu_log_viewer.html?file=test_data.csv`;
+        log(`打开: ${url}`);
+        window.open(url, 'imu_test', 'width=1200,height=800');
+        setStatus('✓ 已打开新窗口', 'success');
+      } catch (error) {
+        log(`✗ 错误: ${error.message}`);
+        setStatus('失败', 'error');
+      }
+    }
+
+    async function testDragDrop() {
+      log('=== 测试拖放上传 ===');
+      setStatus('生成模拟拖放事件中...',  'info');
+      try {
+        const response = await fetch('test_data.csv');
+        const blob = await response.blob();
+        const file = new File([blob], 'test_data.csv', {type: 'text/csv'});
+        
+        const iframe = document.getElementById('viewer');
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+        const dropZone = iframeDoc.querySelector('#dropZone');
+        
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        
+        const dropEvent = new DragEvent('drop', {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: dt
+        });
+        
+        dropZone.dispatchEvent(dropEvent);
+        log('✓ 已模拟拖放事件');
+        setStatus('✓ 拖放测试完成', 'success');
+      } catch (error) {
+        log(`✗ 错误: ${error.message}`);
+        setStatus('失败', 'error');
+      }
+    }
+
+    log('调试页面已加载');
+  </script>
+</body>
+</html>

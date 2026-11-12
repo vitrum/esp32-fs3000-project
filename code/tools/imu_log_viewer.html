@@ -1080,6 +1080,33 @@
     });
     window.addEventListener("resize", () => samples.length ? renderSelection(Number(elements.sampleSlider.value)) : drawEmpty());
     drawEmpty();
+    
+    // Auto-load CSV from URL parameter ?file=...
+    (async () => {
+      const params = new URLSearchParams(window.location.search);
+      const fileUrl = params.get("file");
+      console.log("[imu_viewer] URL search params:", window.location.search);
+      console.log("[imu_viewer] fileUrl param:", fileUrl);
+      if (fileUrl) {
+        try {
+          console.log("[imu_viewer] Starting auto-load:", fileUrl);
+          setStatus("正在自动加载: " + fileUrl);
+          const response = await fetch(fileUrl);
+          console.log("[imu_viewer] Fetch response status:", response.status);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const text = await response.text();
+          console.log("[imu_viewer] File loaded, size:", text.length, "bytes");
+          loadCsv(text, fileUrl.split("/").pop());
+          console.log("[imu_viewer] CSV loaded successfully");
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          console.error("[imu_viewer] Error:", msg);
+          setStatus(`自动加载失败: ${msg}`, true);
+        }
+      } else {
+        console.log("[imu_viewer] No file URL parameter provided");
+      }
+    })();
   </script>
 </body>
 </html>
