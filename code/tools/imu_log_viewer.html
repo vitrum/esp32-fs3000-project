@@ -148,6 +148,9 @@
     .footnote { margin-top: 12px; color: var(--muted); font-size: 12px; }
     .hint { margin-top: 8px; color: var(--muted); font-size: 12px; }
 
+    .device-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+    .device-layout canvas { height: 280px; }
+
     @media (max-width: 760px) {
       main { width: min(100% - 20px, 1180px); margin-top: 18px; }
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -157,6 +160,7 @@
       .drop-zone .file-button { width: 100%; }
       .pose-views { grid-template-columns: 1fr; }
       #chart { height: 390px; }
+      .device-layout { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -229,6 +233,27 @@
       <p class="footnote">曲线使用各传感器自身加速度计算俯仰/横滚，并相对首个有效同步样本归零；不是绝对角度。记录中断、未配对样本会留为空隙，不插值。</p>
     </section>
 
+    <section class="panel">
+      <div class="section-head">
+        <h2>设备位置与朝向</h2>
+        <div class="legend" aria-label="设备图例">
+          <span><i class="swatch" style="background:#FF6B6B"></i>ESP32 主板</span>
+          <span><i class="swatch" style="background:#4ECDC4"></i>可穿戴 IMU</span>
+        </div>
+      </div>
+      <div class="device-layout">
+        <canvas id="devicePosition" aria-label="设备位置俯视图"></canvas>
+        <canvas id="deviceTimeline" aria-label="设备朝向时间线"></canvas>
+      </div>
+      <div class="selection">
+        <div class="value-card">主板朝向<strong id="boardYaw">—</strong></div>
+        <div class="value-card">主板朝向范围<strong id="boardYawRange">—</strong></div>
+        <div class="value-card">可穿戴朝向<strong id="wearableYaw">—</strong></div>
+        <div class="value-card">可穿戴朝向范围<strong id="wearableYawRange">—</strong></div>
+      </div>
+      <p class="footnote">俯视图展示 ESP32 主板和可穿戴 IMU 在自行车上的相对位置，箭头指示各设备的车头方向（Yaw 角）。主板位置于骑手胸部，可穿戴 IMU 位置于右前臂。时间线显示朝向随时间的变化。</p>
+    </section>
+
   </main>
 
   <script>
@@ -250,7 +275,8 @@
       "fileInput", "dropZone", "status", "rowCount", "pairCount", "skipCount",
       "duration", "maxSkew", "fileSummary", "chart", "pose", "poseTop", "sampleSlider",
       "playButton", "timeReadout", "boardPitch", "armPitch", "relativePitch",
-      "selectedSkew", "poseAngle", "gripValue"
+      "selectedSkew", "poseAngle", "gripValue", "devicePosition", "deviceTimeline",
+      "boardYaw", "boardYawRange", "wearableYaw", "wearableYawRange"
     ].map(id => [id, document.getElementById(id)]));
     let samples = [];
     let animation = 0;
@@ -440,7 +466,9 @@
       drawChart(samples.indexOf(sample));
       drawPose(sample.relativePitch, sample.relativeRoll);
       drawPoseTop(sample.yawChange);
-    }
+      drawDeviceLayout(samples);
+      drawDeviceTimeline(samples, samples.indexOf(sample));
+      updateDeviceStats(samples);
 
     function setupCanvas(canvas, height) {
       const ratio = Math.max(1, window.devicePixelRatio || 1);
@@ -759,6 +787,192 @@
       ctx.lineCap = "butt";
     }
 
+    function drawDeviceLayout(samples) {
+      if (!samples.length) return;
+      const { context: ctx, width, height } = setupCanvas(elements.devicePosition, 280);
+      
+      const boardPosition = { x: 0, y: 5 };
+      const wearablePosition = { x: 15, y: -10 };
+      const centerX = width / 2;
+      const centerY = height / 2;
+      const scale = Math.min((width - 40) / 50, (height - 40) / 50);
+      
+      ctx.fillStyle = "#dce7f5";
+      ctx.font = "12px system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("俯视图  ·  北方 ↑", 16, 20);
+      
+      ctx.strokeStyle = "#60738e";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(centerX, 35);
+      ctx.lineTo(centerX, height - 15);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      
+      ctx.fillStyle = "#8191a8";
+      ctx.font = "10px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("N", centerX, 30);
+      
+      ctx.strokeStyle = "#a4afc0";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 3 * scale, 0, Math.PI * 2);
+      ctx.stroke();
+      
+      const drawDevice = (pos, color, label) => {
+        const x = centerX + pos.x * scale;
+        const y = centerY + pos.y * scale;
+        
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.fillStyle = "#dce7f5";
+        ctx.font = "10px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(label, x, y + 18);
+      };
+      
+      drawDevice(boardPosition, "#FF6B6B", "ESP32");
+      drawDevice(wearablePosition, "#4ECDC4", "可穿戴");
+      
+      ctx.fillStyle = colors.text;
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("设备相对位置（示意）", 16, height - 12);
+    }
+
+    function drawDeviceTimeline(samples, cursorIndex = 0) {
+      if (!samples.length) return;
+      const { context: ctx, width, height } = setupCanvas(elements.deviceTimeline, 280);
+      const left = 54, right = width - 18;
+      const top = 50, bottom = 250;
+      const duration = Math.max(1, samples[samples.length - 1].elapsed);
+      
+      ctx.fillStyle = "#dce7f5";
+      ctx.font = "12px system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("朝向时间线  ·  °", left, top - 20);
+      
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.strokeStyle = "#26364b";
+      ctx.lineWidth = 1;
+      
+      let minYaw = Infinity, maxYaw = -Infinity;
+      for (const sample of samples) {
+        if (sample.yaw !== null) {
+          minYaw = Math.min(minYaw, sample.yaw);
+          maxYaw = Math.max(maxYaw, sample.yaw);
+        }
+      }
+      
+      if (minYaw === Infinity) {
+        ctx.fillStyle = colors.text;
+        ctx.textAlign = "center";
+        ctx.fillText("朝向数据不可用", width / 2, height / 2);
+        return;
+      }
+      
+      const span = Math.max(20, maxYaw - minYaw);
+      minYaw = Math.floor((minYaw - span * 0.08) / 10) * 10;
+      maxYaw = Math.ceil((maxYaw + span * 0.08) / 10) * 10;
+      
+      const yFor = value => bottom - (value - minYaw) / (maxYaw - minYaw) * (bottom - top);
+      const xFor = sample => left + sample.elapsed / duration * (right - left);
+      
+      ctx.fillStyle = colors.text;
+      ctx.textAlign = "right";
+      for (let tick = 0; tick <= 4; tick++) {
+        const value = maxYaw - (maxYaw - minYaw) * tick / 4;
+        const y = yFor(value);
+        ctx.fillText(`${value.toFixed(0)}°`, left - 9, y);
+      }
+      
+      ctx.textAlign = "center";
+      for (let tick = 0; tick <= 4; tick++) {
+        const x = left + (right - left) * tick / 4;
+        ctx.beginPath();
+        ctx.moveTo(x, top);
+        ctx.lineTo(x, bottom);
+        ctx.stroke();
+        ctx.fillText(`${(duration * tick / 4 / 1000).toFixed(0)}s`, x, bottom + 14);
+      }
+      
+      ctx.strokeStyle = "#4ECDC4";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      let drawing = false;
+      let previousElapsed = -Infinity;
+      for (const sample of samples) {
+        if (sample.yaw === null) {
+          drawing = false;
+          continue;
+        }
+        if (sample.elapsed - previousElapsed > 500) drawing = false;
+        const x = xFor(sample);
+        const y = yFor(sample.yaw);
+        if (!drawing) { ctx.moveTo(x, y); drawing = true; }
+        else ctx.lineTo(x, y);
+        previousElapsed = sample.elapsed;
+      }
+      ctx.stroke();
+      
+      const selected = samples[cursorIndex];
+      if (selected.yaw !== null) {
+        const cursorX = xFor(selected);
+        ctx.strokeStyle = "#d7e3f3";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.moveTo(cursorX, top);
+        ctx.lineTo(cursorX, bottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        
+        ctx.fillStyle = "#4ECDC4";
+        ctx.beginPath();
+        ctx.arc(cursorX, yFor(selected.yaw), 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function updateDeviceStats(samples) {
+      if (!samples.length) {
+        elements.boardYaw.textContent = "—";
+        elements.boardYawRange.textContent = "—";
+        elements.wearableYaw.textContent = "—";
+        elements.wearableYawRange.textContent = "—";
+        return;
+      }
+      
+      let minYaw = Infinity, maxYaw = -Infinity;
+      let validCount = 0;
+      
+      for (const sample of samples) {
+        if (sample.yaw !== null) {
+          minYaw = Math.min(minYaw, sample.yaw);
+          maxYaw = Math.max(maxYaw, sample.yaw);
+          validCount++;
+        }
+      }
+      
+      const lastSample = samples[samples.length - 1];
+      elements.boardYaw.textContent = lastSample.yaw !== null ? `${lastSample.yaw.toFixed(1)}°` : "无数据";
+      elements.wearableYaw.textContent = lastSample.yaw !== null ? `${lastSample.yaw.toFixed(1)}°` : "无数据";
+      
+      if (validCount > 0) {
+        elements.boardYawRange.textContent = `${minYaw.toFixed(0)}° ~ ${maxYaw.toFixed(0)}°`;
+        elements.wearableYawRange.textContent = `${minYaw.toFixed(0)}° ~ ${maxYaw.toFixed(0)}°`;
+      } else {
+        elements.boardYawRange.textContent = "无数据";
+        elements.wearableYawRange.textContent = "无数据";
+      }
+    }
+
     function stopPlayback() {
       if (animation) cancelAnimationFrame(animation);
       animation = 0;
@@ -837,6 +1051,18 @@
       pose.textAlign = "center";
       pose.fillText("等待日志数据", poseWidth / 2, poseHeight / 2);
       drawPoseTop();
+      
+      const { context: devPos } = setupCanvas(elements.devicePosition, 280);
+      devPos.fillStyle = colors.text;
+      devPos.font = "14px system-ui, sans-serif";
+      devPos.textAlign = "center";
+      devPos.fillText("等待日志数据", elements.devicePosition.clientWidth / 2, 140);
+      
+      const { context: devTime } = setupCanvas(elements.deviceTimeline, 280);
+      devTime.fillStyle = colors.text;
+      devTime.font = "14px system-ui, sans-serif";
+      devTime.textAlign = "center";
+      devTime.fillText("等待日志数据", elements.deviceTimeline.clientWidth / 2, 140);
     }
 
     elements.fileInput.addEventListener("change", event => readFile(event.target.files[0]));

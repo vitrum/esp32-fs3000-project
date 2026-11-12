@@ -20,6 +20,8 @@ except ImportError as error:
         "'python -m pip install -r tools/requirements-imu-convert.txt'."
     ) from error
 
+import imu_bvh_generator as bvh_gen
+
 
 UINT32_MASK = 0xFFFFFFFF
 UINT32_HALF = 0x80000000
@@ -282,141 +284,6 @@ def resample_for_bvh(samples: Sequence[Sample], fps: float,
     return frame_times, frame_rows, held_gap, frame_time
 
 
-TORSO_LEAN_DEG = -35.0
-BVH_SKELETON = (
-    ("LeftHip", (0, -2, -9), None, (
-        ("LeftKnee", (0, -43, 0), None, (
-            ("LeftAnkle", (0, -42, 0), None, (
-                ("LeftFoot", (12, -8, 0), None, (
-                    ("LeftToe", (16, 0, 0), None, ()),
-                )),
-            )),
-        )),
-    )),
-    ("RightHip", (0, -2, 9), None, (
-        ("RightKnee", (0, -43, 0), None, (
-            ("RightAnkle", (0, -42, 0), None, (
-                ("RightFoot", (12, -8, 0), None, (
-                    ("RightToe", (16, 0, 0), None, ()),
-                )),
-            )),
-        )),
-    )),
-    ("Spine", (0, 5, 0), "torso", (
-        ("Chest", (0, 25, 0), None, (
-            ("Neck", (0, 14, 0), None, (
-                ("Head", (0, 15, 0), None, (
-                    ("HeadTop", (0, 18, 0), None, ()),
-                )),
-            )),
-            ("LeftUpperArm", (0, 0, -18), None, (
-                ("LeftElbow", (22, -12, 0), None, (
-                    ("LeftForearm", (20, -10, 0), None, (
-                        ("LeftWrist", (15, -4, 0), None, (
-                            ("LeftHand", (8, 0, 0), None, ()),
-                        )),
-                    )),
-                )),
-            )),
-            ("RightUpperArm", (0, 0, 18), None, (
-                ("RightElbow", (22, -12, 0), None, (
-                    ("RightForearm", (20, -10, 0), "forearm", (
-                        ("RightWrist", (15, -4, 0), None, (
-                            ("RightHand", (8, 0, 0), None, ()),
-                        )),
-                    )),
-                )),
-            )),
-        )),
-    )),
-)
-
-
-def _bvh_joint_text(joint, depth: int) -> Tuple[List[str], List[str]]:
-    name, offset, _, children = joint
-    indent = "\t" * depth
-    lines = [
-        f"{indent}JOINT {name}",
-        f"{indent}{{",
-        f"{indent}\tOFFSET {offset[0]:.2f} {offset[1]:.2f} {offset[2]:.2f}",
-        f"{indent}\tCHANNELS 3 Zrotation Xrotation Yrotation",
-    ]
-    channel_names = [f"{name}.Zrotation", f"{name}.Xrotation", f"{name}.Yrotation"]
-    if children:
-        for child in children:
-            child_lines, child_channels = _bvh_joint_text(child, depth + 1)
-            lines.extend(child_lines)
-            channel_names.extend(child_channels)
-    else:
-        lines.extend([
-            f"{indent}\tEnd Site",
-            f"{indent}\t{{",
-            f"{indent}\t\tOFFSET 0.00 3.00 0.00",
-            f"{indent}\t}}",
-        ])
-    lines.append(f"{indent}}}")
-    return lines, channel_names
-
-
-def bvh_channel_rows(frame_rows: Sequence[Sequence[float]]) -> List[Tuple[float, ...]]:
-    channel_rows = []
-    for row in frame_rows:
-        board_roll, board_pitch, board_yaw, arm_roll, arm_pitch, arm_yaw = row
-        values = [0.0] * 9
-        for _, _, binding, children in BVH_SKELETON:
-            values.extend(_joint_channel_values(
-                binding, children, board_roll, board_pitch,
-                arm_roll, arm_pitch,
-            ))
-        channel_rows.append(tuple(values))
-    return channel_rows
-
-
-def _joint_channel_values(binding, children, board_roll, board_pitch,
-                          arm_roll, arm_pitch):
-    if binding == "torso":
-        values = [TORSO_LEAN_DEG, 0.0, 0.0]
-    elif binding == "forearm":
-        # BVH Z is the forward-lean plane; yaw is omitted because six-axis yaw drifts.
-        values = [arm_pitch - board_pitch, arm_roll - board_roll, 0.0]
-    else:
-        values = [0.0, 0.0, 0.0]
-    for _, _, child_binding, child_children in children:
-        values.extend(_joint_channel_values(
-            child_binding, child_children,
-            board_roll, board_pitch, arm_roll, arm_pitch,
-        ))
-    return values
-
-
-def _bvh_text(frame_rows: Sequence[Sequence[float]], frame_time: float) -> str:
-    lines = [
-        "HIERARCHY",
-        "ROOT Ground",
-        "{",
-        "  OFFSET 0.00 0.00 0.00",
-        "  CHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation",
-    ]
-    channel_names = [
-        "Ground.Xposition", "Ground.Yposition", "Ground.Zposition",
-        "Ground.Zrotation", "Ground.Xrotation", "Ground.Yrotation",
-    ]
-    hips_lines, hips_channels = _bvh_joint_text(
-        ("Hips", (0, 95, 0), None, BVH_SKELETON), 1
-    )
-    lines.extend(hips_lines)
-    channel_names.extend(hips_channels)
-    lines.extend(["}", "MOTION", f"Frames: {len(frame_rows)}",
-                  f"Frame Time: {frame_time:.9f}"])
-    channel_rows = bvh_channel_rows(frame_rows)
-    for values in channel_rows:
-        if len(values) != len(channel_names):
-            raise ValueError("BVH hierarchy channel count does not match motion data")
-        channels = values
-        lines.append(" ".join(f"{value:.5f}" for value in channels))
-    return "\n".join(lines) + "\n"
-
-
 def _dataset(group: h5py.Group, name: str, values, units: str,
              description: str = "", dtype=None) -> None:
     dataset = group.create_dataset(name, data=values, dtype=dtype, compression="gzip",
@@ -524,7 +391,7 @@ def write_hdf5(path: Path, source: Path, columns: Sequence[str],
         bvh_group.attrs["actual_fps"] = 1.0 / frame_time
         bvh_group.attrs["frame_time_s"] = frame_time
         bvh_group.attrs["max_interpolation_gap_ms"] = max_interpolation_gap_ms
-        bvh_group.attrs["joint_names"] = ",".join(_bvh_joint_names())
+        bvh_group.attrs["joint_names"] = ",".join(bvh_gen.bvh_joint_names())
         bvh_group.attrs["channel_order"] = (
             "root Ground at foot level: Xposition Yposition Zposition Zrotation Xrotation "
             "Yrotation; Hips joint is offset 95 cm above ground; joints: Zrotation "
@@ -540,13 +407,13 @@ def write_hdf5(path: Path, source: Path, columns: Sequence[str],
             "cm; human-only stick skeleton about 172 cm tall, Ground root at foot level "
             "for full-body framing in BVHView"
         )
-        _dataset(bvh_group, "frame_channels", bvh_channel_rows(frame_rows), "per-channel",
+        _dataset(bvh_group, "frame_channels", bvh_gen.bvh_channel_rows(frame_rows), "per-channel",
                  "Actual BVH motion channels: root translation and all joint rotations.")
         bvh_group["frame_channels"].attrs["channel_names"] = ",".join(
-            _bvh_channel_names()
+            bvh_gen.bvh_channel_names()
         )
         bvh_group["frame_channels"].attrs["channel_units"] = ",".join(
-            ["cm"] * 3 + ["deg"] * (len(_bvh_channel_names()) - 3)
+            ["cm"] * 3 + ["deg"] * (len(bvh_gen.bvh_channel_names()) - 3)
         )
 
 
@@ -561,28 +428,6 @@ def _atomic_write(path: Path, writer) -> None:
     finally:
         if temporary.exists():
             temporary.unlink()
-
-
-def _bvh_channel_names() -> List[str]:
-    names = [
-        "Ground.Xposition", "Ground.Yposition", "Ground.Zposition",
-        "Ground.Zrotation", "Ground.Xrotation", "Ground.Yrotation",
-    ]
-    _, hips_channels = _bvh_joint_text(("Hips", (0, 95, 0), None, BVH_SKELETON), 1)
-    names.extend(hips_channels)
-    return names
-
-
-def _bvh_joint_names() -> List[str]:
-    names = ["Ground", "Hips"]
-
-    def visit(joints):
-        for name, _, _, children in joints:
-            names.append(name)
-            visit(children)
-
-    visit(BVH_SKELETON)
-    return names
 
 
 def convert(input_path: Path, prefix: Path, fps: float = 10.0,
@@ -606,7 +451,7 @@ def convert(input_path: Path, prefix: Path, fps: float = 10.0,
     if not overwrite and (bvh_path.exists() or hdf5_path.exists()):
         raise FileExistsError("output exists; choose a different prefix or pass --force")
 
-    _atomic_write(bvh_path, lambda path: path.write_text(_bvh_text(frame_rows, frame_time), encoding="utf-8"))
+    _atomic_write(bvh_path, lambda path: path.write_text(bvh_gen.bvh_text(frame_rows, frame_time), encoding="utf-8"))
     try:
         _atomic_write(hdf5_path, lambda path: write_hdf5(
             path, input_path, columns, samples, raw_bytes,
