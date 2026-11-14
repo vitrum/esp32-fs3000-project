@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>双 IMU · Three.js 三维回放</title>
+<style>
+body{font:16px system-ui;background:#eef2f6;color:#17283d;max-width:1200px;margin:24px auto;padding:0 16px}
+section{background:white;border-radius:12px;padding:18px;margin:14px 0}
+button,input,select{font:inherit;margin:5px;padding:6px}button{cursor:pointer}
+#viewport{height:560px;position:relative;background:#edf3fa;border-radius:10px;overflow:hidden}
+#viewport canvas{display:block;width:100%;height:100%;touch-action:none}
+#timeline{width:98%}#status{white-space:pre-wrap}#error{color:#ae1634;white-space:pre-wrap}
+label{display:inline-block}.note{color:#52657b;font-size:14px}pre{white-space:pre-wrap}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin:12px 0}.board{color:#087d9d}.arm{color:#b76020}
+input[type=number]{width:76px}#pose{font-variant-numeric:tabular-nums}
+@media(max-width:600px){#viewport{height:420px}section{padding:10px}}
+</style>
+<h1>双 IMU · Three.js 三维时间轴回放</h1>
+<p>38 cm 公路弯把与手变头 · 码表前伸 8 cm · 鼠标旋转 / 滚轮缩放 / 右键平移 · 1 单位 = 1 cm</p>
+<section>
+  <input id="file" type="file" accept=".csv" aria-label="IMU CSV 文件"><button id="upload" disabled>上传并分析</button>
+  <p id="status" role="status">正在加载本地 Three.js…</p><p id="error" role="alert"></p>
+  <p class="note">日志没有可验证的磁校准航向。固定黄色箭头是水平参考磁北，不是实测正北；
+  初始航向可人工设置，后续转向来自陀螺仪，有漂移。38 cm 把宽、8 cm 码表前伸采用你的尺寸，
+  其余结构、手臂支点和位置均为模型估计，不是 IMU 定位或人体关节角。</p>
+</section>
+<section>
+  <button id="play" disabled>播放</button><button id="reset" disabled>回到开始</button>
+  <label>速度 <select id="speed"><option value=".25">0.25×</option><option value=".5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+  <span id="clock">0.000 s</span><br><input id="timeline" aria-label="时间轴" type="range" min="0" max="0" value="0" disabled>
+  <div>
+    <button id="camera-reset">重置视角</button>
+    <label>仰角 <input id="elev" type="range" min="5" max="85" value="35"></label>
+    <label>方位角 <input id="azim" type="range" min="-180" max="180" value="-65"></label>
+  </div>
+  <div>
+    <label>初始参考航向 <input id="north-heading" type="number" min="0" max="360" value="0">°（0 北，90 东）</label>
+    <label>右手约束 <select id="arm-mode">
+      <option value="hood">支撑右手变头：手掌支点，肘部活动</option>
+      <option value="free">离把活动：肘部支点，腕部 IMU 大范围移动</option>
+    </select></label>
+  </div>
+  <div>右手初始握持点修正（车身坐标 cm；X 前，Y 左，Z 上）：
+    <label>X <input id="x" type="number" min="-360" max="360" value="0"></label>
+    <label>Y <input id="y" type="number" min="-360" max="360" value="0"></label>
+    <label>Z 上 <input id="z" type="number" min="-360" max="360" value="0"></label>
+  </div>
+  <div class="legend">
+    <strong class="board">码表：8 × 5 × 2 cm（估计）</strong>
+    <strong class="arm">前臂：26 × 8 × 6 cm（估计）</strong>
+    <span>长 × 宽 × 厚；另绘腕带、腕部 IMU 和手掌</span>
+  </div>
+  <div id="viewport" role="img" aria-label="Three.js 码表与前臂三维姿态，带设备三轴箭头和前进方向"></div>
+  <p id="pose">安装示意 · 等待 IMU 数据</p>
+  <p class="note">黄色 = 固定水平参考磁北；青色 = 随码表转向的车头方向；红 / 绿 / 蓝 = 设备 X / Y / Z。
+  世界坐标 X 北、Y 西、Z 上，地面网格每格 10 cm。车把、手变头、码表架和码表共同转向；
+  前臂根据相对姿态围绕手掌或肘部移动，不再固定自身中心。腕带 IMU 位于前臂远端。
+  握持/离把需人工选择，不能从当前日志可靠自动判断；不放大角度、不双重叠加码表转向。
+  只对 ≤250 ms 的有效相邻数据作四元数插值；长间断显示不可用，不跨缺失数据补造动作。</p>
+</section>
+<section><h2>全量分析摘要</h2><a id="download" hidden download="imu-analysis.json">下载全部样本分析 JSON</a><pre id="summary"></pre></section>
+<script type="importmap">
+{"imports":{"three":"/vendor/three.module.min.js"}}
+</script>
+<script type="module">
+try {
+  const {start} = await import("/viewer.js");
+  start();
+} catch (error) {
+  document.getElementById("error").textContent = `三维视图加载失败：${error.message}。请确认浏览器支持 WebGL2。`;
+  document.getElementById("status").textContent = "Three.js 未能启动";
+}
+</script>
+</html>

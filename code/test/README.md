@@ -7,6 +7,16 @@ project; the Unity application is a separate test firmware, not a firmware migra
 
 ## Run Without Hardware
 
+The local dual-IMU Three.js HTTP viewer has a separate Python regression suite:
+`python -m unittest tools.imu_web.test_server -v` from `code`, after installing
+`tools/imu_web/requirements.txt` in a virtual environment. See
+[the viewer README](../tools/imu_web/README.md) for startup and physical limitations.
+It covers analysis, compatible PNG rendering, local Three.js assets and actual HTTP
+upload/playback download. The viewer README also documents browser-side geometry,
+arrow, interpolation and missing-data tests, plus common-turn cockpit motion,
+manual north reference and supported/free forearm kinematics. Python cases also
+check inverted/upright sensor mounting during a known shared turn. No DUT is used.
+
 From the workspace root:
 
 ```sh
