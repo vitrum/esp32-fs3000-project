@@ -158,7 +158,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request("GET", f"/api/playback?id={dataset_id}")[0], 404)
 
     def test_local_three_modules_and_safe_static_routing(self):
-        for path in ("/viewer.js", "/scene.js", "/test_scene.js",
+        for path in ("/viewer.js", "/scene.js", "/bike_model.js", "/test_scene.js",
                      "/vendor/three.module.min.js", "/vendor/three.core.min.js", "/vendor/OrbitControls.js"):
             status, mime, body = self.request("GET", path)
             self.assertEqual(status, 200, path)

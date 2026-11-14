@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import {OrbitControls} from "/vendor/OrbitControls.js";
-import {createWorld, updateWorld, poseAt} from "/scene.js";
+import {createWorld, updateWorld, poseAt, wristAxisMapping, setTextVisibility} from "/scene.js";
+import {setRiderDimensions} from "/bike_model.js";
 
 export function start() {
   const $ = id => document.getElementById(id);
@@ -26,7 +27,7 @@ export function start() {
   function setCamera() {
     const elevation = THREE.MathUtils.degToRad(Number($("elev").value));
     const azimuth = THREE.MathUtils.degToRad(Number($("azim").value));
-    const radius = Math.max(95, camera.position.distanceTo(controls.target));
+    const radius = Math.max(controls.minDistance, camera.position.distanceTo(controls.target));
     camera.position.copy(controls.target).add(new THREE.Vector3(
       radius * Math.cos(elevation) * Math.cos(azimuth),
       radius * Math.cos(elevation) * Math.sin(azimuth),
@@ -35,46 +36,80 @@ export function start() {
     controls.update();
   }
   function resetCamera() {
-    controls.target.set(-8,0,-3);
-    camera.position.copy(controls.target).add(new THREE.Vector3(55,-75,80));
+    scene.updateMatrixWorld(true);
+    controls.target.copy(world.cockpit.localToWorld(world.bike.bb.clone().add(new THREE.Vector3(5,0,48))));
+    const radius=Math.max(250,world.bike.dimensions.height*1.3)/Math.min(1,camera.aspect);
+    camera.position.copy(controls.target).add(new THREE.Vector3(radius,0,0));
+    $("elev").value=22; $("azim").value=-80;
+    setCamera();
+  }
+  function cockpitView() {
+    scene.updateMatrixWorld(true);
+    controls.target.copy(world.cockpit.localToWorld(new THREE.Vector3(-8,0,-3)));
+    camera.position.copy(controls.target).add(new THREE.Vector3(115,0,0));
     $("elev").value=35; $("azim").value=-65;
     setCamera();
+  }
+  function riderSummary() {
+    const d=world.bike.dimensions;
+    $("rider-summary").textContent=`已应用：身高 ${d.height} cm，胫骨 ${d.tibia} cm；估计大腿 ${d.thigh.toFixed(1)} cm、躯干 ${d.torso.toFixed(1)} cm。坐垫高度随腿长估计，不是 bike fit。`;
   }
   function mountChanged() {
     const coordinates = ["x","y","z"].map(name => $(name).valueAsNumber);
     if (!coordinates.every(value => Number.isFinite(value) && Math.abs(value)<=360)) {
       error("安装坐标必须是 -360 到 360 cm 之间的有效数字。");
-      return;
+      return false;
     }
     error("");
     const heading=$("north-heading").valueAsNumber;
     if (!Number.isFinite(heading) || heading<0 || heading>360) {
       error("初始参考航向必须是 0 到 360° 之间的数字。");
-      return;
+      return false;
     }
-    settings={initialHeading:heading,mode:$("arm-mode").value,offset:coordinates};
+    let wristMount;
+    try {
+      wristMount=wristAxisMapping(["wrist-x","wrist-y","wrist-z"].map(id=>$(id).value));
+      const height=$("rider-height").valueAsNumber, tibia=$("rider-tibia").valueAsNumber;
+      if (height!==world.bike.dimensions.height || tibia!==world.bike.dimensions.tibia) {
+        setRiderDimensions(world.bike,height,tibia);
+      }
+    } catch (failure) {
+      error(`未应用修改：${failure.message}`);
+      return false;
+    }
+    settings={initialHeading:heading,mode:$("arm-mode").value,offset:coordinates,wristMount};
+    riderSummary();
     if (frames.length) show(currentTime,true);
-    else updateWorld(world,{board:new THREE.Quaternion(),wt:new THREE.Quaternion(),paired:true},settings);
+    else {
+      const motion=updateWorld(world,{board:new THREE.Quaternion(),wt:new THREE.Quaternion(),paired:true},settings);
+      $("fit-warning").textContent=motion.fitWarning;
+    }
+    return true;
   }
   function show(time, force=false) {
     if (!frames.length) return;
     const pose = poseAt(frames, time);
     const motion=updateWorld(world,pose,settings);
+    $("fit-warning").textContent=motion.fitWarning;
     $("timeline").value=pose.index;
     renderer.domElement.dataset.frame=pose.index;
     if (pose.index!==lastIndex || force || playing) {
       $("clock").textContent=`${(time/1000).toFixed(3)} s · 样本 ${pose.index+1}/${frames.length}`;
-      const angle = pose.angle===null ? "不可用（未配对或数据间断）" : `${pose.angle.toFixed(1)}°`;
+      const angle = motion.angle===null ? "不可用（未配对或数据间断）" : `${motion.angle.toFixed(1)}°`;
       const heading = motion.heading===null ? "不可用" : `${motion.heading.toFixed(1)}°`;
       const position = motion.kinematics
         ? motion.kinematics.wrist.toArray().map(value=>value.toFixed(1)).join(", ") : "不可用";
-      $("pose").textContent=`参考航向 ${heading}（有漂移） · 相对转角 ${angle} · 腕部模型位置 (${position}) cm · ${settings.mode==="hood" ? "手变头支撑" : "离把活动"}${motion.kinematics ? "" : " · 定位不可用"}`;
+      $("pose").textContent=`参考航向 ${heading}（有漂移） · 映射后相对转角 ${angle} · 腕部模型位置 (${position}) cm · ${settings.mode==="hood" ? "手变头支撑" : "离把活动"}${motion.kinematics ? "" : " · 定位不可用"}`;
     }
     lastIndex=pose.index;
   }
   $("upload").onclick=async()=>{
     const file=$("file").files[0];
     if (!file) {error("请先选择 CSV 文件"); return;}
+    if (!mountChanged()) {
+      error(`上传未开始：请先修正场景参数。${$("error").textContent}`);
+      return;
+    }
     pause(); error(""); $("upload").disabled=true;
     $("status").textContent="正在上传并分析全部样本…";
     try {
@@ -111,18 +146,54 @@ export function start() {
   $("speed").onchange=()=>{anchor=performance.now();anchorTime=currentTime;};
   $("elev").oninput=setCamera; $("azim").oninput=setCamera;
   $("camera-reset").onclick=resetCamera;
+  $("cockpit-view").onclick=cockpitView;
+  function zoom(factor) {
+    const delta=camera.position.clone().sub(controls.target);
+    const distance=THREE.MathUtils.clamp(delta.length()*factor,controls.minDistance,controls.maxDistance);
+    camera.position.copy(controls.target).add(delta.setLength(distance));
+    controls.update();
+    renderer.domElement.dataset.cameraDistance=distance;
+  }
+  $("zoom-in").onclick=()=>zoom(0.8);
+  $("zoom-out").onclick=()=>zoom(1.25);
+  $("hide-text").onchange=()=>setTextVisibility(world,!$("hide-text").checked);
+  $("fullscreen").onclick=async()=>{
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if ($("stage").requestFullscreen) await $("stage").requestFullscreen();
+      else throw new Error("当前浏览器不支持 Fullscreen API，请使用浏览器全屏功能。");
+      $("view-warning").textContent="";
+    } catch (failure) {
+      $("view-warning").textContent=`全屏切换失败：${failure.message}`;
+    }
+  };
+  document.addEventListener("fullscreenchange",()=>{
+    $("fullscreen").textContent=document.fullscreenElement ? "退出全屏" : "全屏";
+    controls.update();
+  });
   for (const name of ["x","y","z"]) $(name).oninput=mountChanged;
   $("north-heading").oninput=mountChanged;
   $("arm-mode").onchange=mountChanged;
+  $("rider-height").oninput=mountChanged;
+  $("rider-tibia").oninput=mountChanged;
+  for (const id of ["wrist-x","wrist-y","wrist-z"]) $(id).onchange=mountChanged;
+  $("wrist-reset").onclick=()=>{
+    ["X","Y","Z"].forEach(axis=>{ $(`wrist-${axis.toLowerCase()}`).value=`+${axis}`; });
+    mountChanged();
+  };
+  let sized=false;
   new ResizeObserver(()=>{
     const width=container.clientWidth, height=container.clientHeight;
+    if (!width || !height) return;
     camera.aspect=width/height; camera.updateProjectionMatrix();
     renderer.setSize(width,height);
+    if (!sized) {sized=true;resetCamera();}
   }).observe(container);
   renderer.domElement.addEventListener("webglcontextlost", event=>{
     event.preventDefault();pause();error("WebGL 上下文丢失，请刷新页面并重新上传 CSV。");
   });
   resetCamera();
+  riderSummary();
   renderer.setAnimationLoop(now=>{
     if (playing) {
       currentTime=Math.min(frames.at(-1).time_ms, anchorTime+(now-anchor)*Number($("speed").value));

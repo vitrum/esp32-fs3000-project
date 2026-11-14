@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import {createBikeModel, updateRiderArm} from "./bike_model.js";
 
 export const DIMENSIONS = Object.freeze({
   board: Object.freeze([8, 5, 2]),
@@ -8,6 +9,26 @@ export const COCKPIT = Object.freeze({
   barWidth:38, computerOffset:8, reach:8, drop:12, palmOffset:4,
 });
 export const RIGHT_GRIP = Object.freeze([4, -COCKPIT.barWidth / 2, 1.5]);
+
+export function wristAxisMapping(mapping=["+X","+Y","+Z"]) {
+  if (mapping.length !== 3 || mapping.some(axis=>!/^[+-][XYZ]$/.test(axis))) {
+    throw new Error("腕部轴映射必须为三个有效的 ±X / ±Y / ±Z 方向。");
+  }
+  if (new Set(mapping.map(axis=>axis[1])).size !== 3) {
+    throw new Error("腕部轴映射不能重复使用同一个源轴；请同时调整另外两个轴。");
+  }
+  const basis = mapping.map(axis=>new THREE.Vector3()
+    .setComponent("XYZ".indexOf(axis[1]),axis[0] === "+" ? 1 : -1));
+  const matrix = new THREE.Matrix4().makeBasis(...basis);
+  if (matrix.determinant() < 0) {
+    throw new Error("腕部轴映射必须保持右手系；请再反转一个轴，不能使用镜像姿态。");
+  }
+  return new THREE.Quaternion().setFromRotationMatrix(matrix);
+}
+
+export function setTextVisibility(world, visible) {
+  world.scene.traverse(object=>{if (object.isSprite) object.visible=visible;});
+}
 
 export function quaternionFromRows(rows) {
   const matrix = new THREE.Matrix4().set(
@@ -232,7 +253,9 @@ function cockpitGeometry() {
   return group;
 }
 
-export function updateWorld(world, pose, {initialHeading=0, mode="hood", offset=[0,0,0]}={}) {
+export function updateWorld(world, pose, {
+  initialHeading=0, mode="hood", offset=[0,0,0], wristMount=new THREE.Quaternion(),
+}={}) {
   const northOffset = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1),
     -THREE.MathUtils.degToRad(initialHeading));
   const boardQuaternion = pose.board ? northOffset.clone().multiply(pose.board) : null;
@@ -243,9 +266,10 @@ export function updateWorld(world, pose, {initialHeading=0, mode="hood", offset=
   const paired = pose.paired && boardQuaternion && pose.wt;
   world.wt.visible = Boolean(paired);
   world.elbow.visible = Boolean(paired);
-  let kinematics = null;
+  let kinematics = null, angle = null;
   if (paired) {
-    const armQuaternion = northOffset.clone().multiply(pose.wt);
+    const armQuaternion = northOffset.clone().multiply(pose.wt).multiply(wristMount);
+    angle = THREE.MathUtils.radToDeg(boardQuaternion.angleTo(armQuaternion));
     kinematics = armKinematics(boardQuaternion,armQuaternion,mode,offset);
     world.wt.position.copy(kinematics.center);
     applyOrientation(world.wt,armQuaternion);
@@ -255,7 +279,10 @@ export function updateWorld(world, pose, {initialHeading=0, mode="hood", offset=
     ? new THREE.Vector3(1,0,0).applyQuaternion(boardQuaternion) : null;
   const heading = forward && Math.hypot(forward.x,forward.y)>1e-6
     ? (THREE.MathUtils.radToDeg(Math.atan2(-forward.y,forward.x))+360)%360 : null;
-  return {kinematics,heading};
+  const localElbow=kinematics
+    ? kinematics.elbow.clone().applyQuaternion(boardQuaternion.clone().invert()) : null;
+  const fitWarning=updateRiderArm(world.bike,localElbow);
+  return {kinematics,heading,angle,fitWarning};
 }
 
 export function createWorld() {
@@ -265,20 +292,22 @@ export function createWorld() {
   const light = new THREE.DirectionalLight(0xffffff, 3);
   light.position.set(-20, -35, 75);
   scene.add(light);
-  const grid = new THREE.GridHelper(180, 18, 0x8fa9c3, 0xcbd8e6);
+  const grid = new THREE.GridHelper(400, 40, 0x8fa9c3, 0xcbd8e6);
   grid.rotation.x = Math.PI / 2;
-  grid.position.z = -25;
   scene.add(grid);
   const board = createDevice("board"), wt = createDevice("wt");
   const cockpit = cockpitGeometry();
+  const bike=createBikeModel(cockpit.getObjectByName("bar-center").position,label);
+  cockpit.add(bike.root);
+  grid.position.set(bike.bb.x,0,bike.groundZ);
   const forward = directionArrow("bike-forward","车头方向 · 随码表转向",0x087d9d,[-5,7,-10],20);
   cockpit.add(board,forward);
-  const north = directionArrow("magnetic-north","参考磁北 N · 未校准",0xe6a300,[-30,45,-22],28);
+  const north = directionArrow("magnetic-north","参考磁北 N · 未校准",0xe6a300,[-30,45,bike.groundZ+2],28);
   const elbow = new THREE.Mesh(new THREE.SphereGeometry(1.3,12,8),
     new THREE.MeshStandardMaterial({color:0xbe7041}));
   elbow.name = "estimated-elbow";
   scene.add(cockpit,wt,north,elbow);
-  const world = {scene,board,wt,cockpit,forward,north,elbow};
+  const world = {scene,board,wt,cockpit,forward,north,elbow,bike};
   updateWorld(world,{board:new THREE.Quaternion(),wt:new THREE.Quaternion(),paired:true});
   return world;
 }

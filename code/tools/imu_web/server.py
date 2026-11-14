@@ -30,6 +30,7 @@ STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/viewer.js": ("viewer.js", "text/javascript; charset=utf-8"),
     "/scene.js": ("scene.js", "text/javascript; charset=utf-8"),
+    "/bike_model.js": ("bike_model.js", "text/javascript; charset=utf-8"),
     "/test_scene.js": ("test_scene.js", "text/javascript; charset=utf-8"),
     "/vendor/three.module.min.js": ("vendor/three.module.min.js", "text/javascript"),
     "/vendor/three.core.min.js": ("vendor/three.core.min.js", "text/javascript"),

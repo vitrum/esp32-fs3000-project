@@ -15,7 +15,13 @@ It covers analysis, compatible PNG rendering, local Three.js assets and actual H
 upload/playback download. The viewer README also documents browser-side geometry,
 arrow, interpolation and missing-data tests, plus common-turn cockpit motion,
 manual north reference and supported/free forearm kinematics. Python cases also
-check inverted/upright sensor mounting during a known shared turn. No DUT is used.
+check inverted/upright sensor mounting during a known shared turn. Browser tests
+also cover right-handed wrist remapping and rejected reflections, text visibility,
+size-49 bicycle geometry with 170 mm cranks/110 mm stem, and mannequin bone lengths,
+height proportions and unreachable IK. Fullscreen/zoom require actual browser
+interaction. The UI upload regression rejects invalid scene settings without
+network requests or replacing the current dataset; modeled body motion is not
+measured full-body tracking. No DUT is used.
 
 From the workspace root:
 

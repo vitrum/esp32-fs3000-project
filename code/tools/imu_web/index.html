@@ -9,6 +9,10 @@ section{background:white;border-radius:12px;padding:18px;margin:14px 0}
 button,input,select{font:inherit;margin:5px;padding:6px}button{cursor:pointer}
 #viewport{height:560px;position:relative;background:#edf3fa;border-radius:10px;overflow:hidden}
 #viewport canvas{display:block;width:100%;height:100%;touch-action:none}
+#stage:fullscreen{width:100vw;height:100vh;background:white;display:flex;flex-direction:column}
+#stage:fullscreen #viewport{flex:1;height:auto;min-height:0;border-radius:0}
+.scene-toolbar{background:#f4f7fb;padding:5px;display:flex;flex-wrap:wrap;align-items:center}
+#view-warning,#fit-warning{color:#ae1634;margin:4px 10px;font-size:14px}
 #timeline{width:98%}#status{white-space:pre-wrap}#error{color:#ae1634;white-space:pre-wrap}
 label{display:inline-block}.note{color:#52657b;font-size:14px}pre{white-space:pre-wrap}
 .legend{display:flex;flex-wrap:wrap;gap:14px;margin:12px 0}.board{color:#087d9d}.arm{color:#b76020}
@@ -16,7 +20,7 @@ input[type=number]{width:76px}#pose{font-variant-numeric:tabular-nums}
 @media(max-width:600px){#viewport{height:420px}section{padding:10px}}
 </style>
 <h1>双 IMU · Three.js 三维时间轴回放</h1>
-<p>38 cm 公路弯把与手变头 · 码表前伸 8 cm · 鼠标旋转 / 滚轮缩放 / 右键平移 · 1 单位 = 1 cm</p>
+<p>2021 Allez Sprint Comp · 49 码参考 · 曲柄 170 mm / 把立 110 mm · 弯把 38 cm · 1 单位 = 1 cm</p>
 <section>
   <input id="file" type="file" accept=".csv" aria-label="IMU CSV 文件"><button id="upload" disabled>上传并分析</button>
   <p id="status" role="status">正在加载本地 Three.js…</p><p id="error" role="alert"></p>
@@ -29,7 +33,6 @@ input[type=number]{width:76px}#pose{font-variant-numeric:tabular-nums}
   <label>速度 <select id="speed"><option value=".25">0.25×</option><option value=".5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
   <span id="clock">0.000 s</span><br><input id="timeline" aria-label="时间轴" type="range" min="0" max="0" value="0" disabled>
   <div>
-    <button id="camera-reset">重置视角</button>
     <label>仰角 <input id="elev" type="range" min="5" max="85" value="35"></label>
     <label>方位角 <input id="azim" type="range" min="-180" max="180" value="-65"></label>
   </div>
@@ -45,16 +48,43 @@ input[type=number]{width:76px}#pose{font-variant-numeric:tabular-nums}
     <label>Y <input id="y" type="number" min="-360" max="360" value="0"></label>
     <label>Z 上 <input id="z" type="number" min="-360" max="360" value="0"></label>
   </div>
+  <div>腕部显示轴方向（模型轴对应归零后的回放参考轴；保持右手系）：
+    <label>模型 X <select id="wrist-x"><option>+X</option><option>-X</option><option>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
+    <label>模型 Y <select id="wrist-y"><option>+X</option><option>-X</option><option selected>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
+    <label>模型 Z <select id="wrist-z"><option>+X</option><option>-X</option><option>+Y</option><option>-Y</option><option selected>+Z</option><option>-Z</option></select></label>
+    <button id="wrist-reset">恢复 XYZ</button>
+  </div>
+  <div>假人尺寸：
+    <label>身高 <input id="rider-height" type="number" min="130" max="220" step="1" value="170">cm</label>
+    <label>胫骨（膝到踝）<input id="rider-tibia" type="number" min="25" max="60" step=".5" value="40">cm</label>
+    <p id="rider-summary" class="note"></p>
+  </div>
+  <p class="note">车架依据 <a href="https://www.specialized.com/us/en/allez-sprint-comp-disc/p/184442" target="_blank" rel="noreferrer">官方 2021 Comp Disc 49 码几何</a>，
+  按指定尺寸覆盖曲柄和把立。其余零件形状、坐垫高度、人体比例和左臂/腿姿态为估计；曲柄静态摆放，不虚构踩踏数据。
+  身高不是坐姿包围盒高度。右前臂保留 26 cm 参考长度，轴映射仅调整显示装配方向，不是原始 IMU 标定。</p>
   <div class="legend">
     <strong class="board">码表：8 × 5 × 2 cm（估计）</strong>
     <strong class="arm">前臂：26 × 8 × 6 cm（估计）</strong>
     <span>长 × 宽 × 厚；另绘腕带、腕部 IMU 和手掌</span>
   </div>
-  <div id="viewport" role="img" aria-label="Three.js 码表与前臂三维姿态，带设备三轴箭头和前进方向"></div>
+  <div id="stage">
+    <div class="scene-toolbar">
+      <button id="camera-reset">整车视角</button>
+      <button id="cockpit-view">座舱特写</button>
+      <button id="zoom-in" aria-label="放大三维场景">放大 +</button>
+      <button id="zoom-out" aria-label="缩小三维场景">缩小 −</button>
+      <button id="fullscreen">全屏</button>
+      <label><input id="hide-text" type="checkbox">隐藏 3D 文字（保留箭头）</label>
+    </div>
+    <p id="view-warning" role="alert"></p>
+    <p id="fit-warning" role="status"></p>
+    <div id="viewport" role="img" aria-label="Three.js 整车与假人、码表和前臂三维姿态，带设备三轴箭头和前进方向"></div>
+  </div>
   <p id="pose">安装示意 · 等待 IMU 数据</p>
-  <p class="note">黄色 = 固定水平参考磁北；青色 = 随码表转向的车头方向；红 / 绿 / 蓝 = 设备 X / Y / Z。
+  <p class="note">黄色 = 固定水平参考磁北；青色 = 随码表转向的车头方向；红 / 绿 / 蓝 = 显示 X / Y / Z（腕部采用所选映射）。
   世界坐标 X 北、Y 西、Z 上，地面网格每格 10 cm。车把、手变头、码表架和码表共同转向；
   前臂根据相对姿态围绕手掌或肘部移动，不再固定自身中心。腕带 IMU 位于前臂远端。
+  整车和假人随座舱基准转动，仅是姿态背景，不能视为车架实测姿态、轨迹或自行车适配建议。
   握持/离把需人工选择，不能从当前日志可靠自动判断；不放大角度、不双重叠加码表转向。
   只对 ≤250 ms 的有效相邻数据作四元数插值；长间断显示不可用，不跨缺失数据补造动作。</p>
 </section>
