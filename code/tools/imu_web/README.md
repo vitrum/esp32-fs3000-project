@@ -12,8 +12,20 @@
 通过 Three.js 本地渲染，不再轮询 PNG。支持暂停、逐样本拖动、倍速、
 鼠标旋转/缩放/平移、仰角/方位角和安装坐标调整、全量 JSON 下载。
 
+FIT 起点及回放绝对时间固定显示北京时间（Asia/Shanghai，UTC+08:00），
+保留毫秒，不随浏览器所在时区变化。原始 UTC 时间戳、下载 JSON、
+对齐偏移和相对播放秒数不变；跨日、跨年按北京时间显示。
+
 ## 腕部轴映射、全屏和整车/假人
 
+- 在“02 · 腕带佩戴诊断”中直接使用 **XY / YZ / XZ 正向、负向互换**，
+  六个按钮按当前映射累积操作。以 XY 为例：正向为新 X = 原 Y、
+  新 Y = −原 X；负向为新 X = −原 Y、新 Y = 原 X，Z 不变。
+  YZ、XZ 同理。每次交换同时配对改变符号，保持右手系；
+  相反按钮撤销一次操作，同向四次恢复，组合可覆盖全部 24 种合法方向。
+  映射下拉框同步更新，仍可分别选择三个轴的正负方向或一键恢复 XYZ。
+  修改即时更新三维预览，并传入下一次诊断的 `display_mount` 基线；
+  已有诊断需重新分析后才能确认应用。应用候选仍会恢复手动 XYZ，避免重复叠加。
 - 三个下拉框分别定义模型 X/Y/Z 指向归零后的腕部回放参考的哪个 ±X/±Y/±Z。
   必须使用三个不同源轴并保持右手系；单轴反转产生镜像，会明确拒绝。
   同时调整另一个轴即可得到合法旋转，或点击“恢复 XYZ”。
@@ -165,6 +177,7 @@ tools/imu_web/.venv/bin/python -m unittest tools.imu_web.test_server -v
 
 ```js
 await import("/test_scene.js").then(module => module.runTests())
+await import("/test_scene.js").then(module => module.runMountAxisControlTest())
 await import("/test_scene.js").then(module => module.runUploadValidationTest())
 ```
 
@@ -174,5 +187,9 @@ await import("/test_scene.js").then(module => module.runUploadValidationTest())
 轮胎接地、假人胫骨长度/身高比例及不可达 IK、45° 中点插值、时间轴边界、
 长间断及无效数据处理。全屏需由真实浏览器点击测试，不在模块单元测试中模拟权限。
 上传校验回归直接调用实际界面处理器，确认非法场景参数不会发请求或清除原有分析状态。
+轴互换回归覆盖全部 24 种右手系方向、六个实际按钮的正反操作、非法镜像及恢复；
+请在独立测试页执行控件回归，避免使正在使用的诊断失效。
+Python 回归核对六种带符号映射确实改变佩戴诊断基线，并且不改写原始样本。
 Python 回归包括主板倒装、手臂正装时共同 90° 水平转向的已知原始输入。
 这些测试不证明硬件安装标定或惯性定位精度。
+浏览器回归还覆盖北京时间的跨日、跨年及毫秒显示，不修改 FIT 对齐计算。

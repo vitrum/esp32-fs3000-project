@@ -77,12 +77,22 @@ pre{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;
       <input id="fit-file" type="file" accept=".fit" aria-label="骑行 FIT 文件"><button id="fit-upload" class="block-button">载入 FIT 活动</button>
       <p id="fit-status" role="status">未载入 FIT</p>
       <label class="field">FIT 对齐偏移（秒）<input id="fit-offset" type="number" min="-86400" max="86400" step=".1" value="0"></label>
-      <p class="note">起点近似对齐：CSV 首样本对应 FIT 首条 record + 此偏移。正数表示 CSV 起点更晚。CSV 无 UTC 锚点，不能自动证明同步。缺失或超过 2 秒未更新的数据不补造。</p>
+      <p class="note">绝对时间统一显示北京时间（UTC+08:00）。起点近似对齐：CSV 首样本对应 FIT 首条 record + 此偏移。正数表示 CSV 起点更晚。CSV 无 UTC 锚点，不能自动证明同步。缺失或超过 2 秒未更新的数据不补造。</p>
       <p id="error" role="alert"></p>
     </details>
     <details class="panel-section" open><summary>02 · 腕带佩戴诊断</summary>
       <p><strong>WT9011DCL-BT50 · 右前臂远端</strong></p>
       <p class="note">官方腕带；LOGO 与手背同侧，Type-C 朝向手肘。先找低运动参考，采样分析超限，再由你确认固定旋转候选；不删除异常动作、不缩短前臂。</p>
+      <p class="note">手动轴互换（相对当前映射累积）：正向为第一轴取第二轴、第二轴取负的第一轴；负向相反。自动配对反转一个符号以保持右手系，不产生镜像。</p>
+      <div class="actions"><button data-wrist-swap="XY" data-sign="1">XY 正向互换</button><button data-wrist-swap="XY" data-sign="-1">XY 负向互换</button></div>
+      <div class="actions"><button data-wrist-swap="YZ" data-sign="1">YZ 正向互换</button><button data-wrist-swap="YZ" data-sign="-1">YZ 负向互换</button></div>
+      <div class="actions"><button data-wrist-swap="XZ" data-sign="1">XZ 正向互换</button><button data-wrist-swap="XZ" data-sign="-1">XZ 负向互换</button></div>
+      <div class="field-grid">
+        <label>模型 X<select id="wrist-x"><option>+X</option><option>-X</option><option>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
+        <label>模型 Y<select id="wrist-y"><option>+X</option><option>-X</option><option selected>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
+        <label>模型 Z<select id="wrist-z"><option>+X</option><option>-X</option><option>+Y</option><option>-Y</option><option selected>+Z</option><option>-Z</option></select></label>
+      </div><button id="wrist-reset" class="block-button">恢复 XYZ</button>
+      <p class="note">映射即时影响 3D 预览与佩戴诊断基线；修改后需重新分析候选。单独反转一个轴会被拒绝，请配对调整。确认应用候选会恢复这里的 XYZ，避免重复叠加。</p>
       <label class="field"><span>自动寻找低运动参考</span><input id="auto-reference" type="checkbox" checked></label>
       <label class="field">校准时间（秒）<input id="reference-time" type="number" min="0" step=".1" value="0"></label>
       <div class="actions"><button id="reference-current">使用当前时间</button><button id="diagnose" disabled>分析佩戴候选</button></div>
@@ -102,12 +112,6 @@ pre{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;
       <div class="field-grid"><label>X<input id="x" type="number" min="-360" max="360" value="0"></label><label>Y<input id="y" type="number" min="-360" max="360" value="0"></label><label>Z<input id="z" type="number" min="-360" max="360" value="0"></label></div>
       <div class="field-grid"><label>身高（cm）<input id="rider-height" type="number" min="130" max="220" value="170"></label><label>胫骨膝到踝（cm）<input id="rider-tibia" type="number" min="25" max="60" step=".5" value="40"></label></div>
       <p id="rider-summary" class="note"></p>
-      <p class="note">手动额外显示轴调整（保持右手系；应用推荐会恢复 XYZ）：</p>
-      <div class="field-grid">
-        <label>模型 X<select id="wrist-x"><option>+X</option><option>-X</option><option>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
-        <label>模型 Y<select id="wrist-y"><option>+X</option><option>-X</option><option selected>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
-        <label>模型 Z<select id="wrist-z"><option>+X</option><option>-X</option><option>+Y</option><option>-Y</option><option selected>+Z</option><option>-Z</option></select></label>
-      </div><button id="wrist-reset" class="block-button">恢复 XYZ</button>
     </details>
     <details class="panel-section"><summary>04 · 模拟 CdA 参数</summary>
       <div class="field-grid"><label>车手 + 车质量（kg）<input id="aero-mass" type="number" min="30" max="250" value="85"></label><label>滚阻 Crr<input id="aero-crr" type="number" min="0" max=".05" step=".001" value=".004"></label><label>空气密度（kg/m³）<input id="aero-rho" type="number" min=".5" max="1.6" step=".001" value="1.225"></label><label>传动效率<input id="aero-efficiency" type="number" min=".5" max="1" step=".001" value=".975"></label></div>

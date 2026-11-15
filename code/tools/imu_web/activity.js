@@ -1,5 +1,14 @@
 import "/aero.js";
 
+const chinaTimeFormat=new Intl.DateTimeFormat("zh-CN",{
+  timeZone:"Asia/Shanghai",year:"numeric",month:"2-digit",day:"2-digit",
+  hour:"2-digit",minute:"2-digit",second:"2-digit",fractionalSecondDigits:3,hourCycle:"h23",
+});
+
+export function formatChinaTime(utcMs) {
+  return `${chinaTimeFormat.format(new Date(utcMs))} (UTC+08:00)`;
+}
+
 export function prepareActivity(records,parameters=globalThis.aeroProbeEstimate.defaults) {
   globalThis.aeroProbeEstimate.validate(parameters);
   const unique=[];

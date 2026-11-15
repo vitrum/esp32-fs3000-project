@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import {OrbitControls} from "/vendor/OrbitControls.js";
-import {createWorld, updateWorld, poseAt, wristAxisMapping, setTextVisibility, RIGHT_GRIP} from "/scene.js";
+import {createWorld, updateWorld, poseAt, wristAxisMapping, swapWristAxes, setTextVisibility, RIGHT_GRIP} from "/scene.js";
 import {setRiderDimensions, twoLinkJoint} from "/bike_model.js";
-import {prepareActivity, activityAt} from "/activity.js";
+import {prepareActivity, activityAt, formatChinaTime} from "/activity.js";
 
 export function start() {
   const $ = id => document.getElementById(id);
@@ -59,8 +59,8 @@ export function start() {
     $("hud-wind").textContent=value(record?.wind_mps===null || !record ? null : record.wind_mps*3.6,1);
     $("hud-cda").textContent=value(record?.cda,3);
     const reason=sample.reason || record?.cda_reason;
-    const utc=sample.utc_ms===null ? "" : ` · FIT UTC ${new Date(sample.utc_ms).toISOString()}`;
-    $("telemetry-note").textContent=`起点近似对齐 ${fitOffset>=0 ? "+" : ""}${fitOffset.toFixed(1)} s${utc} · ${
+    const timeLabel=sample.utc_ms===null ? "" : ` · FIT 北京时间 ${formatChinaTime(sample.utc_ms)}`;
+    $("telemetry-note").textContent=`起点近似对齐 ${fitOffset>=0 ? "+" : ""}${fitOffset.toFixed(1)} s${timeLabel} · ${
       reason ? reasonText[reason] : `三秒有效功率均值 ${value(record.power3_w)} W`
     } · 使用配置空气密度 ${aeroParameters.rho} kg/m³`;
   }
@@ -213,7 +213,7 @@ export function start() {
       const prepared=prepareActivity(data.records,aeroParameters);
       fitRaw=data.records; fitRecords=prepared;
       $("fit-download").href="/api/activity?id="+result.id; $("fit-download").hidden=false;
-      $("fit-status").textContent=`已载入 ${data.summary.records} 条记录；UTC 起点 ${new Date(data.summary.start_utc_ms).toISOString()}。${data.summary.warnings.join("；")}`;
+      $("fit-status").textContent=`已载入 ${data.summary.records} 条记录；北京时间起点 ${formatChinaTime(data.summary.start_utc_ms)}。${data.summary.warnings.join("；")}`;
       showTelemetry(currentTime);
     } catch (failure) {
       error(`FIT 载入失败：${failure.message}`);
@@ -353,6 +353,18 @@ export function start() {
   $("rider-height").oninput=mountChanged;
   $("rider-tibia").oninput=mountChanged;
   for (const id of ["wrist-x","wrist-y","wrist-z"]) $(id).onchange=mountChanged;
+  for (const button of document.querySelectorAll("[data-wrist-swap]")) {
+    button.onclick=()=>{
+      try {
+        const mapping=swapWristAxes(["wrist-x","wrist-y","wrist-z"].map(id=>$(id).value),
+          button.dataset.wristSwap,Number(button.dataset.sign));
+        ["wrist-x","wrist-y","wrist-z"].forEach((id,index)=>{$(id).value=mapping[index];});
+        mountChanged();
+      } catch (failure) {
+        error(`未应用轴互换：${failure.message}`);
+      }
+    };
+  }
   $("wrist-reset").onclick=()=>{
     ["X","Y","Z"].forEach(axis=>{ $(`wrist-${axis.toLowerCase()}`).value=`+${axis}`; });
     mountChanged();

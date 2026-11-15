@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import {applyOrientation, armKinematics, createWorld, DIMENSIONS, poseAt, quaternionFromRows,
-  RIGHT_GRIP, updateWorld, wristAxisMapping, setTextVisibility} from "/scene.js";
+  RIGHT_GRIP, updateWorld, wristAxisMapping, swapWristAxes, setTextVisibility} from "/scene.js";
 import {setRiderDimensions, twoLinkJoint} from "/bike_model.js";
-import {prepareActivity, activityAt} from "/activity.js";
+import {prepareActivity, activityAt, formatChinaTime} from "/activity.js";
 
 export function runTests() {
   const passed = [];
@@ -10,6 +10,11 @@ export function runTests() {
     if (!condition) throw new Error(message);
   }
   const close = (a,b) => Math.abs(a-b)<1e-8;
+  check(formatChinaTime(Date.UTC(2026,10,15,16,0,0,123))==="2026/11/16 00:00:00.123 (UTC+08:00)",
+    "Beijing time must roll to the next date at midnight and preserve milliseconds");
+  check(formatChinaTime(Date.UTC(2026,11,31,16))==="2027/01/01 00:00:00.000 (UTC+08:00)",
+    "Beijing time must handle year rollover independently of the browser timezone");
+  passed.push("Absolute FIT times display in China UTC+08 with date/year rollover and milliseconds");
   const identity = [[1,0,0],[0,1,0],[0,0,1]];
   const quarterTurn = [[0,-1,0],[1,0,0],[0,0,1]];
   const world = createWorld();
@@ -86,6 +91,37 @@ export function runTests() {
     check(rejected, "Duplicate, reflected and malformed mappings must be rejected");
   }
   passed.push("Wrist mapping changes pose, rejects reflections and preserves common turns");
+  const neutralMapping=["+X","+Y","+Z"];
+  const expectedSwaps={XY:["+Y","-X","+Z"],YZ:["+X","+Z","-Y"],XZ:["+Z","+Y","-X"]};
+  const reachable=new Set(), pending=[neutralMapping];
+  while (pending.length) {
+    const mapping=pending.pop(), key=mapping.join();
+    if (reachable.has(key)) continue;
+    reachable.add(key);
+    for (const pair of ["XY","YZ","XZ"]) {
+      for (const sign of [1,-1]) {
+        const changed=swapWristAxes(mapping,pair,sign);
+        wristAxisMapping(changed);
+        check(swapWristAxes(changed,pair,-sign).join()===key,"Opposite signed swaps must undo each other");
+        check(swapWristAxes(swapWristAxes(changed,pair,sign),pair,sign).join()===swapWristAxes(mapping,pair,-sign).join(),
+          "Four same signed swaps restore the original mapping");
+        pending.push(changed);
+      }
+    }
+  }
+  for (const [pair,expected] of Object.entries(expectedSwaps)) {
+    check(swapWristAxes(neutralMapping,pair,1).join()===expected.join(),`${pair}: signed basis must match`);
+  }
+  check(reachable.size===24 && neutralMapping.join()==="+X,+Y,+Z",
+    "Signed swaps reach all 24 proper orientations without mutating their input");
+  for (const [mapping,pair,sign] of [
+    [neutralMapping,"XX",1],[neutralMapping,"XY",0],[["-X","+Y","+Z"],"XY",1],
+  ]) {
+    let rejected=false;
+    try {swapWristAxes(mapping,pair,sign);} catch {rejected=true;}
+    check(rejected,"Invalid or reflected signed swaps must be rejected");
+  }
+  passed.push("Signed XY/YZ/XZ swaps reach 24 proper orientations with inverse/reset and no mirrors");
   const calibration={
     alignment:[[0.866025403784,-0.5,0],[0.5,0.866025403784,0],[0,0,1]],
     sensor_reference:[[0,0,1],[0,1,0],[-1,0,0]],
@@ -283,6 +319,7 @@ export async function runUploadValidationTest() {
     if (requests || status.textContent!==oldStatus || !error.textContent.includes("上传未开始")) {
       throw new Error("Invalid view parameters must block upload, keep prior status and show the validation error");
     }
+
     ids.forEach((id,index)=>{document.getElementById(id).value=saved[index];});
     fitOffset.value="100000";
     await document.getElementById("upload").onclick();
@@ -301,5 +338,42 @@ export async function runUploadValidationTest() {
     sceneError.textContent=oldSceneError;
     panel.hidden=oldPanelHidden;
     document.getElementById("panel-toggle").setAttribute("aria-expanded",String(!oldPanelHidden));
+  }
+}
+
+export function runMountAxisControlTest() {
+  const $=id=>document.getElementById(id);
+  const ids=["wrist-x","wrist-y","wrist-z"], saved=ids.map(id=>$(id).value);
+  const mapping=()=>ids.map(id=>$(id).value).join();
+  const expected={XY:["+Y,-X,+Z","-Y,+X,+Z"],YZ:["+X,+Z,-Y","+X,-Z,+Y"],
+    XZ:["+Z,+Y,-X","-Z,+Y,+X"]};
+  try {
+    for (const [pair,orientations] of Object.entries(expected)) {
+      for (const [index,sign] of [1,-1].entries()) {
+        $("wrist-reset").click();
+        const button=document.querySelector(`[data-wrist-swap="${pair}"][data-sign="${sign}"]`);
+        if (!button || !button.closest("details").contains($("diagnose"))) {
+          throw new Error("Signed swap controls must be inside wearing diagnosis");
+        }
+        button.click();
+        if (mapping()!==orientations[index] || $("error").textContent) {
+          throw new Error(`${pair} ${sign}: actual UI handler did not apply the signed swap`);
+        }
+        document.querySelector(`[data-wrist-swap="${pair}"][data-sign="${-sign}"]`).click();
+        if (mapping()!=="+X,+Y,+Z") throw new Error("Inverse UI swaps must restore XYZ");
+      }
+    }
+    $("wrist-x").value="-X";
+    document.querySelector('[data-wrist-swap="XY"][data-sign="1"]').click();
+    if (!$("error").textContent.includes("右手系") || mapping()!=="-X,+Y,+Z") {
+      throw new Error("Reflected input must show an error without being replaced silently");
+    }
+    $("wrist-reset").click();
+    if (mapping()!=="+X,+Y,+Z" || $("error").textContent) throw new Error("Reset must clear invalid mapping");
+    return {passed:["All six signed swap controls apply/invert from wearing diagnosis",
+      "Reflected UI input is rejected and reset recovers"],count:2};
+  } finally {
+    ids.forEach((id,index)=>{$(id).value=saved[index];});
+    $("wrist-x").dispatchEvent(new Event("change"));
   }
 }

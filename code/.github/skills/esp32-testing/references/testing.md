@@ -154,6 +154,12 @@ power latch, first-deployment preservation and endurance need hardware gates.
 
 ## Verification Boundaries
 
+The IMU web viewer uses `python -m unittest tools.imu_web.test_server -v`
+and browser tests in `tools/imu_web/test_scene.js`. Signed XY/YZ/XZ changes
+must preserve proper rotations, reach all 24 orientations, update actual
+controls, and affect the diagnosis baseline without rewriting raw samples.
+Run control tests in a separate page to avoid invalidating a user's diagnosis.
+
 Native mocks test software decisions, not radio scheduling or electrical timing.
 QEMU runs real IDF/FreeRTOS logic but does not certify BLE discovery, Wi-Fi/BLE
 coexistence, actual SD media, LCD/touch hardware or sensor accuracy. Current

@@ -201,6 +201,34 @@ class AnalysisTests(unittest.TestCase):
         grounded = diagnose_mount(tilting_board, config)
         self.assertEqual(grounded["baseline"]["outliers"], 0)
 
+    def test_signed_display_swaps_reach_diagnosis_without_modifying_raw_data(self):
+        rows = fixture(10)
+        for row in rows:
+            row.update(board_gz_dps="0", wt_gz_dps="0")
+        data = analyze(encode(rows))
+        original = json.dumps(data["frames"])
+        config = {"mode": "hood", "shoulder": [-27, -18, 32], "grip": [4, -19, 1.5],
+                  "neutral_direction": [1, 0, 0], "forearm_and_palm": 30, "upper_arm": 31.62}
+        for matrix in (
+            [[0, -1, 0], [1, 0, 0], [0, 0, 1]],
+            [[0, 1, 0], [-1, 0, 0], [0, 0, 1]],
+            [[1, 0, 0], [0, 0, -1], [0, 1, 0]],
+            [[1, 0, 0], [0, 0, 1], [0, -1, 0]],
+            [[0, 0, -1], [0, 1, 0], [1, 0, 0]],
+            [[0, 0, 1], [0, 1, 0], [-1, 0, 0]],
+        ):
+            with self.subTest(matrix=matrix):
+                result = diagnose_mount(data, {**config, "display_mount": matrix})
+                self.assertEqual(result["model_reference"]["display_mount"], matrix)
+                direction = np.array(matrix)[:, 0]
+                expected = np.linalg.norm(np.array(config["grip"]) - 30 * direction
+                                          - config["shoulder"]) / config["upper_arm"]
+                self.assertAlmostEqual(result["baseline"]["ratio_p05"], expected)
+                self.assertAlmostEqual(result["baseline"]["ratio_p95"], expected)
+                self.assertEqual(json.dumps(data["frames"]), original)
+        with self.assertRaisesRegex(ValueError, "proper rotation"):
+            diagnose_mount(data, {**config, "display_mount": [[0, 1, 0], [1, 0, 0], [0, 0, 1]]})
+
 
 class FitTests(unittest.TestCase):
     def test_utc_units_missing_source_and_valid_zero_are_preserved(self):

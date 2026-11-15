@@ -26,6 +26,19 @@ export function wristAxisMapping(mapping=["+X","+Y","+Z"]) {
   return new THREE.Quaternion().setFromRotationMatrix(matrix);
 }
 
+export function swapWristAxes(mapping, pair, sign) {
+  wristAxisMapping(mapping);
+  if (!["XY","YZ","XZ"].includes(pair) || ![1,-1].includes(sign)) {
+    throw new Error("请选择 XY、YZ 或 XZ 轴对和正负互换方向。");
+  }
+  const [first,second]=[...pair].map(axis=>"XYZ".indexOf(axis));
+  const reverse=axis=>(axis[0]==="+" ? "-" : "+")+axis[1];
+  const result=[...mapping];
+  result[first]=sign===1 ? mapping[second] : reverse(mapping[second]);
+  result[second]=sign===1 ? reverse(mapping[first]) : mapping[first];
+  return result;
+}
+
 export function setTextVisibility(world, visible) {
   world.scene.traverse(object=>{if (object.isSprite) object.visible=visible;});
 }
