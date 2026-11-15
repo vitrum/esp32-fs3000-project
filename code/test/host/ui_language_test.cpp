@@ -93,7 +93,7 @@ static void checkDeviceNavigation() {
 static void checkGlyphs() {
   std::set<uint32_t> required;
   const std::regex literal(R"re("(?:\\.|[^"\\])*")re");
-  for (const char *name : {"/src/display_lcd.cpp", "/src/aero_zone_view.h", "/src/dashboard_view.h", "/src/sensor_views.h"}) {
+  for (const char *name : {"/src/display_lcd.cpp", "/src/main.cpp", "/src/aero_zone_view.h", "/src/dashboard_view.h", "/src/sensor_views.h"}) {
     std::ifstream input(std::string(UI_SOURCE_ROOT) + name);
     assert(input.good());
     const std::string source{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
@@ -411,6 +411,35 @@ static void checkSensorViews(lv_obj_t *screen) {
   lv_dropdown_open(setup.dropdown());
   saveSensorFrame("posture-placement-options.ppm");
   lv_dropdown_close(setup.dropdown());
+  lv_obj_del(panel);
+  panel=lv_obj_create(screen);
+  lv_obj_set_size(panel,240,320);
+  lv_obj_set_style_pad_all(panel,0,0);
+  ImuCalibrationView calibration;
+  calibration.create(panel,[](lv_event_t *) {});
+  using MountStage=ImuMountCalibration::Stage;
+  for (bool chinese : {false,true}) {
+    calibration.language(chinese);
+    for (unsigned stage=0;stage<=unsigned(MountStage::Failed);++stage) {
+      calibration.update(MountStage(stage),ImuMountCalibration::Error::None,0,false);
+      lv_obj_update_layout(panel);
+      for (auto *label : {calibration.instruction(),calibration.status()}) {
+        lv_point_t textSize;
+        lv_txt_get_size(&textSize,lv_label_get_text(label),&lv_font_noto_sans_sc_14,
+                        0,0,lv_obj_get_width(label),LV_TEXT_FLAG_NONE);
+        assert(textSize.y<=lv_obj_get_height(label));
+      }
+      assert(lv_obj_has_state(calibration.button(1),LV_STATE_DISABLED)==(MountStage(stage)!=MountStage::Confirm));
+    }
+    calibration.update(MountStage::Confirm,ImuMountCalibration::Error::None,0,true);
+    assert(lv_obj_has_state(calibration.button(1),LV_STATE_DISABLED));
+    calibration.update(MountStage::Wearing,ImuMountCalibration::Error::None,0,false);
+    assert(!lv_obj_has_state(calibration.button(0),LV_STATE_DISABLED));
+    assert(!calibration.checked() && calibration.forwardAxis()==1);
+  }
+  calibration.update(MountStage::Roll,ImuMountCalibration::Error::None,1,false);
+  lv_obj_scroll_to_y(panel,250,LV_ANIM_OFF);
+  saveSensorFrame("imu-mount-roll.ppm");
   lv_obj_del(panel);
   std::cout << "PASS sensor UI: six no-scroll online rows, recent data, four placements, bilingual controls and result bounds\n";
 }

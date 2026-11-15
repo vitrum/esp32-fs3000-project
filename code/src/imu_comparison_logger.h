@@ -1,6 +1,7 @@
 #pragma once
 
 #include "imu_comparison.h"
+#include "imu_calibration_metadata.h"
 #include "csv_logger.h"
 #include "runtime_log.h"
 #include <freertos/queue.h>
@@ -42,8 +43,9 @@ public:
     return true;
   }
 
-  bool start(uint32_t session) {
+  bool start(uint32_t session, const ImuCalibrationMetadata &metadata = ImuCalibrationMetadata{}) {
     if (!queue_ || busy()) return false;
+    metadata_ = metadata;
     Command command;
     command.start = true;
     command.session = session;
@@ -105,7 +107,25 @@ private:
       if (fd_ >= 0 || errno != EEXIST) break;
     }
     success = success && fd_ >= 0;
-    if (success) success = writeAll(ImuComparison::header(), strlen(ImuComparison::header()));
+    if (success) {
+      char json[2048];
+      const size_t length = metadata_.format(json,sizeof(json));
+      char metadataPath[200];
+      snprintf(metadataPath,sizeof(metadataPath),"%.*s.json",int(strlen(path)-4),path);
+      const int metadataFd = ::open(metadataPath,O_WRONLY|O_CREAT|O_EXCL,0664);
+      bool written = metadataFd >= 0 && length;
+      if (written) {
+        size_t offset=0;
+        while (offset<length) {
+          const ssize_t count=::write(metadataFd,json+offset,length-offset);
+          if (count<=0) { written=false; break; }
+          offset+=size_t(count);
+        }
+        if (written) written=fsync(metadataFd)==0;
+      }
+      if (metadataFd>=0 && ::close(metadataFd)!=0) written=false;
+      success=written && writeAll(ImuComparison::header(), strlen(ImuComparison::header()));
+    }
     unlockSdCard();
     if (success) AppLog.printf("[IMU] recording %s (g, deg/s; native axes; host timestamps)\n", path);
     return success;
@@ -155,7 +175,7 @@ private:
       } else if (received) {
         if (failed_ || fd_ < 0) ++dropped_;
         else {
-          char line[768];
+          char line[1152];
           const size_t length = ImuComparison::format(command.record, line, sizeof(line));
           if (!length) ++dropped_;
           else {
@@ -196,4 +216,5 @@ private:
   char buffer_[8192] = {};
   size_t bufferSize_ = 0, bufferRows_ = 0;
   uint32_t lastFlushMs_ = 0;
+  ImuCalibrationMetadata metadata_;
 };

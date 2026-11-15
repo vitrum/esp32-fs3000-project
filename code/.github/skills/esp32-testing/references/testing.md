@@ -53,8 +53,19 @@ Use other existing scenario names with `-k` as needed. Check
 | FIT encoding, CSV validation, lengths and CRC | `test/host/fit_activity_test.cpp` |
 | Production headers and FIT code on actual IDF FreeRTOS | `test/embedded/main/test_runtime.cpp` |
 | Native builds and persisted FIT decoding assertions | `test/host/test_regression.py` |
+| Guided forearm functional mounting, motion/rate gates and reset/wrap | `test/host/imu_mount_calibration_test.cpp` (`imu_mount_calibration`) |
+| Raw IMU CSV preservation, mounting sidecars and calibration corruption rejection | `test/host/imu_comparison_test.cpp`, `test/host/test_regression.py` (`imu_comparison`), `tools/imu_compare.py` |
 
 Read only the test home and owning production code relevant to the change.
+
+For guided mounting changes, run `imu_mount_calibration`, `imu_comparison`
+and `ui_sensors`, then retain `ui_language` in broader validation. Check both
+legacy and extended CSV schemas, immutable JSON snapshots and invalid-row
+NaN semantics. The existing BVH/web loader still defaults to raw columns.
+Real wearable output must reach 20 Hz; hardware gesture, board-forward-axis
+and strap-slip checks are required. Calibration does not establish magnetic
+north, world-space translation or BLE latency. See test/README.md for the
+wizard sequence, macOS native logger fallback and PlatformIO ARM64 override.
 
 ## Wind And Power Acceptance Rules
 

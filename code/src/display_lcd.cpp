@@ -564,6 +564,33 @@ void DisplayLcd::showPostureCalibrationResult(bool success) {
                      : localized("Calibration unavailable.", "暂不能标定。"));
 }
 
+void DisplayLcd::onImuMountAction(lv_event_t *event) {
+  if (!g_display) return;
+  const int action=int((uintptr_t)lv_event_get_user_data(event));
+  if (!action && !g_display->imuMountView_.checked()) {
+    g_display->showNotice(g_display->localized("Check wearing and board axis first.","请先核对佩戴与主板车头轴。"));
+    return;
+  }
+  g_display->imuMountRequest_=action;
+}
+
+bool DisplayLcd::takeImuMountRequest(int &action,int8_t &forwardAxis) {
+  if (imuMountRequest_<0) return false;
+  action=imuMountRequest_; imuMountRequest_=-1;
+  forwardAxis=imuMountView_.forwardAxis();
+  return true;
+}
+
+void DisplayLcd::updateImuMount(const ImuMountCalibration &calibration,bool blocked) {
+  imuMountView_.update(calibration.stage(),calibration.error(),calibration.cycles(),blocked);
+  imuMountView_.quality(calibration.result());
+}
+
+void DisplayLcd::showImuMountSetup() {
+  imuMountView_.resetCheck();
+  showBleRolePanel(SavedConnections::Role::Posture);
+}
+
 void DisplayLcd::updateHeartDeviceStatus(bool connected, bool responding,
                                          uint16_t bpm) {
   const size_t index = roleIndex(SavedConnections::Role::Heart);
@@ -1135,7 +1162,7 @@ void DisplayLcd::buildBleRolePanel(lv_obj_t *&panel, const char *title,
   lv_obj_t *scan = lv_btn_create(body);
   lv_obj_set_size(scan, 208, 42);
   lv_obj_align(scan, LV_ALIGN_TOP_LEFT, 16,
-               posture ? 254 : 126);
+               posture ? 1010 : 126);
   lv_obj_set_style_bg_color(scan, lv_color_make(37, 99, 235), 0);
   lv_obj_add_event_cb(scan, onBleRoleScan, LV_EVENT_CLICKED,
                       (void *)(uintptr_t)role);
@@ -1147,10 +1174,17 @@ void DisplayLcd::buildBleRolePanel(lv_obj_t *&panel, const char *title,
 
   buildBleFavoriteButton(body, role);
   if (posture) {
-    lv_obj_set_y(bleFavoriteButtons_[roleIndex(role)], 304);
-    postureSetup_.create(body, onPosturePlacement, onPostureCalibration);
+    lv_obj_set_y(bleFavoriteButtons_[roleIndex(role)], 1060);
+    imuMountView_.create(body,onImuMountAction);
+    imuMountView_.language(chinese_);
+    auto *legacy=lv_obj_create(body);
+    lv_obj_set_pos(legacy,0,700); lv_obj_set_size(legacy,240,260);
+    lv_obj_set_style_pad_all(legacy,0,0); lv_obj_set_style_border_width(legacy,0,0);
+    lv_obj_clear_flag(legacy,LV_OBJ_FLAG_SCROLLABLE);
+    postureSetup_.create(legacy, onPosturePlacement, onPostureCalibration);
     postureSetup_.select(posturePlacement_);
     postureSetup_.language(chinese_);
+    imuMountView_.language(chinese_);
   }
   lv_obj_add_flag(panel, LV_OBJ_FLAG_HIDDEN);
 }

@@ -58,6 +58,10 @@ public:
   bool takePostureCalibrationRequest(bool &leaning);
   void updatePostureEstimate(const RiderPosture::Estimate &estimate) { postureSetup_.update(estimate); }
   void showPostureCalibrationResult(bool success);
+  bool takeImuMountRequest(int &action, int8_t &forwardAxis);
+  void updateImuMount(const ImuMountCalibration &calibration, bool blocked);
+  void showImuMountSetup();
+  void showImuMountError(const char *english, const char *chinese) { showNotice(localized(english,chinese)); }
   void showUsbStorage(bool ready, bool ejected, bool hostConnected, bool active = true);
   void showUsbStorageError(const char *message) {
     usbStorageError_ = true;
@@ -147,6 +151,9 @@ private:
   lv_obj_t *onlineDevicesPanel_ = nullptr;
   OnlineDevicesView onlineView_;
   PostureSetupView postureSetup_;
+  ImuCalibrationView imuMountView_;
+  int imuMountRequest_ = -1;
+  static void onImuMountAction(lv_event_t *event);
   RecentSensorReading onlineReadings_[OnlineDevicesView::kCount];
   RiderPosture::Placement posturePlacement_ = RiderPosture::Placement::Forearm;
   int postureCalibrationRequest_ = -1;

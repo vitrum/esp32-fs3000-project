@@ -6,7 +6,20 @@
 #include "imu_comparison.h"
 #include "rider_posture.h"
 #include "recent_sensor_reading.h"
+#if defined(__APPLE__)
+#include <unistd.h>
+extern "C" ssize_t __wrap_write(int, const void *, size_t);
+extern "C" int __wrap_fsync(int);
+#define write __wrap_write
+#define fsync __wrap_fsync
+#endif
 #include "imu_comparison_logger.h"
+#if defined(__APPLE__)
+#undef write
+#undef fsync
+extern "C" ssize_t __real_write(int fd, const void *data, size_t size) { return ::write(fd,data,size); }
+extern "C" int __real_fsync(int fd) { return ::fsync(fd); }
+#endif
 #include <chrono>
 #include <fstream>
 #include <functional>
@@ -64,6 +77,7 @@ static void loggerTests(const ImuComparisonRecord &record) {
   const std::string text{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
   assert(text.find(ImuComparison::header()) == 0);
   assert(std::count(text.begin(), text.end(), '\n') == 21);
+  assert(std::ifstream(mountPath+"/IMU/I00000002-0.json").good());
   assert(logger.start(2));
   assert(logger.log(record));
   logger.requestStop();
@@ -91,6 +105,35 @@ static void loggerTests(const ImuComparisonRecord &record) {
   await([&] { return !logger.busy(); });
   assert(!logger.failed());
   assert(logger.written() + logger.dropped() == 256);
+  ImuCalibrationMetadata metadata;
+  snprintf(metadata.address,sizeof(metadata.address),"01:23:45:67:89:AB");
+  metadata.calibration.id=42;
+  metadata.calibration.valid=true;
+  metadata.utcKnown=true; metadata.utcTrusted=true;
+  metadata.utcSeconds=1792713540; metadata.utcMilliseconds=100;
+  metadata.traceSession=123;
+  for (unsigned i=0;i<3;++i)
+    metadata.calibration.board[i][i]=metadata.calibration.wt[i][i]=1;
+  metadata.calibration.wtBias[0]=1;
+  auto calibrated=record;
+  ImuComparison::applyCalibration(calibrated,metadata.calibration,ImuMountCalibration::Stage::Ready);
+  assert(calibrated.calibrationValid && calibrated.reference[9]==2);
+  assert(logger.start(6,metadata));
+  metadata.calibration.id=999;
+  assert(logger.log(calibrated));
+  calibrated.paired=false;
+  ImuComparison::applyCalibration(calibrated,metadata.calibration,ImuMountCalibration::Stage::Failed);
+  assert(!calibrated.calibrationValid && std::isnan(calibrated.reference[0]));
+  assert(logger.log(calibrated));
+  logger.requestStop();
+  await([&] { return !logger.busy(); });
+  assert(!logger.failed() && logger.written()==2);
+  std::ifstream saved(mountPath+"/IMU/I00000006-0.json");
+  const std::string json{std::istreambuf_iterator<char>(saved),std::istreambuf_iterator<char>()};
+  assert(json.find("\"calibration_id\":42")!=std::string::npos);
+  assert(json.find("\"calibration_id\":999")==std::string::npos);
+  char shortMetadata[8];
+  assert(metadata.format(shortMetadata,sizeof(shortMetadata))==0);
   assert(logger.end());
   std::cout << "PASS IMU storage: unavailable SD, real CSV, stop drain, unique files, write/fsync failures, bounded queue\n";
 }
@@ -201,7 +244,7 @@ int main() {
   loggerTests(record);
   char text[768];
   assert(ImuComparison::format(record, text, sizeof(text)) > 0);
-  assert(strstr(text, "nan") == nullptr);
+  assert(strstr(text, "nan") != nullptr && !record.calibrationValid);
   assert(!comparison.capture(board.receivedMs, board, wt, 1, 2, 3).paired);
   ++wt.sequence;
   wt.receivedMs -= 101;

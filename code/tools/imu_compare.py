@@ -15,6 +15,11 @@ FIELDS = (
         "board_a_norm_g", "wt_a_norm_g", "delta_a_norm_g",
         "board_g_norm_dps", "wt_g_norm_dps", "delta_g_norm_dps",
 )
+CALIBRATION_FIELDS = (
+    "calibration_id", "calibration_valid", "calibration_stage",
+    *(f"{sensor}_ref_{prefix}{axis}_{unit}" for sensor in ("board", "wt")
+      for prefix, unit in (("a", "g"), ("g", "dps")) for axis in "xyz"),
+)
 
 
 def summarize(path: Path) -> dict:
@@ -23,7 +28,8 @@ def summarize(path: Path) -> dict:
     maximum_skew = 0
     with path.open(newline="") as stream:
         reader = csv.DictReader(stream)
-        if tuple(reader.fieldnames or ()) != FIELDS:
+        fields = tuple(reader.fieldnames or ())
+        if fields not in (FIELDS, FIELDS + CALIBRATION_FIELDS):
             raise ValueError("unexpected IMU CSV header")
         for row in reader:
             rows += 1
@@ -31,6 +37,19 @@ def summarize(path: Path) -> dict:
                 raise ValueError(f"row {rows}: wrong column count")
             if any(row[key] not in {"0", "1"} for key in ("board_valid", "wt_valid", "paired")):
                 raise ValueError(f"row {rows}: invalid validity flag")
+            if fields == FIELDS + CALIBRATION_FIELDS:
+                calibration_id = int(row["calibration_id"])
+                stage = int(row["calibration_stage"])
+                if (row["calibration_valid"] not in {"0", "1"} or not 0 <= stage <= 9
+                        or not 0 <= calibration_id <= 0xFFFFFFFF):
+                    raise ValueError(f"row {rows}: invalid calibration status")
+                valid = row["calibration_valid"] == "1"
+                if valid and (row["paired"] != "1" or calibration_id == 0 or stage != 8):
+                    raise ValueError(f"row {rows}: calibrated row requires a paired sample and calibration ID")
+                values = [float(row[key]) for key in CALIBRATION_FIELDS[3:]]
+                if (valid and not all(math.isfinite(value) for value in values)
+                        or not valid and not all(math.isnan(value) for value in values)):
+                    raise ValueError(f"row {rows}: inconsistent calibration vectors")
             if row["paired"] == "0":
                 continue
             if row["board_valid"] != "1" or row["wt_valid"] != "1":

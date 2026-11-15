@@ -19,6 +19,10 @@ from pytest_embedded.log import MessageQueue
 
 ROOT = Path(__file__).resolve().parents[2]
 SUITES = {
+    "imu_mount_calibration": (
+        ["imu_mount_calibration_test.cpp"], [],
+        ["PASS IMU mounting:"],
+    ),
     "imu_comparison": (
         ["imu_comparison_test.cpp"], ["runtime_log.cpp"],
         ["PASS IMU comparison:", "PASS IMU storage:"],
@@ -272,7 +276,7 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
     command += [str(Path("src") / name) for name in sources]
     if suite.startswith("system_"):
         command += ["-DHOST_POSIX_SD", "-Wl,--wrap=write", "-Wl,--wrap=fsync"]
-    if suite == "imu_comparison":
+    if suite == "imu_comparison" and os.sys.platform != "darwin":
         command += ["-Wl,--wrap=write", "-Wl,--wrap=fsync"]
     if suite == "concurrency" or suite.startswith("system_"):
         gps = Path(os.environ.get(
@@ -338,10 +342,51 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
                 assert float(row[f"{sensor}_gx_dps"]) == 3
                 assert float(row[f"{sensor}_gy_dps"]) == 4
                 assert float(row[f"{sensor}_g_norm_dps"]) == 5
-        for key, invalid in (("wt_a_norm_g", "8"), ("paired", "2"), ("skew_ms", "101")):
+            assert row["calibration_valid"] == "0"
+        metadata = json.loads((imu_artifacts / "IMU/I00000006-0.json").read_text())
+        assert metadata["calibration_id"] == 42 and metadata["valid"] is True
+        assert metadata["utc_anchor"]["trusted"] is True
+        with (imu_artifacts / "IMU/I00000006-0.csv").open(newline="") as stream:
+            calibrated_rows = list(csv.DictReader(stream))
+        assert len(calibrated_rows) == 2
+        assert calibrated_rows[0]["calibration_id"] == "42"
+        assert calibrated_rows[0]["calibration_valid"] == "1"
+        assert float(calibrated_rows[0]["wt_ref_gx_dps"]) == 2
+        assert calibrated_rows[1]["calibration_valid"] == "0"
+        assert calibrated_rows[1]["wt_ref_gx_dps"].lower() == "nan"
+        calibrated_report = subprocess.run(
+            [os.sys.executable, "tools/imu_compare.py", str(imu_artifacts / "IMU/I00000006-0.csv")],
+            cwd=ROOT, capture_output=True, text=True, timeout=30)
+        assert calibrated_report.returncode == 0, calibrated_report.stdout + calibrated_report.stderr
+        legacy_path = imu_artifacts / "legacy.csv"
+        with legacy_path.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields[:fields.index("calibration_id")],
+                                    extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(imu_rows)
+        legacy_report = subprocess.run(
+            [os.sys.executable, "tools/imu_compare.py", str(legacy_path)],
+            cwd=ROOT, capture_output=True, text=True, timeout=30)
+        assert legacy_report.returncode == 0, legacy_report.stdout + legacy_report.stderr
+        for key, invalid in (("wt_a_norm_g", "8"), ("paired", "2"), ("skew_ms", "101"),
+                             ("calibration_valid", "2"), ("calibration_stage", "10"),
+                             ("calibration_id", "-1"), ("wt_ref_gx_dps", "3")):
             corrupted = [dict(row) for row in imu_rows]
             corrupted[0][key] = invalid
             invalid_path = imu_artifacts / f"invalid-{key}.csv"
+            with invalid_path.open("w", newline="") as stream:
+                writer = csv.DictWriter(stream, fieldnames=fields)
+                writer.writeheader()
+                writer.writerows(corrupted)
+            rejected = subprocess.run(
+                [os.sys.executable, "tools/imu_compare.py", str(invalid_path)],
+                cwd=ROOT, capture_output=True, text=True, timeout=30)
+            assert rejected.returncode != 0, rejected.stdout
+        for key, invalid in (("wt_ref_gx_dps", "nan"), ("calibration_id", "0"),
+                             ("calibration_stage", "3")):
+            corrupted = [dict(row) for row in calibrated_rows]
+            corrupted[0][key] = invalid
+            invalid_path = imu_artifacts / f"invalid-calibrated-{key}.csv"
             with invalid_path.open("w", newline="") as stream:
                 writer = csv.DictWriter(stream, fieldnames=fields)
                 writer.writeheader()

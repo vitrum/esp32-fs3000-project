@@ -60,6 +60,13 @@ PowerKey     powerKey;
 BoardImu boardImu;
 ImuComparison imuComparison;
 ImuComparisonLogger imuLogger;
+ImuComparisonLogger imuCalibrationLogger;
+ImuComparison imuCalibrationComparison;
+ImuMountCalibration imuMount;
+ImuCalibrationMetadata recordingImuMetadata;
+static uint32_t imuTraceSession = 0, lastImuTraceSequence = 0;
+static bool imuMountPromptPending = false, previousImuLink = false, imuTraceFailed = false;
+static bool imuRecordingErrorShown = false;
 RiderPosture riderPosture;
 static RiderPosture::Estimate riderPostureEstimate;
 static uint32_t lastPostureEstimateMs = 0;
@@ -145,11 +152,36 @@ static float pmCadence() {
   return powerMeter.cadence();
 }
 
+static ImuCalibrationMetadata imuMetadata(bool trace = false) {
+  ImuCalibrationMetadata metadata;
+  metadata.calibration=imuMount.result();
+  snprintf(metadata.address,sizeof(metadata.address),"%s",posture.address());
+  metadata.utcKnown=logger.utcReference(metadata.utcSeconds,metadata.utcMilliseconds);
+  metadata.utcTrusted=metadata.utcKnown && (logger.utcReferenceFromGps() || logger.utcReferenceFromNetwork());
+  metadata.trace=trace; metadata.traceSession=imuTraceSession;
+  return metadata;
+}
+
+static bool imuRecordingBlocked() {
+  return recorder.busy() || recorder.waiting() || recorder.recording() || imuLogger.busy();
+}
+
 static void armRecording() {
   if (recorder.recording() || recorder.waiting()) return;
+  if (imuMount.active() || imuCalibrationLogger.busy()) {
+    lcd.showImuMountError("Finish or cancel IMU calibration first.","请先完成或取消 IMU 标定。");
+    return;
+  }
   if (!recorder.requestStart()) return;
   imuComparison = ImuComparison{};
-  if (!imuLogger.start(esp_random())) AppLog.println("[IMU] could not start comparison recording");
+  recordingImuMetadata=imuMetadata();
+  imuRecordingErrorShown=false;
+  if (!imuLogger.start(esp_random(),recordingImuMetadata)) {
+    AppLog.println("[IMU] could not start comparison recording");
+    lcd.showImuMountError("IMU recording could not start; ride recording continues.","IMU 记录未启动，骑行记录继续。");
+  } else if (!recordingImuMetadata.calibration.valid) {
+    lcd.showImuMountError("IMU uncalibrated: recording native axes only.","IMU 未标定：仅记录原始轴数据。");
+  }
   win = Window();
   windWindowSamples = 0;
   lastLogMs = lastSampleMs = millis();
@@ -187,7 +219,9 @@ static void changeUsbStorageMode(bool enabled) {
   }
   if (!lcd.saveDashboardSettings()) return;
   imuLogger.requestStop();
-  if (imuLogger.busy()) {
+  imuCalibrationLogger.requestStop();
+  imuMount.cancel();
+  if (imuLogger.busy() || imuCalibrationLogger.busy()) {
     lcd.showUsbStorageError("IMU recording is finishing. Retry USB mode.");
     return;
   }
@@ -248,6 +282,7 @@ void setup() {
   lcd.begin();                       // 屏幕
   AppLog.printf("[IMU] QMI8658 %s addr=0x6B bus=GPIO11/10\n", boardImu.begin(Wire) ? "ready" : "unavailable");
   if (!imuLogger.begin()) AppLog.println("[IMU] comparison worker unavailable");
+  if (!imuCalibrationLogger.begin()) AppLog.println("[IMU] calibration trace worker unavailable");
 
   // 音频 + 保存的音量设置
   audio.begin();
@@ -302,6 +337,7 @@ void loop() {
   if (powerKey.takeShutdownRequest() && !shutdownPending) {
     shutdownPending = true;
     imuLogger.requestStop();
+    imuCalibrationLogger.requestStop();
     recorder.requestShutdown(now);
   }
   recorder.poll(now);
@@ -313,7 +349,7 @@ void loop() {
     if (!recorder.waiting()) lcd.showFitResult(recorderMessage);
   }
   if (recorder.readyToPowerOff()) {
-    if (imuLogger.busy()) {
+    if (imuLogger.busy() || imuCalibrationLogger.busy()) {
       lcd.tick();
       delay(1);
       return;
@@ -439,6 +475,68 @@ void loop() {
 
   boardImu.poll(millis());
   const uint32_t postureNow = millis();
+  const auto mountBoard=boardImu.sample(postureNow), mountWearable=posture.imuSample(postureNow);
+  const bool imuLink=posture.connected();
+  if (imuLink && !previousImuLink) imuMountPromptPending=true;
+  previousImuLink=imuLink;
+  const bool hadMountCalibration=imuMount.result().valid;
+  imuMount.update(postureNow,imuLink,mountBoard,mountWearable);
+  if (hadMountCalibration && !imuMount.result().valid) {
+    AppLog.println("[IMU] mounting invalidated: link/data changed; derived columns disabled");
+    lcd.showImuMountError("IMU calibration lost; raw recording continues. Recalibrate after stopping.",
+                         "IMU 标定已失效，原始记录继续。停止后重新标定。");
+  }
+  if (imuMountPromptPending && imuMount.stage()==ImuMountCalibration::Stage::Wearing &&
+      !imuRecordingBlocked() && !manualPairingActive && !bleManager.busy()) {
+    lcd.showImuMountSetup(); imuMountPromptPending=false;
+  }
+  const bool mountBlocked=imuRecordingBlocked() || imuCalibrationLogger.busy();
+  int mountAction; int8_t mountForwardAxis;
+  if (lcd.takeImuMountRequest(mountAction,mountForwardAxis)) {
+    if (mountAction==2) {
+      imuMount.cancel(); imuCalibrationLogger.requestStop(); imuMountPromptPending=false;
+    } else if (mountAction==0 && !mountBlocked) {
+      if (imuMount.begin(postureNow,mountForwardAxis)) {
+        imuTraceSession=esp_random();
+        if (!imuTraceSession) imuTraceSession=1;
+        imuCalibrationComparison=ImuComparison{};
+        lastImuTraceSequence=mountWearable.sequence;
+        imuTraceFailed=false;
+        if (!imuCalibrationLogger.start(imuTraceSession,imuMetadata(true))) {
+          imuMount.cancel();
+          lcd.showImuMountError("Calibration trace could not start.","标定原始片段无法记录。");
+        }
+      }
+    } else if (mountAction==1 && !imuRecordingBlocked() &&
+               !imuCalibrationLogger.busy() && !imuTraceFailed) {
+      uint32_t id=esp_random(); if (!id) id=1;
+      if (imuMount.confirm(postureNow,id))
+        AppLog.printf("[IMU] mounting confirmed id=%lu trace=%08lX\n",(unsigned long)id,(unsigned long)imuTraceSession);
+    } else {
+      lcd.showImuMountError("Stop recording or wait for trace sync first.","请先停止记录或等待标定片段同步。");
+    }
+  }
+  if (imuCalibrationLogger.accepting() && mountWearable.valid &&
+      mountWearable.sequence!=lastImuTraceSequence) {
+    lastImuTraceSequence=mountWearable.sequence;
+    auto trace=imuCalibrationComparison.capture(postureNow,mountBoard,mountWearable,
+        posture.rollDeg(),posture.pitchDeg(),posture.yawDeg());
+    ImuComparison::applyCalibration(trace,imuMount.result(),imuMount.stage());
+    if (!imuCalibrationLogger.log(trace)) imuTraceFailed=true;
+  }
+  if (imuCalibrationLogger.failed() || imuCalibrationLogger.dropped()) imuTraceFailed=true;
+  if (imuTraceFailed && imuMount.active()) {
+    imuMount.cancel();
+    lcd.showImuMountError("Calibration trace write failed or dropped data; retry.","标定片段写入失败或丢样，请重试。");
+  }
+  if (!imuMount.active() || imuMount.stage()==ImuMountCalibration::Stage::Confirm)
+    imuCalibrationLogger.requestStop();
+  lcd.updateImuMount(imuMount,imuRecordingBlocked() ||
+      (imuCalibrationLogger.busy() && (!imuMount.active() || imuMount.stage()==ImuMountCalibration::Stage::Confirm)));
+  if (imuLogger.failed() && !imuRecordingErrorShown) {
+    imuRecordingErrorShown=true;
+    lcd.showImuMountError("IMU SD/metadata write failed; ride recording is separate.","IMU 数据或元数据写入失败；骑行记录独立。");
+  }
   riderPosture.setPlacement(lcd.posturePlacement());
   bool calibrateLean = false;
   if (lcd.takePostureCalibrationRequest(calibrateLean)) {
@@ -456,9 +554,12 @@ void loop() {
   if (!recorder.waiting() && !recorder.recording()) imuLogger.requestStop();
   if (imuLogger.accepting() && uint32_t(millis() - lastImuRecordMs) >= 100) {
     lastImuRecordMs = millis();
-    const auto record = imuComparison.capture(lastImuRecordMs,
+    auto record = imuComparison.capture(lastImuRecordMs,
         boardImu.sample(lastImuRecordMs), posture.imuSample(lastImuRecordMs),
         posture.rollDeg(), posture.pitchDeg(), posture.yawDeg());
+    auto calibration=recordingImuMetadata.calibration;
+    calibration.valid=calibration.valid && imuMount.result().valid && calibration.id==imuMount.result().id;
+    ImuComparison::applyCalibration(record,calibration,imuMount.stage());
     imuLogger.log(record);
   }
 

@@ -179,6 +179,59 @@ and device credential encryption are not provided by ignore rules or encoding.
 
 ### Dual IMU Recording And Comparison
 
+#### Guided Forearm Mounting Calibration
+
+The BLE subscription alone is not data readiness. The new wizard waits for
+fresh board and wearable acceleration/gyro, shows Type-C toward elbow and
+LOGO/buttons toward the back of the hand, and requires explicit confirmation
+of wearing and the signed board-native forward axis. With the bicycle fixed,
+use palm-down stillness, two thumb-up roll/return cycles, two lift/return
+cycles, then a still right-hood grip and explicit APPLY. Horizontal circles
+are not a sufficient 3D mounting calibration. See
+[the design](../docs/imu-forearm-calibration.md).
+
+`imu_mount_calibration` tests the production C++11 state machine: known
+mounting rotations, incorrect actions, board motion, duplicate/stale data,
+insufficient output rate, timeout, reset and timestamp wrap. `imu_comparison`
+independently parses the saved JSON/CSV, checks immutable matrices/biases and
+raw preservation, and rejects malformed calibration columns. `ui_sensors`
+checks the real LVGL bilingual wizard instructions, controls and glyphs.
+
+Run the three scenarios with the existing pytest runner:
+
+```sh
+python -m pytest -q test/host/test_regression.py \
+  -k 'imu_mount_calibration or imu_comparison or ui_sensors' \
+  --junitxml=test/results/imu-calibration/focused.xml
+```
+
+Keep `ui_language` in broader validation; a sensor-only pass is not a passing
+dashboard test. macOS uses native write/fsync fault injection for the IMU
+logger instead of the Linux GNU linker `--wrap` switches. Production build
+remains `pio run -e esp32s3`; an x86 Python running on Apple Silicon with an
+installed ARM64 PlatformIO compiler may require
+`PLATFORMIO_SYSTEM_TYPE=darwin_arm64 pio run -e esp32s3`.
+
+Every IMU CSV has a same-basename JSON sidecar with the calibration snapshot,
+device identity, UTC anchor and limitations. Appended columns are calibration
+ID/validity/stage and 12 reference-axis vectors. Native columns are unchanged;
+invalid/unpaired reference vectors are NaN. The comparison validator accepts
+both exact legacy and extended schemas. Existing BVH/web tools still use raw
+columns, not an automatic mounting-matrix import; retain the JSON alongside
+the CSV (available through SD/USB, not the current CSV/FIT-only HTTP browser).
+
+An independent calibration trace records new wearable samples and phases;
+its initial sidecar is unconfirmed. Normal recordings save the applied result
+in their own sidecars. Recording and calibration cannot overlap. Dropped trace
+data or SD/metadata failure blocks applying the calibration. Link/data loss
+invalidates derived recording columns without changing the ride CSV/FIT.
+The legacy upright/lean classifier below remains independent.
+
+Physical acceptance requires actual WT output of at least 20 Hz, correct
+board-axis selection, one successful prescribed gesture sequence and one
+rejected incorrect sequence. Native tests do not certify strap slip, RF
+latency, touch usability, real SD durability or body-pose accuracy.
+
 #### Online Devices And Wear Location
 
 ONLINE DEVICES shows six fixed rows without scrolling: power, heart rate,
