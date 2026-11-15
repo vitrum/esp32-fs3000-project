@@ -169,8 +169,7 @@
   function estimateCda() {
     const watts = average(state.samples.slice(-3));
     if (!state.windValid || !source() || watts <= 0 || state.wind < 3) return null;
-    const aeroPower = watts * 0.975 - 85 * 9.80665 * 0.004 * state.wind;
-    return aeroPower > 0 ? aeroPower / (0.5 * 1.225 * state.wind ** 3) : null;
+    return globalThis.aeroProbeEstimate.calculate(watts,state.wind).cda;
   }
   function zoneFor(cda) {
     if (cda === null) return null;

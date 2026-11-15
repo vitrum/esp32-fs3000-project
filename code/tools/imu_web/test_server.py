@@ -2,13 +2,18 @@ import csv
 from http.client import HTTPConnection
 import io
 import json
+import math
 import threading
 import unittest
+import struct
+from datetime import datetime, timezone
 
 import numpy as np
 
 from tools.imu_web.server import ImuServer, analyze, render_frame, rotation
 from imu_to_bvh_hdf5 import REQUIRED_COLUMNS
+from tools.imu_web.activity import decode_activity
+from tools.imu_web.mount_analysis import diagnose_mount
 
 
 def fixture(count=11):
@@ -30,6 +35,47 @@ def encode(rows):
     writer.writeheader()
     writer.writerows(rows)
     return output.getvalue().encode()
+
+
+def fit_fixture(records, wind_unit="m/s", developer=True):
+    """Small external FIT producer for controlled parser inputs, not a decoder."""
+    data = bytearray()
+    def definition(local, global_number, fields, extra=()):
+        data.extend(struct.pack("<BBBH", 0x40 | local | (0x20 if extra else 0), 0, 0, global_number))
+        data.append(len(fields))
+        for field in fields:
+            data.extend(bytes(field))
+        if extra:
+            data.append(len(extra))
+            for field in extra:
+                data.extend(bytes(field))
+    if developer:
+        definition(0, 207, [(1, 16, 0x0D), (3, 1, 2)])
+        data.extend(b"\0AeroProbeFIT\0\0\0\1\0")
+        definition(1, 206, [(0, 1, 2), (1, 1, 2), (2, 1, 2), (3, 24, 7), (8, 8, 7)])
+        for number, name, unit, base_type in ((0, "airspeed", wind_unit, 0x88), (1, "power_source", "", 2)):
+            data.extend(bytes((1, 0, number, base_type)))
+            data.extend(name.encode().ljust(24, b"\0"))
+            data.extend(unit.encode().ljust(8, b"\0"))
+    definition(2, 20, [(253, 4, 0x86), (7, 2, 0x84), (4, 1, 2), (6, 2, 0x84)],
+               [(0, 4, 0), (1, 1, 0)] if developer else ())
+    epoch = int(datetime(1989, 12, 31, tzinfo=timezone.utc).timestamp())
+    for unix_seconds, power, cadence, wind, source in records:
+        data.extend(struct.pack("<BIHBH", 2, unix_seconds - epoch,
+                                0xFFFF if power is None else power,
+                                0xFF if cadence is None else cadence, 10000))
+        if developer:
+            data.extend(struct.pack("<fB", float("nan") if wind is None else wind, source))
+    def crc(raw):
+        result = 0
+        for byte in raw:
+            result ^= byte
+            for _ in range(8):
+                result = (result >> 1) ^ 0xA001 if result & 1 else result >> 1
+        return result
+    header = struct.pack("<BBHI4s", 14, 0x20, 2100, len(data), b".FIT")
+    payload = header + struct.pack("<H", crc(header)) + data
+    return payload + struct.pack("<H", crc(payload))
 
 
 class AnalysisTests(unittest.TestCase):
@@ -103,6 +149,88 @@ class AnalysisTests(unittest.TestCase):
         result = analyze(encode(rows))
         self.assertAlmostEqual(result["frames"][-1]["board_heading_change_deg"], 90, places=6)
 
+    def test_vertical_native_x_yaw_is_not_counted_as_forearm_roll(self):
+        rows = fixture()
+        for row in rows:
+            row.update(board_az_g="-1", board_gz_dps="-90", wt_ax_g="-1",
+                       wt_az_g="0", wt_gx_dps="-90", wt_gz_dps="0")
+        data = analyze(encode(rows))
+        np.testing.assert_allclose(data["frames"][-1]["board"], data["frames"][-1]["wt"], atol=1e-10)
+        self.assertAlmostEqual(data["frames"][-1]["relative_angle_deg"], 0, places=5)
+        self.assertEqual(data["frames"][-1]["values"]["wt_gx_dps"], -90)
+
+    def test_mount_analysis_preserves_data_and_requires_quiet_hood_reference(self):
+        rows = fixture(30)
+        for index, row in enumerate(rows):
+            row.update(wt_ax_g="-1", wt_az_g="0", wt_gz_dps="0",
+                       wt_gx_dps="0" if index < 10 else "-45",
+                       board_gz_dps="0" if index < 10 else "45")
+        data = analyze(encode(rows))
+        original = json.dumps(data["frames"])
+        config = {"mode": "hood", "shoulder": [-27, -18, 32], "grip": [4, -19, 1.5],
+                  "neutral_direction": [1, 0, 0], "forearm_and_palm": 30, "upper_arm": 31.62}
+        result = diagnose_mount(data, config)
+        self.assertEqual(json.dumps(data["frames"]), original)
+        self.assertEqual(result["baseline"]["samples"], 30)
+        candidate = result["candidates"][0]
+        alignment, native = np.array(candidate["alignment"]), np.array(candidate["native_from_arm"])
+        np.testing.assert_allclose(alignment @ [0, 0, 1], [0, 0, 1], atol=1e-10)
+        self.assertAlmostEqual(np.linalg.det(native), 1)
+        reference = np.array(candidate["sensor_reference"])
+        first = alignment @ np.array(data["frames"][0]["wt"]) @ reference @ native
+        last = alignment @ np.array(data["frames"][-1]["wt"]) @ reference @ native
+        np.testing.assert_allclose(last, np.array(data["frames"][-1]["board"]) @ first, atol=1e-9)
+        with self.assertRaisesRegex(ValueError, "supported"):
+            diagnose_mount(data, {**config, "mode": "free"})
+        with self.assertRaisesRegex(ValueError, "quiet"):
+            diagnose_mount(analyze(encode(fixture(10))), config)
+        quiet_rows = fixture(10)
+        for row in quiet_rows:
+            row.update(board_gz_dps="0", wt_gz_dps="0", wt_ax_g=str(-math.sin(math.radians(75))),
+                       wt_ay_g="0", wt_az_g=str(math.cos(math.radians(75))))
+        equal_ratios = {**config, "shoulder": config["grip"], "upper_arm": 30}
+        ranked = diagnose_mount(analyze(encode(quiet_rows)), equal_ratios)
+        best = ranked["candidates"][0]
+        self.assertLess(best["reference_direction_error_deg"], 1e-6)
+        self.assertAlmostEqual(abs(best["native_from_arm"][1][0]), 1)
+        for row in quiet_rows[1:]:
+            row.update(board_ax_g=str(-math.sin(math.radians(45))),
+                       board_az_g=str(math.cos(math.radians(45))))
+        tilting_board = analyze(encode(quiet_rows))
+        self.assertGreater(abs(tilting_board["frames"][-1]["board"][2][0]), 0.1)
+        grounded = diagnose_mount(tilting_board, config)
+        self.assertEqual(grounded["baseline"]["outliers"], 0)
+
+
+class FitTests(unittest.TestCase):
+    def test_utc_units_missing_source_and_valid_zero_are_preserved(self):
+        start = 1792713540
+        data = decode_activity(fit_fixture([
+            (start, 0, 0, 0, 1), (start + 1, 300, 90, 36, 1),
+            (start + 2, None, None, None, 0),
+        ], wind_unit="km/h"))
+        self.assertEqual(data["records"][0]["power_w"], 0)
+        self.assertEqual(data["records"][0]["cadence_rpm"], 0)
+        self.assertEqual(data["records"][0]["wind_mps"], 0)
+        self.assertEqual(data["records"][0]["utc_ms"], start * 1000)
+        self.assertAlmostEqual(data["records"][1]["wind_mps"], 10)
+        self.assertIsNone(data["records"][2]["power_w"])
+        self.assertIsNone(data["records"][2]["wind_mps"])
+        generic = decode_activity(fit_fixture([(start, 300, 90, 10, 1)], developer=False))
+        self.assertEqual(generic["records"][0]["speed_mps"], 10)
+        self.assertIsNone(generic["records"][0]["wind_mps"])
+        self.assertTrue(generic["summary"]["warnings"])
+
+    def test_crc_truncation_unknown_units_and_rewound_time(self):
+        valid = fit_fixture([(1792713540, 300, 90, 10, 1)])
+        for invalid in (b"not a FIT", valid[:-1], valid[:-1] + bytes([valid[-1] ^ 1])):
+            with self.assertRaisesRegex(ValueError, "FIT"):
+                decode_activity(invalid)
+        unknown = decode_activity(fit_fixture([(1792713540, 300, 90, 10, 1)], wind_unit="knots"))
+        self.assertIsNone(unknown["records"][0]["wind_mps"])
+        with self.assertRaisesRegex(ValueError, "backwards"):
+            decode_activity(fit_fixture([(1792713541, 300, 90, 10, 1), (1792713540, 300, 90, 10, 1)]))
+
 
 class HttpTests(unittest.TestCase):
     @classmethod
@@ -158,7 +286,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request("GET", f"/api/playback?id={dataset_id}")[0], 404)
 
     def test_local_three_modules_and_safe_static_routing(self):
-        for path in ("/viewer.js", "/scene.js", "/bike_model.js", "/test_scene.js",
+        for path in ("/viewer.js", "/scene.js", "/bike_model.js", "/activity.js", "/aero.js", "/test_scene.js",
                      "/vendor/three.module.min.js", "/vendor/three.core.min.js", "/vendor/OrbitControls.js"):
             status, mime, body = self.request("GET", path)
             self.assertEqual(status, 200, path)
@@ -166,6 +294,18 @@ class HttpTests(unittest.TestCase):
             self.assertGreater(len(body), 100)
         for path in ("/server.py", "/vendor/../server.py", "/vendor/LICENSE"):
             self.assertEqual(self.request("GET", path)[0], 404)
+
+    def test_fit_upload_is_independent_and_failed_upload_preserves_activity(self):
+        status, _, raw = self.request("POST", "/api/fit-upload", fit_fixture([(1792713540, 300, 90, 10, 1)]))
+        self.assertEqual(status, 200, raw)
+        activity_id = json.loads(raw)["id"]
+        self.request("POST", "/api/upload", encode(fixture()))
+        status, _, raw = self.request("GET", f"/api/activity?id={activity_id}")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(raw)["records"][0]["power_w"], 300)
+        self.assertEqual(self.request("POST", "/api/fit-upload", b"bad")[0], 400)
+        self.assertEqual(self.request("GET", f"/api/activity?id={activity_id}")[0], 200)
+        self.assertEqual(self.request("POST", "/api/mount?id=missing", b"{}")[0], 404)
 
 
 if __name__ == "__main__":

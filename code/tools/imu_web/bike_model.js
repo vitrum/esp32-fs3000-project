@@ -209,7 +209,7 @@ export function updateRiderArm(model,elbow) {
   const ratio=elbow.distanceTo(shoulder)/model.dimensions.upperArm;
   const mismatch=ratio<0.7 || ratio>1.15;
   upperArm.material.color.setHex(mismatch ? 0xcd6464 : skin);
-  return mismatch ? "右上臂连接超出身材参考比例：检查腕部轴映射和握持点；此连接不是实测关节。" : "";
+  return mismatch ? "手变头/身材参考约束不一致：可能离把、佩戴参考或陀螺仪漂移；不是坐标错误的单独证据。" : "";
 }
 
 export function createBikeModel(barCenter,makeLabel) {

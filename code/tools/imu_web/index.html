@@ -2,103 +2,150 @@
 <html lang="zh-CN">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>双 IMU · Three.js 三维回放</title>
+<title>IMU Ride Lab · 三维骑行分析</title>
 <style>
-body{font:16px system-ui;background:#eef2f6;color:#17283d;max-width:1200px;margin:24px auto;padding:0 16px}
-section{background:white;border-radius:12px;padding:18px;margin:14px 0}
-button,input,select{font:inherit;margin:5px;padding:6px}button{cursor:pointer}
-#viewport{height:560px;position:relative;background:#edf3fa;border-radius:10px;overflow:hidden}
+*{box-sizing:border-box}body{margin:0;font:14px system-ui;color:#183348;background:#edf3fa}
+button,input,select{font:inherit}button{cursor:pointer;border:1px solid #cfdae5;border-radius:9px;background:#fff;color:#244159;padding:8px 12px}
+button:hover{background:#edf5fc}button:disabled{cursor:default;opacity:.45}.primary{background:#087d9d;color:white;border-color:#087d9d}.primary:hover{background:#086982}
+input,select{border:1px solid #cbd8e5;border-radius:7px;padding:7px;background:#fff;max-width:100%}
+input[type=number]{width:92px}input[type=range]{padding:0}input[type=file]{width:100%;font-size:12px}
+a{color:#087d9d}p{margin:8px 0;line-height:1.55}summary{cursor:pointer;font-weight:650;list-style-position:inside}
+#stage{position:relative;width:100%;height:100dvh;min-height:620px;overflow:hidden}
+#stage:fullscreen{height:100vh;min-height:0}#viewport{position:absolute;inset:0;background:#edf3fa}
 #viewport canvas{display:block;width:100%;height:100%;touch-action:none}
-#stage:fullscreen{width:100vw;height:100vh;background:white;display:flex;flex-direction:column}
-#stage:fullscreen #viewport{flex:1;height:auto;min-height:0;border-radius:0}
-.scene-toolbar{background:#f4f7fb;padding:5px;display:flex;flex-wrap:wrap;align-items:center}
-#view-warning,#fit-warning{color:#ae1634;margin:4px 10px;font-size:14px}
-#timeline{width:98%}#status{white-space:pre-wrap}#error{color:#ae1634;white-space:pre-wrap}
-label{display:inline-block}.note{color:#52657b;font-size:14px}pre{white-space:pre-wrap}
-.legend{display:flex;flex-wrap:wrap;gap:14px;margin:12px 0}.board{color:#087d9d}.arm{color:#b76020}
-input[type=number]{width:76px}#pose{font-variant-numeric:tabular-nums}
-@media(max-width:600px){#viewport{height:420px}section{padding:10px}}
+.glass{background:rgba(255,255,255,.94);border:1px solid rgba(204,220,235,.85);box-shadow:0 10px 32px #25435c16;backdrop-filter:blur(14px)}
+.scene-header{position:absolute;top:18px;left:22px;right:22px;display:flex;justify-content:space-between;align-items:center;pointer-events:none;gap:12px}
+.scene-header>*{pointer-events:auto}.brand{font-size:21px;font-weight:750}.brand small{display:block;font-size:12px;color:#62758b;font-weight:450}
+.header-actions{display:flex;gap:6px}#panel-toggle{background:#183348;color:white;border-color:#183348}
+#config-panel{position:absolute;top:76px;right:18px;bottom:126px;width:350px;border-radius:18px;overflow:auto;padding:16px;z-index:5}
+#config-panel[hidden]{display:none}.panel-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.panel-title h2{font-size:17px;margin:0}.panel-close{border:0;padding:2px 8px;font-size:22px;background:transparent}
+.panel-section{border-top:1px solid #e0e8ef;padding:12px 0}.panel-section:first-of-type{border-top:0}
+.field{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0}.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.field-grid label{display:flex;flex-direction:column;gap:5px}.field-grid input,.field-grid select{width:100%}
+.note{font-size:12px;color:#617589}.block-button{width:100%;margin-top:7px}#status,#fit-status{font-size:12px;white-space:pre-wrap}
+#error{color:#a62339;white-space:pre-wrap}#scene-error{position:absolute;left:22px;bottom:172px;max-width:calc(100% - 410px);color:#9f2237;background:#fff0f0;padding:9px;border-radius:9px;z-index:6}
+#scene-error:empty,#fit-warning:empty,#view-warning:empty{display:none}
+#telemetry{position:absolute;top:86px;left:22px;width:min(670px,calc(100% - 410px));pointer-events:none}
+.telemetry-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.metric{border-radius:13px;padding:13px}
+.metric-label{font-size:12px;color:#637c92}.metric-value{font-size:29px;font-weight:720;font-variant-numeric:tabular-nums;line-height:1.5}.metric-unit{font-size:12px;font-weight:450;margin-left:4px;color:#688093}
+.metric.accent{border-color:#a7d6dd;background:rgba(231,248,249,.95)}
+#telemetry-note{font-size:11px;color:#527186;margin:8px 3px;line-height:1.5}
+.playback-dock{position:absolute;left:18px;right:18px;bottom:16px;border-radius:16px;padding:12px 16px;z-index:7}
+.dock-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.dock-top label{display:flex;align-items:center;gap:5px}.dock-top input{margin:0}
+#clock{font-size:12px;font-variant-numeric:tabular-nums;margin-left:auto}.timeline-row{display:flex;align-items:center;gap:10px;margin-top:8px}#timeline{width:100%}
+#pose{position:absolute;left:22px;bottom:130px;max-width:calc(100% - 410px);font-size:12px;color:#486b85;margin:0}
+#fit-warning,#view-warning{color:#9b620a;font-size:12px;padding:7px 10px;background:#fff8e8;border-radius:9px}
+#fit-warning{position:absolute;left:22px;bottom:202px;max-width:calc(100% - 410px)}
+#view-warning{position:absolute;left:22px;top:210px}
+#mount-status,#mount-report{font-size:12px;line-height:1.6}#mount-report{white-space:pre-wrap}
+#candidate,#outlier-select{width:100%;margin-top:7px}.actions{display:flex;gap:6px;margin:8px 0}.actions button{flex:1}
+pre{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto}
+@media(max-width:950px){.brand{font-size:17px}.metric{padding:9px}.metric-value{font-size:23px}.telemetry-cards{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:650px){
+ #stage{min-height:560px}.scene-header{left:12px;right:12px;top:12px}.brand small{font-size:10px}.brand{font-size:16px}
+ #telemetry{left:12px;top:72px;width:calc(100% - 24px)}.telemetry-cards{grid-template-columns:repeat(4,1fr);gap:5px}
+ .metric{padding:7px}.metric-value{font-size:20px}.metric-unit{font-size:10px;margin-left:2px}
+ #config-panel{left:12px;right:12px;top:65px;bottom:160px;width:auto}
+ .playback-dock{left:10px;right:10px;bottom:10px;padding:9px}.dock-top{gap:5px}.dock-top button{padding:6px 8px}
+ #pose{left:12px;bottom:149px;max-width:calc(100% - 24px)}
+ #fit-warning,#scene-error{left:12px;bottom:185px;max-width:calc(100% - 24px)}
+ #clock{margin-left:0;font-size:11px}#view-warning{left:12px;top:185px}
+}
 </style>
-<h1>双 IMU · Three.js 三维时间轴回放</h1>
-<p>2021 Allez Sprint Comp · 49 码参考 · 曲柄 170 mm / 把立 110 mm · 弯把 38 cm · 1 单位 = 1 cm</p>
-<section>
-  <input id="file" type="file" accept=".csv" aria-label="IMU CSV 文件"><button id="upload" disabled>上传并分析</button>
-  <p id="status" role="status">正在加载本地 Three.js…</p><p id="error" role="alert"></p>
-  <p class="note">日志没有可验证的磁校准航向。固定黄色箭头是水平参考磁北，不是实测正北；
-  初始航向可人工设置，后续转向来自陀螺仪，有漂移。38 cm 把宽、8 cm 码表前伸采用你的尺寸，
-  其余结构、手臂支点和位置均为模型估计，不是 IMU 定位或人体关节角。</p>
-</section>
-<section>
-  <button id="play" disabled>播放</button><button id="reset" disabled>回到开始</button>
-  <label>速度 <select id="speed"><option value=".25">0.25×</option><option value=".5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
-  <span id="clock">0.000 s</span><br><input id="timeline" aria-label="时间轴" type="range" min="0" max="0" value="0" disabled>
-  <div>
-    <label>仰角 <input id="elev" type="range" min="5" max="85" value="35"></label>
-    <label>方位角 <input id="azim" type="range" min="-180" max="180" value="-65"></label>
-  </div>
-  <div>
-    <label>初始参考航向 <input id="north-heading" type="number" min="0" max="360" value="0">°（0 北，90 东）</label>
-    <label>右手约束 <select id="arm-mode">
-      <option value="hood">支撑右手变头：手掌支点，肘部活动</option>
-      <option value="free">离把活动：肘部支点，腕部 IMU 大范围移动</option>
-    </select></label>
-  </div>
-  <div>右手初始握持点修正（车身坐标 cm；X 前，Y 左，Z 上）：
-    <label>X <input id="x" type="number" min="-360" max="360" value="0"></label>
-    <label>Y <input id="y" type="number" min="-360" max="360" value="0"></label>
-    <label>Z 上 <input id="z" type="number" min="-360" max="360" value="0"></label>
-  </div>
-  <div>腕部显示轴方向（模型轴对应归零后的回放参考轴；保持右手系）：
-    <label>模型 X <select id="wrist-x"><option>+X</option><option>-X</option><option>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
-    <label>模型 Y <select id="wrist-y"><option>+X</option><option>-X</option><option selected>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
-    <label>模型 Z <select id="wrist-z"><option>+X</option><option>-X</option><option>+Y</option><option>-Y</option><option selected>+Z</option><option>-Z</option></select></label>
-    <button id="wrist-reset">恢复 XYZ</button>
-  </div>
-  <div>假人尺寸：
-    <label>身高 <input id="rider-height" type="number" min="130" max="220" step="1" value="170">cm</label>
-    <label>胫骨（膝到踝）<input id="rider-tibia" type="number" min="25" max="60" step=".5" value="40">cm</label>
-    <p id="rider-summary" class="note"></p>
-  </div>
-  <p class="note">车架依据 <a href="https://www.specialized.com/us/en/allez-sprint-comp-disc/p/184442" target="_blank" rel="noreferrer">官方 2021 Comp Disc 49 码几何</a>，
-  按指定尺寸覆盖曲柄和把立。其余零件形状、坐垫高度、人体比例和左臂/腿姿态为估计；曲柄静态摆放，不虚构踩踏数据。
-  身高不是坐姿包围盒高度。右前臂保留 26 cm 参考长度，轴映射仅调整显示装配方向，不是原始 IMU 标定。</p>
-  <div class="legend">
-    <strong class="board">码表：8 × 5 × 2 cm（估计）</strong>
-    <strong class="arm">前臂：26 × 8 × 6 cm（估计）</strong>
-    <span>长 × 宽 × 厚；另绘腕带、腕部 IMU 和手掌</span>
-  </div>
-  <div id="stage">
-    <div class="scene-toolbar">
-      <button id="camera-reset">整车视角</button>
-      <button id="cockpit-view">座舱特写</button>
-      <button id="zoom-in" aria-label="放大三维场景">放大 +</button>
-      <button id="zoom-out" aria-label="缩小三维场景">缩小 −</button>
-      <button id="fullscreen">全屏</button>
-      <label><input id="hide-text" type="checkbox">隐藏 3D 文字（保留箭头）</label>
+<main id="stage">
+  <div id="viewport" role="img" aria-label="Three.js 整车、假人和双 IMU 姿态，带同步 FIT 数据"></div>
+  <header class="scene-header">
+    <div class="brand">IMU Ride Lab<small>2021 Allez Sprint · 49 / 170 mm 曲柄 / 110 mm 把立</small></div>
+    <div class="header-actions"><button id="fullscreen">全屏</button><button id="panel-toggle" aria-controls="config-panel" aria-expanded="true">配置与数据</button></div>
+  </header>
+  <section id="telemetry" aria-label="时间同步骑行数据">
+    <div class="telemetry-cards">
+      <div class="metric glass"><div class="metric-label">功率</div><span id="hud-power" class="metric-value">--</span><span class="metric-unit">W</span></div>
+      <div class="metric glass"><div class="metric-label">踏频</div><span id="hud-cadence" class="metric-value">--</span><span class="metric-unit">rpm</span></div>
+      <div class="metric glass"><div class="metric-label">视风</div><span id="hud-wind" class="metric-value">--</span><span class="metric-unit">km/h</span></div>
+      <div class="metric glass accent"><div class="metric-label">模拟 CdA</div><span id="hud-cda" class="metric-value">--</span><span class="metric-unit">m²</span></div>
     </div>
-    <p id="view-warning" role="alert"></p>
-    <p id="fit-warning" role="status"></p>
-    <div id="viewport" role="img" aria-label="Three.js 整车与假人、码表和前臂三维姿态，带设备三轴箭头和前进方向"></div>
-  </div>
+    <p id="telemetry-note">等待 FIT。功率、踏频、视风和 CdA 随 IMU 时间轴同步显示。</p>
+  </section>
+  <aside id="config-panel" class="glass" aria-label="骑行分析配置">
+    <div class="panel-title"><h2>数据与场景配置</h2><button class="panel-close" id="panel-close" aria-label="收起配置">×</button></div>
+    <details class="panel-section" open><summary>01 · 导入与时间对齐</summary>
+      <p class="note">CSV 为双 IMU 日志；FIT 为骑行活动。数据仅在本机处理。</p>
+      <input id="file" type="file" accept=".csv" aria-label="IMU CSV 文件"><button id="upload" class="primary block-button" disabled>上传并分析 IMU</button>
+      <p id="status" role="status">正在加载本地 Three.js…</p>
+      <input id="fit-file" type="file" accept=".fit" aria-label="骑行 FIT 文件"><button id="fit-upload" class="block-button">载入 FIT 活动</button>
+      <p id="fit-status" role="status">未载入 FIT</p>
+      <label class="field">FIT 对齐偏移（秒）<input id="fit-offset" type="number" min="-86400" max="86400" step=".1" value="0"></label>
+      <p class="note">起点近似对齐：CSV 首样本对应 FIT 首条 record + 此偏移。正数表示 CSV 起点更晚。CSV 无 UTC 锚点，不能自动证明同步。缺失或超过 2 秒未更新的数据不补造。</p>
+      <p id="error" role="alert"></p>
+    </details>
+    <details class="panel-section" open><summary>02 · 腕带佩戴诊断</summary>
+      <p><strong>WT9011DCL-BT50 · 右前臂远端</strong></p>
+      <p class="note">官方腕带；LOGO 与手背同侧，Type-C 朝向手肘。先找低运动参考，采样分析超限，再由你确认固定旋转候选；不删除异常动作、不缩短前臂。</p>
+      <label class="field"><span>自动寻找低运动参考</span><input id="auto-reference" type="checkbox" checked></label>
+      <label class="field">校准时间（秒）<input id="reference-time" type="number" min="0" step=".1" value="0"></label>
+      <div class="actions"><button id="reference-current">使用当前时间</button><button id="diagnose" disabled>分析佩戴候选</button></div>
+      <p id="mount-status">请载入 IMU，然后确认所选静止段确实握住右手变头。</p>
+      <select id="candidate" aria-label="佩戴候选" disabled></select>
+      <div class="actions"><button id="apply-mount" disabled>确认应用候选</button><button id="clear-mount">撤销校准</button></div>
+      <p id="mount-report"></p>
+      <select id="outlier-select" aria-label="超限采样时间" disabled></select>
+      <details><summary>采样原始数据与分析</summary><pre id="mount-detail"></pre></details>
+      <p class="note">候选不是厂商原生 XYZ 认证，绕前臂长轴的旋转仍可能不唯一。超限也可能来自离把、身材估计或航向漂移。</p>
+    </details>
+    <details class="panel-section"><summary>03 · 安装与人体参考</summary>
+      <label class="field">初始参考航向（°）<input id="north-heading" type="number" min="0" max="360" value="0"></label>
+      <p class="note">0 北、90 东。参考北未磁校准；后续陀螺仪转向有漂移。</p>
+      <label class="field">右手约束<select id="arm-mode"><option value="hood">支撑右手变头</option><option value="free">离把：肘部支点</option></select></label>
+      <p class="note">握持点修正，cm：X 前 / Y 左 / Z 上</p>
+      <div class="field-grid"><label>X<input id="x" type="number" min="-360" max="360" value="0"></label><label>Y<input id="y" type="number" min="-360" max="360" value="0"></label><label>Z<input id="z" type="number" min="-360" max="360" value="0"></label></div>
+      <div class="field-grid"><label>身高（cm）<input id="rider-height" type="number" min="130" max="220" value="170"></label><label>胫骨膝到踝（cm）<input id="rider-tibia" type="number" min="25" max="60" step=".5" value="40"></label></div>
+      <p id="rider-summary" class="note"></p>
+      <p class="note">手动额外显示轴调整（保持右手系；应用推荐会恢复 XYZ）：</p>
+      <div class="field-grid">
+        <label>模型 X<select id="wrist-x"><option>+X</option><option>-X</option><option>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
+        <label>模型 Y<select id="wrist-y"><option>+X</option><option>-X</option><option selected>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
+        <label>模型 Z<select id="wrist-z"><option>+X</option><option>-X</option><option>+Y</option><option>-Y</option><option selected>+Z</option><option>-Z</option></select></label>
+      </div><button id="wrist-reset" class="block-button">恢复 XYZ</button>
+    </details>
+    <details class="panel-section"><summary>04 · 模拟 CdA 参数</summary>
+      <div class="field-grid"><label>车手 + 车质量（kg）<input id="aero-mass" type="number" min="30" max="250" value="85"></label><label>滚阻 Crr<input id="aero-crr" type="number" min="0" max=".05" step=".001" value=".004"></label><label>空气密度（kg/m³）<input id="aero-rho" type="number" min=".5" max="1.6" step=".001" value="1.225"></label><label>传动效率<input id="aero-efficiency" type="number" min=".5" max="1" step=".001" value=".975"></label></div>
+      <p class="note">复用项目模拟器：三秒有效功率均值 × 效率，减滚阻后除以 ½ρv³。视风需 ≥3 m/s。假定平路、稳速、静风且视风近似地速；无视风字段不拿 GPS 速度替代。CdA 是气动阻力面积，不是无量纲 Cd。</p>
+    </details>
+    <details class="panel-section"><summary>05 · 视角与分析下载</summary>
+      <label class="field">仰角<input id="elev" type="range" min="5" max="85" value="22"></label>
+      <label class="field">方位角<input id="azim" type="range" min="-180" max="180" value="-80"></label>
+      <p class="note">1 单位 = 1 cm；38 cm 弯把、码表前伸 8 cm，前臂参考 26 cm。整车仅跟随主板水平航向，双轮维持参考地面；主板 IMU 固定在码表参考位置，其完整姿态不用于车架俯仰、侧倾或高度定位。设备长方块仍显示姿态变化。此模型不是实测车架姿态、惯性定位或 bike fit。</p>
+      <p><a href="https://www.specialized.com/us/en/allez-sprint-comp-disc/p/184442" target="_blank" rel="noreferrer">2021 Comp Disc 49 官方几何</a></p>
+      <a id="download" hidden download="imu-analysis.json">下载 IMU 全量分析 JSON</a><br>
+      <a id="fit-download" hidden download="fit-analysis.json">下载 FIT 解析 JSON</a>
+      <pre id="summary"></pre>
+    </details>
+  </aside>
+  <p id="scene-error" role="alert"></p><p id="fit-warning" role="status"></p><p id="view-warning" role="alert"></p>
   <p id="pose">安装示意 · 等待 IMU 数据</p>
-  <p class="note">黄色 = 固定水平参考磁北；青色 = 随码表转向的车头方向；红 / 绿 / 蓝 = 显示 X / Y / Z（腕部采用所选映射）。
-  世界坐标 X 北、Y 西、Z 上，地面网格每格 10 cm。车把、手变头、码表架和码表共同转向；
-  前臂根据相对姿态围绕手掌或肘部移动，不再固定自身中心。腕带 IMU 位于前臂远端。
-  整车和假人随座舱基准转动，仅是姿态背景，不能视为车架实测姿态、轨迹或自行车适配建议。
-  握持/离把需人工选择，不能从当前日志可靠自动判断；不放大角度、不双重叠加码表转向。
-  只对 ≤250 ms 的有效相邻数据作四元数插值；长间断显示不可用，不跨缺失数据补造动作。</p>
-</section>
-<section><h2>全量分析摘要</h2><a id="download" hidden download="imu-analysis.json">下载全部样本分析 JSON</a><pre id="summary"></pre></section>
-<script type="importmap">
-{"imports":{"three":"/vendor/three.module.min.js"}}
-</script>
+  <footer class="playback-dock glass">
+    <div class="dock-top">
+      <button id="play" class="primary" disabled>播放</button><button id="reset" disabled>回到开始</button>
+      <label>速度<select id="speed"><option value=".25">0.25×</option><option value=".5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+      <button id="camera-reset">整车</button><button id="cockpit-view">座舱</button>
+      <button id="zoom-in" aria-label="放大三维场景">+</button><button id="zoom-out" aria-label="缩小三维场景">−</button>
+      <label><input id="hide-text" type="checkbox" checked>隐藏 3D 文字</label>
+      <span id="clock">0.000 s</span>
+    </div>
+    <div class="timeline-row"><input id="timeline" aria-label="时间轴" type="range" min="0" max="0" value="0" disabled></div>
+  </footer>
+</main>
+<script type="importmap">{"imports":{"three":"/vendor/three.module.min.js"}}</script>
 <script type="module">
 try {
-  const {start} = await import("/viewer.js");
+  const {start}=await import("/viewer.js");
   start();
 } catch (error) {
-  document.getElementById("error").textContent = `三维视图加载失败：${error.message}。请确认浏览器支持 WebGL2。`;
-  document.getElementById("status").textContent = "Three.js 未能启动";
+  document.getElementById("error").textContent=`三维视图加载失败：${error.message}。请确认浏览器支持 WebGL2。`;
+  document.getElementById("scene-error").textContent=document.getElementById("error").textContent;
+  document.getElementById("status").textContent="Three.js 未能启动";
 }
 </script>
 </html>

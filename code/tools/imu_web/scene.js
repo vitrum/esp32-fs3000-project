@@ -61,6 +61,13 @@ export function poseAt(frames, time) {
         THREE.MathUtils.clamp((time - frame.time_ms) / gap, 0, 1));
     }
   }
+  if (pose.board && Number.isFinite(frame.board_heading_change_deg)) {
+    pose.boardHeading=frame.board_heading_change_deg;
+    if (next?.board && Number.isFinite(next.board_heading_change_deg) && gap>0 && gap<=250) {
+      pose.boardHeading+=(next.board_heading_change_deg-frame.board_heading_change_deg)
+        *THREE.MathUtils.clamp((time-frame.time_ms)/gap,0,1);
+    }
+  }
   pose.angle = pose.paired && pose.board && pose.wt
     ? THREE.MathUtils.radToDeg(pose.board.angleTo(pose.wt)) : null;
   return pose;
@@ -133,6 +140,16 @@ export function createDevice(sensor) {
     imu.name = "wrist-imu";
     imu.position.set(dimensions[0] / 2, 0, 3.7);
     attitude.add(imu);
+    const usb=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.9,0.3),
+      new THREE.MeshStandardMaterial({color:0x17283d}));
+    usb.name="imu-usb-port";
+    usb.position.copy(imu.position).add(new THREE.Vector3(-1.28,0,0));
+    attitude.add(usb);
+    const logo=label("LOGO");
+    logo.name="imu-logo";
+    logo.scale.set(1.5,0.6,1);
+    logo.position.copy(imu.position).add(new THREE.Vector3(0,0,0.4));
+    attitude.add(logo);
     axes.position.copy(imu.position);
     const palm = new THREE.Mesh(new THREE.BoxGeometry(8, 7, 2.5),
       new THREE.MeshStandardMaterial({color:0xe9b58e, roughness:0.9}));
@@ -253,14 +270,30 @@ function cockpitGeometry() {
   return group;
 }
 
+export function mountedWristQuaternion(quaternion,calibration) {
+  if (!quaternion || !calibration) return quaternion;
+  return quaternionFromRows(calibration.alignment).multiply(quaternion)
+    .multiply(quaternionFromRows(calibration.sensor_reference))
+    .multiply(quaternionFromRows(calibration.native_from_arm));
+}
+
 export function updateWorld(world, pose, {
   initialHeading=0, mode="hood", offset=[0,0,0], wristMount=new THREE.Quaternion(),
+  mountCalibration=null,
 }={}) {
   const northOffset = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1),
     -THREE.MathUtils.degToRad(initialHeading));
   const boardQuaternion = pose.board ? northOffset.clone().multiply(pose.board) : null;
   world.cockpit.visible = boardQuaternion !== null;
-  if (boardQuaternion) world.cockpit.quaternion.copy(boardQuaternion);
+  let bikeQuaternion=null;
+  if (boardQuaternion) {
+    const yaw=Number.isFinite(pose.boardHeading)
+      ? THREE.MathUtils.degToRad(pose.boardHeading-initialHeading)
+      : new THREE.Euler().setFromQuaternion(boardQuaternion,"ZYX").z;
+    bikeQuaternion=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1),yaw);
+    world.cockpit.quaternion.copy(bikeQuaternion);
+    applyOrientation(world.board,bikeQuaternion.clone().invert().multiply(boardQuaternion));
+  }
   world.cockpit.getObjectByName("right-grip").position.set(...RIGHT_GRIP)
     .add(new THREE.Vector3(...offset));
   const paired = pose.paired && boardQuaternion && pose.wt;
@@ -268,21 +301,27 @@ export function updateWorld(world, pose, {
   world.elbow.visible = Boolean(paired);
   let kinematics = null, angle = null;
   if (paired) {
-    const armQuaternion = northOffset.clone().multiply(pose.wt).multiply(wristMount);
+    const armQuaternion = northOffset.clone().multiply(mountedWristQuaternion(pose.wt,mountCalibration))
+      .multiply(wristMount);
+    const axes=world.wt.getObjectByName("sensor-axes");
+    axes.quaternion.copy(mountCalibration
+      ? quaternionFromRows(mountCalibration.native_from_arm).invert() : new THREE.Quaternion());
     angle = THREE.MathUtils.radToDeg(boardQuaternion.angleTo(armQuaternion));
-    kinematics = armKinematics(boardQuaternion,armQuaternion,mode,offset);
+    kinematics = armKinematics(bikeQuaternion,armQuaternion,mode,offset);
     world.wt.position.copy(kinematics.center);
     applyOrientation(world.wt,armQuaternion);
     world.elbow.position.copy(kinematics.elbow);
   }
-  const forward = boardQuaternion
-    ? new THREE.Vector3(1,0,0).applyQuaternion(boardQuaternion) : null;
+  const forward = bikeQuaternion
+    ? new THREE.Vector3(1,0,0).applyQuaternion(bikeQuaternion) : null;
   const heading = forward && Math.hypot(forward.x,forward.y)>1e-6
     ? (THREE.MathUtils.radToDeg(Math.atan2(-forward.y,forward.x))+360)%360 : null;
   const localElbow=kinematics
-    ? kinematics.elbow.clone().applyQuaternion(boardQuaternion.clone().invert()) : null;
+    ? kinematics.elbow.clone().applyQuaternion(bikeQuaternion.clone().invert()) : null;
   const fitWarning=updateRiderArm(world.bike,localElbow);
-  return {kinematics,heading,angle,fitWarning};
+  const armRatio=localElbow ? localElbow.distanceTo(world.bike.layout.rightShoulder)
+    /world.bike.dimensions.upperArm : null;
+  return {kinematics,heading,angle,fitWarning,armRatio};
 }
 
 export function createWorld() {

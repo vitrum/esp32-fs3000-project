@@ -24,6 +24,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from imu_to_bvh_hdf5 import estimate_orientations, load_csv
+if __package__:
+    from .activity import decode_activity
+    from .mount_analysis import diagnose_mount
+else:
+    from activity import decode_activity
+    from mount_analysis import diagnose_mount
 
 MAX_UPLOAD = 64 * 1024 * 1024
 STATIC_FILES = {
@@ -31,6 +37,8 @@ STATIC_FILES = {
     "/viewer.js": ("viewer.js", "text/javascript; charset=utf-8"),
     "/scene.js": ("scene.js", "text/javascript; charset=utf-8"),
     "/bike_model.js": ("bike_model.js", "text/javascript; charset=utf-8"),
+    "/activity.js": ("activity.js", "text/javascript; charset=utf-8"),
+    "/aero.js": ("../../simulator/aero.js", "text/javascript; charset=utf-8"),
     "/test_scene.js": ("test_scene.js", "text/javascript; charset=utf-8"),
     "/vendor/three.module.min.js": ("vendor/three.module.min.js", "text/javascript"),
     "/vendor/three.core.min.js": ("vendor/three.core.min.js", "text/javascript"),
@@ -88,6 +96,26 @@ def levelled_motion(samples):
     return motion
 
 
+def estimate_levelled_tilt(samples):
+    """Do not count rotation about gravity again as Euler roll/pitch."""
+    keys = tuple(f"{sensor}_g{axis}_dps" for sensor in ("board", "wt") for axis in "xyz")
+    original = [tuple(sample.values[key] for key in keys) for sample in samples]
+    try:
+        for sample in samples:
+            for sensor, valid in (("board", sample.board_valid), ("wt", sample.wearable_valid)):
+                if valid:
+                    gravity = np.array([sample.values[f"{sensor}_a{axis}_g"] for axis in "xyz"])
+                    gravity /= np.linalg.norm(gravity)
+                    gyro = np.array([sample.values[f"{sensor}_g{axis}_dps"] for axis in "xyz"])
+                    horizontal = gyro - gravity * float(gravity @ gyro)
+                    for axis, value in zip("xyz", horizontal):
+                        sample.values[f"{sensor}_g{axis}_dps"] = float(value)
+        estimate_orientations(samples, 0.5)
+    finally:
+        for sample, values in zip(samples, original):
+            sample.values.update(zip(keys, values))
+
+
 def analyze(raw: bytes):
     with tempfile.TemporaryDirectory(prefix="imu-web-") as directory:
         path = Path(directory) / "upload.csv"
@@ -105,7 +133,7 @@ def analyze(raw: bytes):
     valid = [sample for sample in samples if sample.accepted_pair]
     if not valid:
         raise ValueError("No synchronized pairs with usable acceleration (>= 0.05 g)")
-    estimate_orientations(samples, 0.5)
+    estimate_levelled_tilt(samples)
     reference = valid[0]
     motion = levelled_motion(samples)
     frames = []
@@ -117,6 +145,8 @@ def analyze(raw: bytes):
             angle = math.degrees(math.acos(float(np.clip((np.trace(relative) - 1) / 2, -1, 1))))
         frames.append({
             "time_ms": sample.elapsed_ms,
+            "row_number": sample.row_number, "wt_seq": sample.wearable_sequence,
+            "wt_time_ms": sample.wearable_time_ms,
             "paired": sample.accepted_pair,
             "board": None if matrices[0] is None else matrices[0].tolist(),
             "wt": None if matrices[1] is None else matrices[1].tolist(),
@@ -134,7 +164,9 @@ def analyze(raw: bytes):
         "low_acceleration_rejected": rejected,
         "relative_angle_deg": {"min": min(angles), "max": max(angles), "mean": sum(angles) / len(angles)},
         "reference_time_ms": reference.elapsed_ms,
-        "method": "Shared BVH complementary tilt, tau=0.5s; gyro projected onto levelled world up for heading; first paired pose zeroed",
+        "first_device_time_ms": samples[0].time_ms,
+        "reference_wt_sensor_matrix": rotation((*reference.wearable_orientation[:2], 0)).tolist(),
+        "method": "Shared BVH complementary tilt, tau=0.5s; gravity-axis gyro excluded from tilt and integrated once as levelled heading; first paired pose zeroed",
         "heading_reference": "manual initial heading; magnetic north is an uncalibrated reference, not measured",
         "limitations": "No magnetometer/calibration recorded. Heading drifts; translation requires an illustrative cockpit/arm constraint model, not measured positioning. Sensor mounting axes remain uncalibrated.",
     }
@@ -187,6 +219,8 @@ class ImuServer(ThreadingHTTPServer):
         self.dataset = None
         self.dataset_id = ""
         self.cache = OrderedDict()
+        self.activity = None
+        self.activity_id = ""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -204,26 +238,48 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def do_POST(self):
-        if self.path != "/api/upload":
+        url = urlsplit(self.path)
+        if url.path not in ("/api/upload", "/api/fit-upload", "/api/mount"):
             self.respond(404, {"error": "Not found"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= MAX_UPLOAD:
-                self.respond(413, {"error": "Upload must be 1 byte to 64 MiB"})
+            limit = 65536 if url.path == "/api/mount" else MAX_UPLOAD
+            if not 0 < length <= limit:
+                self.respond(413, {"error": f"Body must be 1 byte to {limit} bytes"})
                 return
             self.connection.settimeout(60)
             with self.server.upload_lock:
                 raw = self.rfile.read(length)
                 if len(raw) != length:
                     raise ValueError("Incomplete upload")
-                dataset = analyze(raw)
-                with self.server.lock:
-                    self.server.dataset = dataset
-                    self.server.dataset_id = uuid.uuid4().hex
-                    self.server.cache.clear()
-                    result = {"id": self.server.dataset_id, "summary": dataset["summary"],
-                              "times": [frame["time_ms"] for frame in dataset["frames"]]}
+                if url.path == "/api/upload":
+                    dataset = analyze(raw)
+                    with self.server.lock:
+                        self.server.dataset = dataset
+                        self.server.dataset_id = uuid.uuid4().hex
+                        self.server.cache.clear()
+                        result = {"id": self.server.dataset_id, "summary": dataset["summary"],
+                                  "times": [frame["time_ms"] for frame in dataset["frames"]]}
+                elif url.path == "/api/fit-upload":
+                    activity = decode_activity(raw)
+                    with self.server.lock:
+                        self.server.activity = activity
+                        self.server.activity_id = uuid.uuid4().hex
+                        result = {"id": self.server.activity_id, "summary": activity["summary"]}
+                else:
+                    query = parse_qs(url.query)
+                    config = json.loads(raw)
+                    if not isinstance(config, dict):
+                        raise ValueError("Mount configuration must be a JSON object")
+                    with self.server.lock:
+                        if self.server.dataset is None or query.get("id", [""])[0] != self.server.dataset_id:
+                            self.respond(404, {"error": "IMU dataset missing or replaced"})
+                            return
+                        dataset = self.server.dataset
+                    result = diagnose_mount(dataset, config)
+                    with self.server.lock:
+                        dataset["mount_diagnostics"] = result
             self.respond(200, result)
         except (ValueError, UnicodeError) as error:
             self.respond(400, {"error": str(error)})
@@ -246,6 +302,12 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(url.query)
         try:
             with self.server.lock:
+                if url.path == "/api/activity":
+                    if self.server.activity is None or query.get("id", [""])[0] != self.server.activity_id:
+                        self.respond(404, {"error": "FIT activity missing or replaced"})
+                        return
+                    self.respond(200, self.server.activity)
+                    return
                 if url.path not in ("/api/frame", "/api/analysis", "/api/playback"):
                     self.respond(404, {"error": "Not found"})
                     return

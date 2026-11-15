@@ -2,6 +2,7 @@ import * as THREE from "three";
 import {applyOrientation, armKinematics, createWorld, DIMENSIONS, poseAt, quaternionFromRows,
   RIGHT_GRIP, updateWorld, wristAxisMapping, setTextVisibility} from "/scene.js";
 import {setRiderDimensions, twoLinkJoint} from "/bike_model.js";
+import {prepareActivity, activityAt} from "/activity.js";
 
 export function runTests() {
   const passed = [];
@@ -85,6 +86,56 @@ export function runTests() {
     check(rejected, "Duplicate, reflected and malformed mappings must be rejected");
   }
   passed.push("Wrist mapping changes pose, rejects reflections and preserves common turns");
+  const calibration={
+    alignment:[[0.866025403784,-0.5,0],[0.5,0.866025403784,0],[0,0,1]],
+    sensor_reference:[[0,0,1],[0,1,0],[-1,0,0]],
+    native_from_arm:[[0,-1,0],[1,0,0],[0,0,1]],
+  };
+  const calibrated=updateWorld(world,{board:identityQuaternion,wt:identityQuaternion,paired:true},
+    {mountCalibration:calibration});
+  const calibratedCenter=calibrated.kinematics.center.clone();
+  const calibratedOrientation=world.wt.getObjectByName("attitude").quaternion.clone();
+  const calibratedTurn=updateWorld(world,{board:quaternion,wt:quaternion,paired:true},
+    {mountCalibration:calibration});
+  world.scene.updateMatrixWorld(true);
+  check(calibratedTurn.kinematics.center.distanceTo(calibratedCenter.applyQuaternion(quaternion))<1e-7,
+    "Fixed sensor mounting preserves common turn and actual lever length");
+  check(world.wt.getObjectByName("attitude").quaternion.angleTo(
+    quaternion.clone().multiply(calibratedOrientation))<1e-7,"Calibrated arm turns once, not twice");
+  const nativeX=world.wt.getObjectByName("sensor-axes").getObjectByName("X");
+  const actualX=new THREE.Vector3(0,1,0).applyQuaternion(nativeX.getWorldQuaternion(new THREE.Quaternion()));
+  const expectedNative=quaternionFromRows(calibration.alignment).multiply(quaternion)
+    .multiply(quaternionFromRows(calibration.sensor_reference));
+  check(actualX.distanceTo(new THREE.Vector3(1,0,0).applyQuaternion(expectedNative))<1e-7,
+    "Native arrows remove model-axis permutation instead of masquerading as arm axes");
+  check(close(calibratedTurn.kinematics.wrist.distanceTo(calibratedTurn.kinematics.elbow),26),
+    "Calibration never scales forearm length");
+  passed.push("Fixed mounting preserves common turns, native arrows and forearm length");
+  const record=(utc_ms,power_w=300,wind_mps=10)=>({
+    utc_ms,power_w,wind_mps,cadence_rpm:0,
+  });
+  const activity=prepareActivity([record(100000),record(101000,600),record(102000,0),record(103000,600)]);
+  check(close(activity[2].power3_w,300) && close(activity[3].power3_w,400),
+    "Three-second power uses actual UTC window including valid zero");
+  check(close(activity[2].cda,(300*.975-85*9.80665*.004*10)/(.5*1.225*1000)),
+    "HUD calls shared simulator CdA with known power and m/s wind");
+  check(activity[2].power_w===0 && activity[2].cadence_rpm===0,"Valid zero must remain zero");
+  check(prepareActivity([record(100000),record(101000,null)])[1].cda_reason==="missing_power",
+    "Missing current power cannot inherit prior power as available");
+  check(prepareActivity([record(100000,300,null)])[0].cda===null,"No GPS-speed fallback for absent wind");
+  check(prepareActivity([record(100000,300,2.99)])[0].cda_reason==="low_wind",
+    "Below 3 m/s rejects CdA");
+  check(prepareActivity([record(100000,300,3)])[0].cda!==null,"Exactly 3 m/s accepts positive aerodynamic power");
+  const duplicate=prepareActivity([record(100000,300),record(100000,0),record(101000,600)]);
+  check(duplicate.length===2 && close(duplicate[1].power3_w,300),"Last duplicate wins without double-weighting");
+  passed.push("FIT rolling power, zero/missing values, shared CdA and wind threshold");
+  check(activityAt(activity,500).record.power_w===300 && activityAt(activity,500,1).record.power_w===600,
+    "Positive manual offset advances FIT relative to IMU");
+  check(activityAt(activity,0,-1).record===null && activityAt(activity,3001).reason==="outside_fit",
+    "Outside FIT range must not invent telemetry");
+  check(activityAt(prepareActivity([record(100000),record(110000)]),5000).record===null,
+    "Sparse FIT gaps expire after two seconds");
+  passed.push("Approximate start alignment, offsets, end boundaries and stale FIT gaps");
   setTextVisibility(world,false);
   let hidden=0;
   world.scene.traverse(object=>{if (object.isSprite) {check(!object.visible,"All 3D labels hide");hidden++;}});
@@ -119,6 +170,32 @@ export function runTests() {
   check(Math.abs(tireBox.max.z-tireBox.min.z-68)<1e-4, "Wheel actual outside diameter must be 68 cm");
   check(Math.abs(tireBox.min.z-bike.groundZ)<1e-4, "Neutral tire must meet the ground, not cockpit grid");
   passed.push("Official 49 geometry, real 170 mm cranks/110 mm stem and grounded wheels");
+  for (const [yaw,pitch,roll] of [[30,40,-35],[-90,-70,55],[170,90,-150]]) {
+    const full=new THREE.Quaternion().setFromEuler(new THREE.Euler(
+      ...[roll,pitch,yaw].map(THREE.MathUtils.degToRad),"ZYX"));
+    const grounded=updateWorld(world,{board:full,wt:full,paired:true,boardHeading:yaw},{initialHeading:23});
+    world.scene.updateMatrixWorld(true);
+    const expectedFull=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1),
+      THREE.MathUtils.degToRad(-23)).multiply(full);
+    check(world.board.getObjectByName("attitude").getWorldQuaternion(new THREE.Quaternion())
+      .angleTo(expectedFull)<1e-7,"Ground constraint must not remove measured computer tilt");
+    check(close(grounded.heading,(23-yaw+360)%360),"Grounded bike uses integrated heading, even at vertical pitch");
+    for (const wheel of [frontWheel,rearWheel]) {
+      const tire=wheel.getObjectByName("tire"), positions=tire.geometry.attributes.position;
+      let bottom=Infinity;
+      for (let index=0;index<positions.count;index++) {
+        bottom=Math.min(bottom,new THREE.Vector3().fromBufferAttribute(positions,index)
+          .applyMatrix4(tire.matrixWorld).z);
+      }
+      check(Math.abs(bottom-bike.groundZ)<1e-6,"Both actual tire vertex minima must remain on reference ground");
+      check(close(wheel.getWorldPosition(new THREE.Vector3()).z,bike.groundZ+34),
+        "Both axle heights remain fixed above the ground");
+    }
+    check(grounded.kinematics.hand.distanceTo(world.cockpit.localToWorld(new THREE.Vector3(...RIGHT_GRIP)))<1e-7,
+      "Arm support must use the same grounded bike frame as the hood");
+  }
+  updateWorld(world,{board:identityQuaternion,wt:identityQuaternion,paired:true});
+  passed.push("Both tires stay grounded through yaw/pitch/roll while computer tilt and hood support remain intact");
   setRiderDimensions(bike,185,45);
   world.scene.updateMatrixWorld(true);
   for (const side of [-1,1]) {
@@ -152,6 +229,15 @@ export function runTests() {
   check(close(midpoint.angle,45), "Midpoint must be quaternion-interpolated 45 degrees");
   check(midpoint.index===0 && poseAt(frames,100).index===1, "Timeline boundary must select correct sample");
   passed.push("50 ms midpoint is 45 degrees and sample boundary is correct");
+  const headingRows=degrees=>{
+    const matrix=new THREE.Matrix4().makeRotationZ(THREE.MathUtils.degToRad(degrees));
+    return [0,1,2].map(row=>[0,1,2].map(column=>matrix.elements[column*4+row]));
+  };
+  const headingFrames=[{...frames[0],board:headingRows(350),board_heading_change_deg:350},
+    {...frames[1],board:headingRows(370),board_heading_change_deg:370}];
+  check(close(poseAt(headingFrames,50).boardHeading,360),"Unwrapped heading interpolates continuously across north");
+  check(poseAt(headingFrames,500).boardHeading===undefined,"Stale board cannot supply a fabricated bike heading");
+  passed.push("Grounded heading preserves north-crossing interpolation and invalid-data policy");
   const gap = poseAt([frames[0],{...frames[1],time_ms:1000}],500);
   check(gap.board===null && gap.wt===null && gap.angle===null, "Do not fabricate motion across long gaps");
   passed.push("Long gaps hide unavailable orientations");
@@ -180,6 +266,9 @@ export async function runUploadValidationTest() {
   const ids=["wrist-x","wrist-y","wrist-z","north-heading"];
   const saved=ids.map(id=>document.getElementById(id).value);
   const files=input.files, oldError=error.textContent, oldStatus=status.textContent;
+  const fitOffset=document.getElementById("fit-offset"), oldFitOffset=fitOffset.value;
+  const sceneError=document.getElementById("scene-error"), panel=document.getElementById("config-panel");
+  const oldSceneError=sceneError.textContent, oldPanelHidden=panel.hidden;
   const originalFetch=globalThis.fetch;
   let requests=0;
   try {
@@ -194,12 +283,23 @@ export async function runUploadValidationTest() {
     if (requests || status.textContent!==oldStatus || !error.textContent.includes("上传未开始")) {
       throw new Error("Invalid view parameters must block upload, keep prior status and show the validation error");
     }
-    return {passed:["Invalid scene parameters block upload without API requests or losing prior data"],count:1};
+    ids.forEach((id,index)=>{document.getElementById(id).value=saved[index];});
+    fitOffset.value="100000";
+    await document.getElementById("upload").onclick();
+    if (requests || status.textContent!==oldStatus || !error.textContent.includes("FIT")) {
+      throw new Error("Invalid FIT alignment must also block CSV upload without clearing its error");
+    }
+    return {passed:["Invalid scene parameters block upload without API requests or losing prior data",
+      "Invalid FIT alignment blocks CSV upload and preserves prior analysis"],count:2};
   } finally {
     globalThis.fetch=originalFetch;
     input.files=files;
+    fitOffset.value=oldFitOffset;
     ids.forEach((id,index)=>{document.getElementById(id).value=saved[index];});
     error.textContent=oldError;
     status.textContent=oldStatus;
+    sceneError.textContent=oldSceneError;
+    panel.hidden=oldPanelHidden;
+    document.getElementById("panel-toggle").setAttribute("aria-expanded",String(!oldPanelHidden));
   }
 }
