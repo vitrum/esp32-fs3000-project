@@ -338,6 +338,26 @@ static void saveSensorFrame(const char *name) {
   assert(output.good() && nonblank > 500);
 }
 
+static void checkPagedImuBounds(lv_obj_t *object) {
+  if (lv_obj_has_flag(object, LV_OBJ_FLAG_HIDDEN)) return;
+  assert(lv_obj_get_scroll_y(object) == 0 && lv_obj_get_scroll_x(object) == 0);
+  lv_area_t area, parent;
+  lv_obj_get_coords(object, &area);
+  lv_obj_get_coords(lv_obj_get_parent(object), &parent);
+  assert(area.x1 >= parent.x1 && area.x2 <= parent.x2);
+  assert(area.y1 >= parent.y1 && area.y2 <= parent.y2);
+  if (lv_obj_check_type(object, &lv_label_class)) {
+    lv_point_t text;
+    lv_txt_get_size(&text, lv_label_get_text(object), lv_obj_get_style_text_font(object, 0),
+                    lv_obj_get_style_text_letter_space(object, 0),
+                    lv_obj_get_style_text_line_space(object, 0),
+                    lv_obj_get_width(object), LV_TEXT_FLAG_NONE);
+    assert(text.x <= lv_obj_get_width(object) && text.y <= lv_obj_get_height(object));
+  }
+  for (unsigned i = 0; i < lv_obj_get_child_cnt(object); ++i)
+    checkPagedImuBounds(lv_obj_get_child(object, i));
+}
+
 static void checkSensorViews(lv_obj_t *screen) {
   lv_obj_t *panel = lv_obj_create(screen);
   lv_obj_set_size(panel, 240, 320);
@@ -415,14 +435,72 @@ static void checkSensorViews(lv_obj_t *screen) {
   panel=lv_obj_create(screen);
   lv_obj_set_size(panel,240,320);
   lv_obj_set_style_pad_all(panel,0,0);
+  lv_obj_set_style_border_width(panel,0,0);
+  lv_obj_clear_flag(panel,LV_OBJ_FLAG_SCROLLABLE);
   ImuCalibrationView calibration;
   calibration.create(panel,[](lv_event_t *) {});
+  PostureSetupView compactPosture;
+  compactPosture.create(calibration.page(ImuCalibrationView::Posture),
+                       [](lv_event_t *) {},[](lv_event_t *) {},0);
+  unsigned connections=0;
+  lv_obj_add_event_cb(calibration.connectButton(),[](lv_event_t *event) {
+    ++*static_cast<unsigned *>(lv_event_get_user_data(event));
+  },LV_EVENT_CLICKED,&connections);
+  const auto checkPage = [&](ImuCalibrationView::Page expected) {
+    assert(calibration.currentPage()==expected);
+    lv_obj_update_layout(panel);
+    assert(!lv_obj_has_flag(calibration.root(),LV_OBJ_FLAG_SCROLLABLE));
+    assert(lv_obj_is_visible(calibration.connectButton())==(expected==ImuCalibrationView::Connection));
+    for (unsigned page=0;page<ImuCalibrationView::PageCount;++page) {
+      assert(!lv_obj_has_flag(calibration.page(ImuCalibrationView::Page(page)),LV_OBJ_FLAG_SCROLLABLE));
+      assert(lv_obj_has_flag(calibration.page(ImuCalibrationView::Page(page)),LV_OBJ_FLAG_HIDDEN)==
+             (page!=unsigned(expected)));
+    }
+    checkPagedImuBounds(calibration.root());
+  };
   using MountStage=ImuMountCalibration::Stage;
   for (bool chinese : {false,true}) {
     calibration.language(chinese);
+    compactPosture.language(chinese);
+    calibration.resetCheck();
+    lv_label_set_text(calibration.connectionStatus(),chinese?
+      "车架基准：板载 QMI8658\n右前臂：已连接\nP +180.0  Y -180.0":
+      "Bike ref: onboard QMI8658\nRight forearm: connected\nP +180.0  Y -180.0");
+    checkPage(ImuCalibrationView::Connection);
+    assert(lv_obj_has_state(calibration.navigation(0),LV_STATE_DISABLED));
+    lv_event_send(calibration.navigation(0),LV_EVENT_CLICKED,nullptr);
+    checkPage(ImuCalibrationView::Connection);
+    lv_event_send(calibration.connectButton(),LV_EVENT_CLICKED,nullptr);
+    lv_dropdown_set_selected(calibration.axisDropdown(),4);
+    lv_obj_add_state(calibration.wearingCheck(),LV_STATE_CHECKED);
+    for (unsigned page=1;page<ImuCalibrationView::PageCount;++page) {
+      lv_event_send(calibration.navigation(1),LV_EVENT_CLICKED,nullptr);
+      checkPage(ImuCalibrationView::Page(page));
+      if (chinese) {
+        const char *names[]={"","imu-mount-wearing-zh.ppm","imu-mount-axis-zh.ppm",
+                            "imu-mount-progress-zh.ppm","imu-mount-posture-zh.ppm"};
+        saveSensorFrame(names[page]);
+      }
+    }
+    assert(lv_obj_has_state(calibration.navigation(1),LV_STATE_DISABLED));
+    lv_event_send(calibration.navigation(1),LV_EVENT_CLICKED,nullptr);
+    checkPage(ImuCalibrationView::Posture);
+    for (unsigned page=ImuCalibrationView::PageCount-1;page>0;--page) {
+      lv_event_send(calibration.navigation(0),LV_EVENT_CLICKED,nullptr);
+      checkPage(ImuCalibrationView::Page(page-1));
+    }
+    assert(calibration.checked() && calibration.forwardAxis()==-2);
+    calibration.language(!chinese);
+    calibration.language(chinese);
+    checkPage(ImuCalibrationView::Connection);
+    assert(calibration.checked() && calibration.forwardAxis()==-2);
+    if (chinese) saveSensorFrame("imu-mount-connect-zh.ppm");
+    calibration.resetCheck();
+    assert(!calibration.checked());
     for (unsigned stage=0;stage<=unsigned(MountStage::Failed);++stage) {
       calibration.update(MountStage(stage),ImuMountCalibration::Error::None,0,false);
       lv_obj_update_layout(panel);
+      if (stage>=unsigned(MountStage::Static)) checkPage(ImuCalibrationView::Calibration);
       for (auto *label : {calibration.instruction(),calibration.status()}) {
         lv_point_t textSize;
         lv_txt_get_size(&textSize,lv_label_get_text(label),&lv_font_noto_sans_sc_14,
@@ -431,17 +509,38 @@ static void checkSensorViews(lv_obj_t *screen) {
       }
       assert(lv_obj_has_state(calibration.button(1),LV_STATE_DISABLED)==(MountStage(stage)!=MountStage::Confirm));
     }
+    calibration.showPage(ImuCalibrationView::Wearing);
+    calibration.update(MountStage::Failed,ImuMountCalibration::Error::None,0,false);
+    checkPage(ImuCalibrationView::Wearing);
+    calibration.update(MountStage::Confirm,ImuMountCalibration::Error::None,0,false);
+    checkPage(ImuCalibrationView::Calibration);
+    ImuMountCalibration::Result quality;
+    quality.rollOffAxis=0.15f; quality.liftOffAxis=0.2f;
+    quality.rollSamples=25; quality.liftSamples=25;
+    calibration.quality(quality);
+    checkPage(ImuCalibrationView::Calibration);
     calibration.update(MountStage::Confirm,ImuMountCalibration::Error::None,0,true);
+    checkPage(ImuCalibrationView::Calibration);
     assert(lv_obj_has_state(calibration.button(1),LV_STATE_DISABLED));
+    calibration.update(MountStage::Wearing,ImuMountCalibration::Error::None,0,true);
+    calibration.showPage(ImuCalibrationView::Axis);
+    checkPage(ImuCalibrationView::Axis);
+    assert(lv_obj_has_state(calibration.button(0),LV_STATE_DISABLED));
     calibration.update(MountStage::Wearing,ImuMountCalibration::Error::None,0,false);
     assert(!lv_obj_has_state(calibration.button(0),LV_STATE_DISABLED));
-    assert(!calibration.checked() && calibration.forwardAxis()==1);
+    for (unsigned error=0;error<=unsigned(ImuMountCalibration::Error::Cancelled);++error) {
+      calibration.update(MountStage::Failed,ImuMountCalibration::Error(error),2,true);
+      checkPage(ImuCalibrationView::Calibration);
+    }
+    calibration.resetCheck();
+    checkPage(ImuCalibrationView::Connection);
+    assert(!calibration.checked() && calibration.forwardAxis()==-2);
   }
+  assert(connections==2);
   calibration.update(MountStage::Roll,ImuMountCalibration::Error::None,1,false);
-  lv_obj_scroll_to_y(panel,250,LV_ANIM_OFF);
   saveSensorFrame("imu-mount-roll.ppm");
   lv_obj_del(panel);
-  std::cout << "PASS sensor UI: six no-scroll online rows, recent data, four placements, bilingual controls and result bounds\n";
+  std::cout << "PASS sensor UI: six no-scroll online rows, recent data, four placements, bilingual controls and result bounds; IMU first-screen connect, five bounded pages, preserved setup and busy guards\n";
 }
 
 int main(int argc, char **argv) {

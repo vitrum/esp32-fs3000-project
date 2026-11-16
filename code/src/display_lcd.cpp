@@ -1084,6 +1084,8 @@ void DisplayLcd::hideDevicePanels() {
 void DisplayLcd::showBleRolePanel(SavedConnections::Role role) {
   hideDevicePanels();
   activeBleRole_ = role;
+  if (role == SavedConnections::Role::Posture)
+    imuMountView_.showPage(ImuCalibrationView::Connection);
   lv_obj_add_flag(settingsPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(bleRolePanel(role), LV_OBJ_FLAG_HIDDEN);
   if (role == SavedConnections::Role::Power)
@@ -1138,31 +1140,33 @@ void DisplayLcd::buildBleRolePanel(lv_obj_t *&panel, const char *title,
   lv_obj_set_style_bg_color(panel, lv_color_make(248, 250, 252), 0);
   buildPanelHeader(panel, title, onDeviceRoleBack);
 
-  const bool posture = role == SavedConnections::Role::Posture;
-  lv_obj_t *body = panel;
-  if (posture) {
-    body = lv_obj_create(panel);
-    lv_obj_set_pos(body, 0, 52);
-    lv_obj_set_size(body, 240, 268);
-    lv_obj_set_style_pad_all(body, 0, 0);
-    lv_obj_set_style_border_width(body, 0, 0);
-    lv_obj_set_style_radius(body, 0, 0);
-    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
-    lv_obj_set_scroll_dir(body, LV_DIR_VER);
+  if (role == SavedConnections::Role::Posture) {
+    imuMountView_.create(panel,onImuMountAction);
+    bleRoleStatusLabels_[roleIndex(role)]=imuMountView_.connectionStatus();
+    lv_obj_add_event_cb(imuMountView_.connectButton(),onBleRoleScan,LV_EVENT_CLICKED,
+                       (void *)(uintptr_t)role);
+    buildBleFavoriteButton(imuMountView_.page(ImuCalibrationView::Connection),role);
+    lv_obj_set_y(bleFavoriteButtons_[roleIndex(role)],140);
+    postureSetup_.create(imuMountView_.page(ImuCalibrationView::Posture),
+                         onPosturePlacement,onPostureCalibration,0);
+    postureSetup_.select(posturePlacement_);
+    postureSetup_.language(chinese_);
+    imuMountView_.language(chinese_);
+    lv_obj_add_flag(panel,LV_OBJ_FLAG_HIDDEN);
+    return;
   }
-  lv_obj_t *status = lv_label_create(body);
+  lv_obj_t *status = lv_label_create(panel);
   lv_obj_set_width(status, 216);
-  lv_obj_set_height(status, posture ? 70 : 52);
+  lv_obj_set_height(status, 52);
   lv_label_set_long_mode(status, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(status, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(status, lv_color_make(71, 85, 105), 0);
-  lv_obj_align(status, LV_ALIGN_TOP_LEFT, 12, posture ? 4 : 62);
+  lv_obj_align(status, LV_ALIGN_TOP_LEFT, 12, 62);
   bleRoleStatusLabels_[roleIndex(role)] = status;
 
-  lv_obj_t *scan = lv_btn_create(body);
+  lv_obj_t *scan = lv_btn_create(panel);
   lv_obj_set_size(scan, 208, 42);
-  lv_obj_align(scan, LV_ALIGN_TOP_LEFT, 16,
-               posture ? 1010 : 126);
+  lv_obj_align(scan, LV_ALIGN_TOP_LEFT, 16, 126);
   lv_obj_set_style_bg_color(scan, lv_color_make(37, 99, 235), 0);
   lv_obj_add_event_cb(scan, onBleRoleScan, LV_EVENT_CLICKED,
                       (void *)(uintptr_t)role);
@@ -1172,20 +1176,7 @@ void DisplayLcd::buildBleRolePanel(lv_obj_t *&panel, const char *title,
   lv_obj_set_style_text_font(scanLabel, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(scanLabel);
 
-  buildBleFavoriteButton(body, role);
-  if (posture) {
-    lv_obj_set_y(bleFavoriteButtons_[roleIndex(role)], 1060);
-    imuMountView_.create(body,onImuMountAction);
-    imuMountView_.language(chinese_);
-    auto *legacy=lv_obj_create(body);
-    lv_obj_set_pos(legacy,0,700); lv_obj_set_size(legacy,240,260);
-    lv_obj_set_style_pad_all(legacy,0,0); lv_obj_set_style_border_width(legacy,0,0);
-    lv_obj_clear_flag(legacy,LV_OBJ_FLAG_SCROLLABLE);
-    postureSetup_.create(legacy, onPosturePlacement, onPostureCalibration);
-    postureSetup_.select(posturePlacement_);
-    postureSetup_.language(chinese_);
-    imuMountView_.language(chinese_);
-  }
+  buildBleFavoriteButton(panel, role);
   lv_obj_add_flag(panel, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -2280,6 +2271,7 @@ void DisplayLcd::refreshLanguage() {
   lv_label_set_text(lv_obj_get_child(onlineDevicesPanel_, 1),
                     localized("ONLINE DEVICES", "在线设备"));
   postureSetup_.language(chinese_);
+  imuMountView_.language(chinese_);
   for (auto *label : bleRoleStatusLabels_)
     if (label) lv_obj_set_style_text_font(label, font, 0);
   lv_label_set_text(languageTitle_, localized("LANGUAGE", "语言"));

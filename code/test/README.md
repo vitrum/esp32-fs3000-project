@@ -205,6 +205,15 @@ insufficient output rate, timeout, reset and timestamp wrap. `imu_comparison`
 independently parses the saved JSON/CSV, checks immutable matrices/biases and
 raw preservation, and rejects malformed calibration columns. `ui_sensors`
 checks the real LVGL bilingual wizard instructions, controls and glyphs.
+The physical IMU settings use five fixed pages: connection/search and favorite,
+wearing, signed board axis/start, live calibration/apply/cancel, and the independent
+upright/lean posture setup. PREV/NEXT and the page counter remain visible; paging
+does not advance calibration. Tests click the production navigation/connect
+widgets, check first/last guards and selection persistence, and validate every
+visible widget/text against its parent bounds with zero scroll offsets. Page
+containers are non-scrollable in both languages, including busy/failure states.
+The native runner saves `imu-mount-{connect,wearing,axis,progress,posture}-zh.ppm`
+and `imu-mount-roll.ppm` under `test/results/ui-language/`.
 
 Run the three scenarios with the existing pytest runner:
 

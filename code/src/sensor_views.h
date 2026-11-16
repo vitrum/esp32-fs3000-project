@@ -73,22 +73,23 @@ private:
 
 class PostureSetupView {
 public:
-  void create(lv_obj_t *parent, lv_event_cb_t placement, lv_event_cb_t calibration) {
+  void create(lv_obj_t *parent, lv_event_cb_t placement, lv_event_cb_t calibration,
+              lv_coord_t top = 78) {
     result_ = lv_label_create(parent);
-    lv_obj_set_pos(result_, 12, 78);
+    lv_obj_set_pos(result_, 12, top);
     lv_obj_set_size(result_, 216, 58);
     lv_label_set_long_mode(result_, LV_LABEL_LONG_WRAP);
     title_ = lv_label_create(parent);
-    lv_obj_set_pos(title_, 12, 142);
+    lv_obj_set_pos(title_, 12, top + 64);
     lv_obj_set_size(title_, 216, 18);
     dropdown_ = lv_dropdown_create(parent);
-    lv_obj_set_pos(dropdown_, 12, 164);
+    lv_obj_set_pos(dropdown_, 12, top + 86);
     lv_obj_set_size(dropdown_, 216, 36);
     lv_obj_set_style_radius(dropdown_, 4, 0);
     lv_obj_add_event_cb(dropdown_, placement, LV_EVENT_VALUE_CHANGED, nullptr);
     for (unsigned index = 0; index < 2; ++index) {
       buttons_[index] = lv_btn_create(parent);
-      lv_obj_set_pos(buttons_[index], 12 + index * 112, 208);
+      lv_obj_set_pos(buttons_[index], 12 + index * 112, top + 130);
       lv_obj_set_size(buttons_[index], 104, 36);
       lv_obj_set_style_radius(buttons_[index], 4, 0);
       lv_obj_set_style_bg_color(buttons_[index], lv_color_make(226, 232, 240), 0);
@@ -183,37 +184,63 @@ private:
 
 class ImuCalibrationView {
 public:
+  enum Page : unsigned { Connection, Wearing, Axis, Calibration, Posture, PageCount };
   void create(lv_obj_t *parent, lv_event_cb_t action) {
     root_=lv_obj_create(parent);
-    lv_obj_set_pos(root_,8,78); lv_obj_set_size(root_,224,600);
-    lv_obj_set_style_pad_all(root_,4,0); lv_obj_clear_flag(root_,LV_OBJ_FLAG_SCROLLABLE);
-    title_=label(0,0,208,22);
+    lv_obj_set_pos(root_,0,52); lv_obj_set_size(root_,240,268);
+    plain(root_);
+    for (auto &page : pages_) {
+      page=lv_obj_create(root_);
+      lv_obj_set_pos(page,0,0); lv_obj_set_size(page,240,216);
+      plain(page);
+    }
+    connectionStatus_=label(Connection,8,0,224,70);
+    lv_label_set_text(connectionStatus_,"--");
+    connect_=lv_btn_create(pages_[Connection]);
+    lv_obj_set_pos(connect_,16,82); lv_obj_set_size(connect_,208,42);
+    lv_obj_set_style_bg_color(connect_,lv_color_make(37,99,235),0);
+    connectLabel_=lv_label_create(connect_); lv_obj_center(connectLabel_);
+    title_=label(Wearing,8,0,224,22);
     const lv_point_t points[]={{15,74},{150,74},{137,65},{150,74},{137,83}};
     for (unsigned i=0;i<5;++i) arrowPoints_[i]=points[i];
-    auto *arrow=lv_line_create(root_);
+    auto *arrow=lv_line_create(pages_[Wearing]);
+    lv_obj_clear_flag(arrow,LV_OBJ_FLAG_SCROLLABLE);
     lv_line_set_points(arrow,arrowPoints_,5);
     lv_obj_set_style_line_width(arrow,3,0);
-    auto *sensor=lv_obj_create(root_);
+    auto *sensor=lv_obj_create(pages_[Wearing]);
     lv_obj_set_pos(sensor,100,32); lv_obj_set_size(sensor,66,34);
     lv_obj_clear_flag(sensor,LV_OBJ_FLAG_SCROLLABLE);
     auto *logo=lv_label_create(sensor); lv_label_set_text(logo,"LOGO"); lv_obj_center(logo);
-    auto *usb=label(12,35,85,22); lv_label_set_text(usb,"Type-C <");
-    direction_=label(0,92,208,22);
-    wearing_=label(0,120,208,62);
-    instruction_=label(0,190,208,120);
-    status_=label(0,316,208,62);
-    axisLabel_=label(0,382,208,20);
-    axis_=lv_dropdown_create(root_); lv_obj_set_pos(axis_,0,406); lv_obj_set_size(axis_,208,36);
+    auto *usb=label(Wearing,12,35,85,22); lv_label_set_text(usb,"Type-C <");
+    direction_=label(Wearing,8,92,224,22);
+    wearing_=label(Wearing,8,120,224,90);
+    instruction_=label(Calibration,8,0,224,112);
+    status_=label(Calibration,8,116,224,54);
+    axisLabel_=label(Axis,8,8,224,40);
+    axis_=lv_dropdown_create(pages_[Axis]); lv_obj_set_pos(axis_,8,56); lv_obj_set_size(axis_,224,36);
     lv_dropdown_set_options(axis_,"+X\n+Y\n+Z\n-X\n-Y\n-Z");
-    checked_=lv_checkbox_create(root_); lv_obj_set_pos(checked_,0,450);
+    checked_=lv_checkbox_create(pages_[Axis]); lv_obj_set_pos(checked_,8,104);
+    lv_obj_set_width(checked_,224);
+    axisHint_=label(Axis,8,136,224,32);
     for (unsigned i=0;i<3;++i) {
-      buttons_[i]=lv_btn_create(root_);
-      lv_obj_set_pos(buttons_[i],i<2 ? i*108 : 0,i<2 ? 494 : 542);
-      lv_obj_set_size(buttons_[i],i<2 ? 100 : 208,38);
+      buttons_[i]=lv_btn_create(pages_[i ? Calibration : Axis]);
+      lv_obj_set_pos(buttons_[i],i==2 ? 108 : 8,i ? 178 : 174);
+      lv_obj_set_size(buttons_[i],!i ? 224 : i==1 ? 92 : 124,38);
       lv_obj_add_event_cb(buttons_[i],action,LV_EVENT_CLICKED,(void *)(uintptr_t)i);
       buttonLabels_[i]=lv_label_create(buttons_[i]); lv_obj_center(buttonLabels_[i]);
     }
+    for (unsigned i=0;i<2;++i) {
+      navigation_[i]=lv_btn_create(root_);
+      lv_obj_set_pos(navigation_[i],i ? 160 : 8,224);
+      lv_obj_set_size(navigation_[i],72,38);
+      lv_obj_add_event_cb(navigation_[i],navigate,LV_EVENT_CLICKED,this);
+      navigationLabels_[i]=lv_label_create(navigation_[i]); lv_obj_center(navigationLabels_[i]);
+    }
+    pageLabel_=lv_label_create(root_);
+    lv_obj_set_pos(pageLabel_,84,234); lv_obj_set_size(pageLabel_,72,20);
+    lv_obj_set_style_text_align(pageLabel_,LV_TEXT_ALIGN_CENTER,0);
     language(false);
+    showPage(Connection);
   }
   void language(bool chinese) {
     chinese_=chinese;
@@ -222,14 +249,20 @@ public:
     lv_label_set_text(direction_,chinese?"手肘 <           > 车头":"ELBOW <       > FRONT");
     lv_label_set_text(wearing_,chinese?
       "Type-C 朝手肘。\nLOGO、按钮面与手背同侧。\n停车，扶稳车身，前轮摆正。":
-      "USB toward elbow.\nLOGO/buttons on hand-back side.\nStop; support bike, wheel straight.");
+      "USB toward elbow.\nLOGO/buttons face hand back.\nStop; support bike.\nKeep front wheel straight.");
     lv_label_set_text(axisLabel_,chinese?"主板哪个原生轴指向车头？":"Board native axis toward front?");
+    lv_label_set_text(axisHint_,chinese?"不知道主板轴向时不要猜。":"Unknown axis? Do not guess.");
     lv_checkbox_set_text(checked_,chinese?"已核对轴向与佩戴":"Axes/wearing checked");
-    for (auto *object : {title_,direction_,wearing_,instruction_,status_,axisLabel_,checked_,axis_})
+    lv_label_set_text(connectLabel_,chinese?"连接 / 搜索设备":"CONNECT / SEARCH");
+    lv_label_set_text(navigationLabels_[0],chinese?"上一页":"PREV");
+    lv_label_set_text(navigationLabels_[1],chinese?"下一页":"NEXT");
+    for (auto *object : {title_,direction_,wearing_,instruction_,status_,axisLabel_,axisHint_,
+                         checked_,axis_,connectionStatus_,connectLabel_,navigationLabels_[0],
+                         navigationLabels_[1],pageLabel_})
       lv_obj_set_style_text_font(object,&lv_font_noto_sans_sc_14,0);
     lv_obj_set_style_text_font(lv_dropdown_get_list(axis_),&lv_font_noto_sans_sc_14,0);
-    const char *zh[]={"确认并开始","应用标定","取消 / 原始数据"};
-    const char *en[]={"START","APPLY","CANCEL / RAW"};
+    const char *zh[]={"确认并开始","应用标定","取消/原始"};
+    const char *en[]={"START","APPLY","CANCEL/RAW"};
     for (unsigned i=0;i<3;++i) {
       lv_label_set_text(buttonLabels_[i],chinese?zh[i]:en[i]);
       lv_obj_set_style_text_font(buttonLabels_[i],&lv_font_noto_sans_sc_14,0);
@@ -271,14 +304,13 @@ public:
                             "Wrong/impure axis","Timed out","Samples below 20 Hz","Cancelled"};
     char text[160];
     snprintf(text,sizeof(text),"%s\n%s %u/2%s",chinese_?reasonsZh[unsigned(error)]:reasonsEn[unsigned(error)],
-      chinese_?"动作进度":"Cycles",cycles,blocked?(chinese_?"\n记录/存储忙，请先停止":"\nRecording/storage busy; stop first"):"");
+      chinese_?"动作进度":"Cycles",cycles,blocked?(chinese_?"\n记录/存储忙，请先停止":"\nRecording/storage busy"):"");
     set(status_,text);
     enabled(buttons_[0],!blocked && (stage==Stage::Wearing || stage==Stage::Failed || stage==Stage::Ready));
     enabled(buttons_[1],!blocked && stage==Stage::Confirm);
     enabled(axis_,stage==Stage::Wearing || stage==Stage::Failed || stage==Stage::Ready);
     enabled(checked_,stage==Stage::Wearing || stage==Stage::Failed || stage==Stage::Ready);
-    if (changed && stage>=Stage::Static && stage<=Stage::Confirm)
-      lv_obj_scroll_to_y(lv_obj_get_parent(root_),lv_obj_get_y(root_)+180,LV_ANIM_OFF);
+    if (changed && stage>=Stage::Static && stage<=Stage::Failed) showPage(Calibration);
   }
   void quality(const ImuMountCalibration::Result &result) {
     if (!status_ || blocked_ || (stage_!=ImuMountCalibration::Stage::Confirm &&
@@ -293,7 +325,7 @@ public:
   void resetCheck() {
     if (!checked_) return;
     lv_obj_clear_state(checked_,LV_STATE_CHECKED);
-    lv_obj_scroll_to_y(lv_obj_get_parent(root_),0,LV_ANIM_OFF);
+    showPage(Connection);
   }
   int8_t forwardAxis() const {
     const unsigned selected=lv_dropdown_get_selected(axis_);
@@ -303,19 +335,53 @@ public:
   lv_obj_t *instruction() const { return instruction_; }
   lv_obj_t *status() const { return status_; }
   lv_obj_t *root() const { return root_; }
+  lv_obj_t *page(Page page) const { return pages_[page]; }
+  Page currentPage() const { return page_; }
+  lv_obj_t *navigation(unsigned i) const { return navigation_[i]; }
+  lv_obj_t *connectButton() const { return connect_; }
+  lv_obj_t *connectionStatus() const { return connectionStatus_; }
+  lv_obj_t *axisDropdown() const { return axis_; }
+  lv_obj_t *wearingCheck() const { return checked_; }
+  void showPage(Page page) {
+    page_=page;
+    for (unsigned i=0;i<PageCount;++i) {
+      if (i==page_) lv_obj_clear_flag(pages_[i],LV_OBJ_FLAG_HIDDEN);
+      else lv_obj_add_flag(pages_[i],LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_label_set_text_fmt(pageLabel_,"%u / %u",unsigned(page_)+1,unsigned(PageCount));
+    enabled(navigation_[0],page_!=Connection);
+    enabled(navigation_[1],unsigned(page_)+1<PageCount);
+  }
 private:
+  static void plain(lv_obj_t *object) {
+    lv_obj_set_style_pad_all(object,0,0);
+    lv_obj_set_style_border_width(object,0,0);
+    lv_obj_set_style_radius(object,0,0);
+    lv_obj_set_style_bg_opa(object,LV_OPA_TRANSP,0);
+    lv_obj_clear_flag(object,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(object,LV_SCROLLBAR_MODE_OFF);
+  }
+  static void navigate(lv_event_t *event) {
+    auto *self=static_cast<ImuCalibrationView *>(lv_event_get_user_data(event));
+    if (lv_event_get_target(event)==self->navigation_[0]) {
+      if (self->page_!=Connection) self->showPage(Page(unsigned(self->page_)-1));
+    } else if (unsigned(self->page_)+1<PageCount) self->showPage(Page(unsigned(self->page_)+1));
+  }
   static void set(lv_obj_t *object,const char *text) {
     if (strcmp(lv_label_get_text(object),text)) lv_label_set_text(object,text);
   }
   static void enabled(lv_obj_t *object,bool enabled) {
     if (enabled) lv_obj_clear_state(object,LV_STATE_DISABLED); else lv_obj_add_state(object,LV_STATE_DISABLED);
   }
-  lv_obj_t *label(int x,int y,int width,int height) {
-    auto *object=lv_label_create(root_); lv_obj_set_pos(object,x,y); lv_obj_set_size(object,width,height);
+  lv_obj_t *label(Page page,int x,int y,int width,int height) {
+    auto *object=lv_label_create(pages_[page]); lv_obj_set_pos(object,x,y); lv_obj_set_size(object,width,height);
     lv_label_set_long_mode(object,LV_LABEL_LONG_WRAP); return object;
   }
   lv_obj_t *root_=nullptr,*title_=nullptr,*direction_=nullptr,*wearing_=nullptr,*instruction_=nullptr,*status_=nullptr;
   lv_obj_t *axisLabel_=nullptr,*axis_=nullptr,*checked_=nullptr,*buttons_[3]={},*buttonLabels_[3]={};
+  lv_obj_t *pages_[PageCount]={},*navigation_[2]={},*navigationLabels_[2]={},*pageLabel_=nullptr;
+  lv_obj_t *connectionStatus_=nullptr,*connect_=nullptr,*connectLabel_=nullptr,*axisHint_=nullptr;
+  Page page_=Connection;
   lv_point_t arrowPoints_[5]={};
   ImuMountCalibration::Stage stage_=ImuMountCalibration::Stage::Offline;
   ImuMountCalibration::Error error_=ImuMountCalibration::Error::None;

@@ -60,6 +60,11 @@ Read only the test home and owning production code relevant to the change.
 
 For guided mounting changes, run `imu_mount_calibration`, `imu_comparison`
 and `ui_sensors`, then retain `ui_language` in broader validation. Check both
+languages for the fixed five-page physical IMU settings: first-screen connection,
+PREV/NEXT limits, retained axis/checkbox choices, no-scroll containers, complete
+visible text/control bounds, and busy/failure/apply gates. Page navigation must
+not advance the sensor-driven calibration. Screenshots are retained under
+`test/results/ui-language/`. Also check both
 legacy and extended CSV schemas, immutable JSON snapshots and invalid-row
 NaN semantics. The existing BVH/web loader still defaults to raw columns.
 Real wearable output must reach 20 Hz; hardware gesture, board-forward-axis
