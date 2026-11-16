@@ -168,6 +168,16 @@ export function runTests() {
           }
           check(Math.abs(combined.angle-neutral.angle)<1e-5 && close(combined.armRatio,neutral.armRatio),
             "Relative angles and upper-arm ratios must be invariant to common rigid motion");
+          if (mountCalibration) {
+            world.scene.updateMatrixWorld(true);
+            const nativeX=world.wt.getObjectByName("sensor-axes").getObjectByName("X");
+            const actual=new THREE.Vector3(0,1,0).applyQuaternion(
+              nativeX.getWorldQuaternion(new THREE.Quaternion()));
+            const expected=new THREE.Vector3(1,0,0).applyQuaternion(bikeTurn.clone().multiply(movement)
+              .multiply(quaternionFromRows(mountCalibration.sensor_reference)));
+            check(actual.distanceTo(expected)<1e-7,
+              "Native arrows must preserve board-relative sensor motion after mounting and manual remapping");
+          }
         }
       }
     }

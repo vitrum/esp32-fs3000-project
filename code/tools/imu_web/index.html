@@ -120,7 +120,7 @@ pre{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;
     <details class="panel-section"><summary>05 · 视角与分析下载</summary>
       <label class="field">仰角<input id="elev" type="range" min="5" max="85" value="22"></label>
       <label class="field">方位角<input id="azim" type="range" min="-180" max="180" value="-80"></label>
-      <p class="note">1 单位 = 1 cm；38 cm 弯把、码表前伸 8 cm，前臂参考 26 cm。整车仅跟随主板水平航向，双轮维持参考地面；主板 IMU 固定在码表参考位置，其完整姿态不用于车架俯仰、侧倾或高度定位。设备长方块仍显示姿态变化。此模型不是实测车架姿态、惯性定位或 bike fit。</p>
+      <p class="note">1 单位 = 1 cm；38 cm 弯把、码表前伸 8 cm，前臂参考 26 cm。码表与车架刚性固定，不单独俯仰或侧倾；整车仅跟随主板水平航向，双轮维持参考地面。主板完整三维姿态用于扣除共同运动，再显示前臂相对车架的活动；原始姿态保留在分析 JSON。此模型不是实测车架姿态、惯性定位或 bike fit。</p>
       <p><a href="https://www.specialized.com/us/en/allez-sprint-comp-disc/p/184442" target="_blank" rel="noreferrer">2021 Comp Disc 49 官方几何</a></p>
       <a id="download" hidden download="imu-analysis.json">下载 IMU 全量分析 JSON</a><br>
       <a id="fit-download" hidden download="fit-analysis.json">下载 FIT 解析 JSON</a>

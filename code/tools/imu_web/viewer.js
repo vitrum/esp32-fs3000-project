@@ -245,7 +245,7 @@ export function start() {
     const candidate=diagnostics.candidates[Number($("candidate").value)];
     const before=diagnostics.baseline, best=diagnostics.recommended_validation;
     const percentage=statistics=>(statistics.outlier_fraction*100).toFixed(1)+"%";
-    $("mount-report").textContent=`参考 ${(diagnostics.reference_time_ms/1000).toFixed(2)} s，${diagnostics.quiet_samples} 个低运动样本；采样 ${diagnostics.sampled_count} 个。\n全量独立同步样本 ${before.samples}：未校准基线超限 ${percentage(before)}，首选候选验证 ${percentage(best)}。\n当前候选 ${candidate.mapping.join(" / ")}：采样超限 ${percentage(candidate.sampled_statistics)}，参考长轴偏差 ${candidate.reference_direction_error_deg.toFixed(1)}°。尚需确认佩戴与右手变头接触，旋转不唯一。`;
+    $("mount-report").textContent=`参考 ${(diagnostics.reference_time_ms/1000).toFixed(2)} s，${diagnostics.quiet_samples} 个低运动样本；采样 ${diagnostics.sampled_count} 个。\n全量独立同步样本 ${before.samples}：当前配置基线超限 ${percentage(before)}，首选候选验证 ${percentage(best)}。\n当前候选 ${candidate.mapping.join(" / ")}：采样超限 ${percentage(candidate.sampled_statistics)}，参考长轴偏差 ${candidate.reference_direction_error_deg.toFixed(1)}°。尚需确认佩戴与右手变头接触，旋转不唯一。`;
   }
   $("diagnose").onclick=async()=>{
     if (!mountChanged() || !datasetId) return;

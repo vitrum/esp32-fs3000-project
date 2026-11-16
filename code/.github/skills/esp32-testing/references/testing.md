@@ -159,6 +159,10 @@ and browser tests in `tools/imu_web/test_scene.js`. Signed XY/YZ/XZ changes
 must preserve proper rotations, reach all 24 orientations, update actual
 controls, and affect the diagnosis baseline without rewriting raw samples.
 Run control tests in a separate page to avoid invalidating a user's diagnosis.
+Rigid computer/frame changes must use full board-relative arm motion in both
+Python diagnosis and Three.js, while preserving the heading-only ground display.
+Test common pitch/roll/yaw cancellation and independent motion, with/without
+mounting, in hood/free modes; keep raw estimated orientations unchanged.
 
 Native mocks test software decisions, not radio scheduling or electrical timing.
 QEMU runs real IDF/FreeRTOS logic but does not certify BLE discovery, Wi-Fi/BLE

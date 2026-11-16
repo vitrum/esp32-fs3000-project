@@ -26,6 +26,11 @@ network requests or replacing the current dataset; modeled body motion is not
 measured full-body tracking. No DUT is used.
 The viewer browser suite also verifies fixed China UTC+08 display, midnight/year
 rollover and milliseconds; stored UTC timestamps and relative alignment are unchanged.
+Rigid-frame cases keep the computer fixed to the grounded bicycle and cancel full
+common board/wearable rotation before placing the arm. They cover independent arm
+and board motion, calibrated/default-mapped hood/free modes and preserved limb lengths.
+Python mounting cases check invariant ratios and fixed proper rotation matrices under
+common 3D motion; the raw frames and the original pose-estimation output remain intact.
 
 From the workspace root:
 

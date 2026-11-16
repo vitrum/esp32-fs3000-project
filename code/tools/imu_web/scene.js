@@ -320,7 +320,8 @@ export function updateWorld(world, pose, {
       ? quaternionFromRows(mountCalibration.playback_from_arm).multiply(wristMount).invert()
         .multiply(quaternionFromRows(mountCalibration.sensor_reference))
       : new THREE.Quaternion());
-    angle = THREE.MathUtils.radToDeg(bikeQuaternion.angleTo(armQuaternion));
+    angle = THREE.MathUtils.radToDeg(2*Math.atan2(
+      Math.hypot(relativeArm.x,relativeArm.y,relativeArm.z),Math.abs(relativeArm.w)));
     kinematics = armKinematics(bikeQuaternion,armQuaternion,mode,offset);
     world.wt.position.copy(kinematics.center);
     applyOrientation(world.wt,armQuaternion);
