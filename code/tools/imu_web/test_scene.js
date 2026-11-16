@@ -123,9 +123,8 @@ export function runTests() {
   }
   passed.push("Signed XY/YZ/XZ swaps reach 24 proper orientations with inverse/reset and no mirrors");
   const calibration={
-    alignment:[[0.866025403784,-0.5,0],[0.5,0.866025403784,0],[0,0,1]],
+    playback_from_arm:[[-0.5,0,Math.sqrt(.75)],[Math.sqrt(.75),0,0.5],[0,1,0]],
     sensor_reference:[[0,0,1],[0,1,0],[-1,0,0]],
-    native_from_arm:[[0,-1,0],[1,0,0],[0,0,1]],
   };
   const calibrated=updateWorld(world,{board:identityQuaternion,wt:identityQuaternion,paired:true},
     {mountCalibration:calibration});
@@ -140,13 +139,46 @@ export function runTests() {
     quaternion.clone().multiply(calibratedOrientation))<1e-7,"Calibrated arm turns once, not twice");
   const nativeX=world.wt.getObjectByName("sensor-axes").getObjectByName("X");
   const actualX=new THREE.Vector3(0,1,0).applyQuaternion(nativeX.getWorldQuaternion(new THREE.Quaternion()));
-  const expectedNative=quaternionFromRows(calibration.alignment).multiply(quaternion)
-    .multiply(quaternionFromRows(calibration.sensor_reference));
+  const expectedNative=quaternion.clone().multiply(quaternionFromRows(calibration.sensor_reference));
   check(actualX.distanceTo(new THREE.Vector3(1,0,0).applyQuaternion(expectedNative))<1e-7,
     "Native arrows remove model-axis permutation instead of masquerading as arm axes");
   check(close(calibratedTurn.kinematics.wrist.distanceTo(calibratedTurn.kinematics.elbow),26),
     "Calibration never scales forearm length");
   passed.push("Fixed mounting preserves common turns, native arrows and forearm length");
+  const common=new THREE.Quaternion().setFromEuler(new THREE.Euler(.6,-.7,.8,"ZYX"));
+  const bikeTurn=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1),.8);
+  const armLift=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),.5);
+  for (const mountCalibration of [null,calibration]) {
+    for (const wristMount of [identityQuaternion,wristAxisMapping(["+Y","-X","+Z"])]) {
+      for (const mode of ["hood","free"]) {
+        const options={mountCalibration,wristMount,mode};
+        for (const movement of [identityQuaternion,armLift]) {
+          const neutral=updateWorld(world,{board:identityQuaternion,wt:movement,paired:true,boardHeading:0},options);
+          const neutralOrientation=world.wt.getObjectByName("attitude").quaternion.clone();
+          const combined=updateWorld(world,{board:common,wt:common.clone().multiply(movement),
+            paired:true,boardHeading:THREE.MathUtils.radToDeg(.8)},options);
+          const relativeOrientation=bikeTurn.clone().invert()
+            .multiply(world.wt.getObjectByName("attitude").quaternion);
+          check(relativeOrientation.angleTo(neutralOrientation)<1e-7,
+            "Common 3D motion must not change calibrated or manually mapped bike-relative arm orientation");
+          for (const point of ["elbow","wrist","hand","center"]) {
+            check(combined.kinematics[point].clone().applyQuaternion(bikeTurn.clone().invert())
+              .distanceTo(neutral.kinematics[point])<1e-7,
+            "Common tilt/turn must preserve every arm lever point in the bike frame");
+          }
+          check(Math.abs(combined.angle-neutral.angle)<1e-5 && close(combined.armRatio,neutral.armRatio),
+            "Relative angles and upper-arm ratios must be invariant to common rigid motion");
+        }
+      }
+    }
+  }
+  const boardOnly=updateWorld(world,{board:armLift,wt:identityQuaternion,paired:true,boardHeading:0});
+  const armOnly=updateWorld(world,{board:identityQuaternion,wt:armLift,paired:true,boardHeading:0});
+  check(close(boardOnly.angle,THREE.MathUtils.radToDeg(.5)) && close(armOnly.angle,boardOnly.angle),
+    "Independent board and arm tilt must remain visible as relative motion, not be discarded");
+  check(boardOnly.kinematics.elbow.distanceTo(armOnly.kinematics.elbow)>20,
+    "Board-only tilt and arm-only lift must produce opposite relative arm directions");
+  passed.push("Full rigid-frame cancellation preserves independent motion, mounting, support and arm ratios");
   const record=(utc_ms,power_w=300,wind_mps=10)=>({
     utc_ms,power_w,wind_mps,cadence_rpm:0,
   });
@@ -211,10 +243,13 @@ export function runTests() {
       ...[roll,pitch,yaw].map(THREE.MathUtils.degToRad),"ZYX"));
     const grounded=updateWorld(world,{board:full,wt:full,paired:true,boardHeading:yaw},{initialHeading:23});
     world.scene.updateMatrixWorld(true);
-    const expectedFull=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1),
-      THREE.MathUtils.degToRad(-23)).multiply(full);
+    const expectedBike=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1),
+      THREE.MathUtils.degToRad(yaw-23));
     check(world.board.getObjectByName("attitude").getWorldQuaternion(new THREE.Quaternion())
-      .angleTo(expectedFull)<1e-7,"Ground constraint must not remove measured computer tilt");
+      .angleTo(expectedBike)<1e-7,"Computer must be rigidly attached to the grounded frame");
+    check(world.board.getObjectByName("attitude").quaternion.angleTo(identityQuaternion)<1e-7 &&
+      world.board.position.length()<1e-8,"Computer pose must remain fixed in its cockpit mount");
+    check(close(grounded.angle,0),"Shared pitch and roll must not appear as independent arm motion");
     check(close(grounded.heading,(23-yaw+360)%360),"Grounded bike uses integrated heading, even at vertical pitch");
     for (const wheel of [frontWheel,rearWheel]) {
       const tire=wheel.getObjectByName("tire"), positions=tire.geometry.attributes.position;
@@ -231,7 +266,7 @@ export function runTests() {
       "Arm support must use the same grounded bike frame as the hood");
   }
   updateWorld(world,{board:identityQuaternion,wt:identityQuaternion,paired:true});
-  passed.push("Both tires stay grounded through yaw/pitch/roll while computer tilt and hood support remain intact");
+  passed.push("Both tires stay grounded through yaw/pitch/roll with rigid computer and hood support");
   setRiderDimensions(bike,185,45);
   world.scene.updateMatrixWorld(true);
   for (const side of [-1,1]) {
@@ -345,8 +380,9 @@ export function runMountAxisControlTest() {
   const $=id=>document.getElementById(id);
   const ids=["wrist-x","wrist-y","wrist-z"], saved=ids.map(id=>$(id).value);
   const mapping=()=>ids.map(id=>$(id).value).join();
-  const expected={XY:["+Y,-X,+Z","-Y,+X,+Z"],YZ:["+X,+Z,-Y","+X,-Z,+Y"],
-    XZ:["+Z,+Y,-X","-Z,+Y,+X"]};
+  const defaultMapping="+Y,-X,+Z";
+  const expected={XY:["-X,-Y,+Z","+X,+Y,+Z"],YZ:["+Y,+Z,+X","+Y,-Z,-X"],
+    XZ:["+Z,-X,-Y","-Z,-X,+Y"]};
   try {
     for (const [pair,orientations] of Object.entries(expected)) {
       for (const [index,sign] of [1,-1].entries()) {
@@ -360,16 +396,16 @@ export function runMountAxisControlTest() {
           throw new Error(`${pair} ${sign}: actual UI handler did not apply the signed swap`);
         }
         document.querySelector(`[data-wrist-swap="${pair}"][data-sign="${-sign}"]`).click();
-        if (mapping()!=="+X,+Y,+Z") throw new Error("Inverse UI swaps must restore XYZ");
+        if (mapping()!==defaultMapping) throw new Error("Inverse UI swaps must restore the default mapping");
       }
     }
-    $("wrist-x").value="-X";
+    $("wrist-z").value="-Z";
     document.querySelector('[data-wrist-swap="XY"][data-sign="1"]').click();
-    if (!$("error").textContent.includes("右手系") || mapping()!=="-X,+Y,+Z") {
+    if (!$("error").textContent.includes("右手系") || mapping()!=="+Y,-X,-Z") {
       throw new Error("Reflected input must show an error without being replaced silently");
     }
     $("wrist-reset").click();
-    if (mapping()!=="+X,+Y,+Z" || $("error").textContent) throw new Error("Reset must clear invalid mapping");
+    if (mapping()!==defaultMapping || $("error").textContent) throw new Error("Reset must restore +Y/-X/+Z and clear invalid mapping");
     return {passed:["All six signed swap controls apply/invert from wearing diagnosis",
       "Reflected UI input is rejected and reset recovers"],count:2};
   } finally {

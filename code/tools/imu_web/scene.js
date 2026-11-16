@@ -285,9 +285,7 @@ function cockpitGeometry() {
 
 export function mountedWristQuaternion(quaternion,calibration) {
   if (!quaternion || !calibration) return quaternion;
-  return quaternionFromRows(calibration.alignment).multiply(quaternion)
-    .multiply(quaternionFromRows(calibration.sensor_reference))
-    .multiply(quaternionFromRows(calibration.native_from_arm));
+  return quaternion.clone().multiply(quaternionFromRows(calibration.playback_from_arm));
 }
 
 export function updateWorld(world, pose, {
@@ -305,7 +303,7 @@ export function updateWorld(world, pose, {
       : new THREE.Euler().setFromQuaternion(boardQuaternion,"ZYX").z;
     bikeQuaternion=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1),yaw);
     world.cockpit.quaternion.copy(bikeQuaternion);
-    applyOrientation(world.board,bikeQuaternion.clone().invert().multiply(boardQuaternion));
+    applyOrientation(world.board,new THREE.Quaternion());
   }
   world.cockpit.getObjectByName("right-grip").position.set(...RIGHT_GRIP)
     .add(new THREE.Vector3(...offset));
@@ -314,12 +312,15 @@ export function updateWorld(world, pose, {
   world.elbow.visible = Boolean(paired);
   let kinematics = null, angle = null;
   if (paired) {
-    const armQuaternion = northOffset.clone().multiply(mountedWristQuaternion(pose.wt,mountCalibration))
-      .multiply(wristMount);
+    const measuredArm = mountedWristQuaternion(pose.wt,mountCalibration).clone().multiply(wristMount);
+    const relativeArm = pose.board.clone().invert().multiply(measuredArm);
+    const armQuaternion = bikeQuaternion.clone().multiply(relativeArm);
     const axes=world.wt.getObjectByName("sensor-axes");
     axes.quaternion.copy(mountCalibration
-      ? quaternionFromRows(mountCalibration.native_from_arm).invert() : new THREE.Quaternion());
-    angle = THREE.MathUtils.radToDeg(boardQuaternion.angleTo(armQuaternion));
+      ? quaternionFromRows(mountCalibration.playback_from_arm).multiply(wristMount).invert()
+        .multiply(quaternionFromRows(mountCalibration.sensor_reference))
+      : new THREE.Quaternion());
+    angle = THREE.MathUtils.radToDeg(bikeQuaternion.angleTo(armQuaternion));
     kinematics = armKinematics(bikeQuaternion,armQuaternion,mode,offset);
     world.wt.position.copy(kinematics.center);
     applyOrientation(world.wt,armQuaternion);

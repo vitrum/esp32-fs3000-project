@@ -18,6 +18,7 @@ manual north reference and supported/free forearm kinematics. Python cases also
 check inverted/upright sensor mounting during a known shared turn. Browser tests
 also cover right-handed wrist remapping and rejected reflections, text visibility,
 signed XY/YZ/XZ swaps across all 24 proper orientations, actual swap/reset controls,
+and restoring the webpage default mapping +Y/-X/+Z,
 size-49 bicycle geometry with 170 mm cranks/110 mm stem, and mannequin bone lengths,
 height proportions and unreachable IK. Fullscreen/zoom require actual browser
 interaction. The UI upload regression rejects invalid scene settings without

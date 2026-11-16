@@ -88,10 +88,10 @@ pre{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;
       <div class="actions"><button data-wrist-swap="YZ" data-sign="1">YZ 正向互换</button><button data-wrist-swap="YZ" data-sign="-1">YZ 负向互换</button></div>
       <div class="actions"><button data-wrist-swap="XZ" data-sign="1">XZ 正向互换</button><button data-wrist-swap="XZ" data-sign="-1">XZ 负向互换</button></div>
       <div class="field-grid">
-        <label>模型 X<select id="wrist-x"><option>+X</option><option>-X</option><option>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
-        <label>模型 Y<select id="wrist-y"><option>+X</option><option>-X</option><option selected>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
+        <label>模型 X<select id="wrist-x"><option>+X</option><option>-X</option><option selected>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
+        <label>模型 Y<select id="wrist-y"><option>+X</option><option selected>-X</option><option>+Y</option><option>-Y</option><option>+Z</option><option>-Z</option></select></label>
         <label>模型 Z<select id="wrist-z"><option>+X</option><option>-X</option><option>+Y</option><option>-Y</option><option selected>+Z</option><option>-Z</option></select></label>
-      </div><button id="wrist-reset" class="block-button">恢复 XYZ</button>
+      </div><button id="wrist-reset" class="block-button">恢复默认（+Y / -X / +Z）</button>
       <p class="note">映射即时影响 3D 预览与佩戴诊断基线；修改后需重新分析候选。单独反转一个轴会被拒绝，请配对调整。确认应用候选会恢复这里的 XYZ，避免重复叠加。</p>
       <label class="field"><span>自动寻找低运动参考</span><input id="auto-reference" type="checkbox" checked></label>
       <label class="field">校准时间（秒）<input id="reference-time" type="number" min="0" step=".1" value="0"></label>

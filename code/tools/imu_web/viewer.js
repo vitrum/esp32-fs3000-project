@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import {OrbitControls} from "/vendor/OrbitControls.js";
-import {createWorld, updateWorld, poseAt, wristAxisMapping, swapWristAxes, setTextVisibility, RIGHT_GRIP} from "/scene.js";
+import {createWorld, updateWorld, poseAt, wristAxisMapping, swapWristAxes, mountedWristQuaternion,
+  setTextVisibility, RIGHT_GRIP} from "/scene.js";
 import {setRiderDimensions, twoLinkJoint} from "/bike_model.js";
 import {prepareActivity, activityAt, formatChinaTime} from "/activity.js";
 
@@ -157,7 +158,7 @@ export function start() {
       const heading = motion.heading===null ? "不可用" : `${motion.heading.toFixed(1)}°`;
       const position = motion.kinematics
         ? motion.kinematics.wrist.toArray().map(value=>value.toFixed(1)).join(", ") : "不可用";
-      $("pose").textContent=`整车贴地（仅航向） · 参考航向 ${heading}（有漂移） · 模型姿态夹角 ${angle} · 腕部模型位置 (${position}) cm · ${settings.mode==="hood" ? "手变头支撑" : "离把活动"}${motion.kinematics ? "" : " · 定位不可用"}${motion.armRatio===null ? "" : ` · 上臂连接比例 ${motion.armRatio.toFixed(2)}`}`;
+      $("pose").textContent=`码表与车架刚性固定 · 整车贴地（仅航向） · 参考航向 ${heading}（有漂移） · 臂架相对姿态夹角 ${angle} · 腕部模型位置 (${position}) cm · ${settings.mode==="hood" ? "手变头支撑" : "离把活动"}${motion.kinematics ? "" : " · 定位不可用"}${motion.armRatio===null ? "" : ` · 上臂连接比例 ${motion.armRatio.toFixed(2)}`}`;
     }
     showTelemetry(time);
     lastIndex=pose.index;
@@ -226,7 +227,9 @@ export function start() {
     const length=30, upperArm=world.bike.dimensions.upperArm;
     const elbow=twoLinkJoint(shoulder,grip,upperArm,length,new THREE.Vector3(-1,-1,-.5));
     if (!elbow) throw new Error("当前体型与握持点无法满足二段臂参考；请先检查配置。");
-    const matrix=new THREE.Matrix4().makeRotationFromQuaternion(settings.wristMount);
+    const mount=mountedWristQuaternion(new THREE.Quaternion(),settings.mountCalibration)
+      .multiply(settings.wristMount);
+    const matrix=new THREE.Matrix4().makeRotationFromQuaternion(mount);
     const rows=[0,1,2].map(row=>[0,1,2].map(column=>matrix.elements[column*4+row]));
     const reference=$("reference-time").valueAsNumber;
     if (!$("auto-reference").checked && (!Number.isFinite(reference) || reference<0)) {
@@ -366,7 +369,10 @@ export function start() {
     };
   }
   $("wrist-reset").onclick=()=>{
-    ["X","Y","Z"].forEach(axis=>{ $(`wrist-${axis.toLowerCase()}`).value=`+${axis}`; });
+    for (const id of ["wrist-x","wrist-y","wrist-z"]) {
+      const select=$(id);
+      select.selectedIndex=[...select.options].findIndex(option=>option.defaultSelected);
+    }
     mountChanged();
   };
   let sized=false;

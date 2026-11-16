@@ -176,9 +176,9 @@ class AnalysisTests(unittest.TestCase):
         alignment, native = np.array(candidate["alignment"]), np.array(candidate["native_from_arm"])
         np.testing.assert_allclose(alignment @ [0, 0, 1], [0, 0, 1], atol=1e-10)
         self.assertAlmostEqual(np.linalg.det(native), 1)
-        reference = np.array(candidate["sensor_reference"])
-        first = alignment @ np.array(data["frames"][0]["wt"]) @ reference @ native
-        last = alignment @ np.array(data["frames"][-1]["wt"]) @ reference @ native
+        mount = np.array(candidate["playback_from_arm"])
+        first = np.array(data["frames"][0]["wt"]) @ mount
+        last = np.array(data["frames"][-1]["wt"]) @ mount
         np.testing.assert_allclose(last, np.array(data["frames"][-1]["board"]) @ first, atol=1e-9)
         with self.assertRaisesRegex(ValueError, "supported"):
             diagnose_mount(data, {**config, "mode": "free"})
@@ -199,7 +199,46 @@ class AnalysisTests(unittest.TestCase):
         tilting_board = analyze(encode(quiet_rows))
         self.assertGreater(abs(tilting_board["frames"][-1]["board"][2][0]), 0.1)
         grounded = diagnose_mount(tilting_board, config)
-        self.assertEqual(grounded["baseline"]["outliers"], 0)
+        expected = [np.linalg.norm(np.array(config["grip"]) - 30 * (
+            np.array(frame["board"]).T @ np.array(frame["wt"]))[:, 0] - config["shoulder"]
+        ) / config["upper_arm"] for frame in tilting_board["frames"]]
+        self.assertAlmostEqual(grounded["baseline"]["ratio_p95"], float(np.quantile(expected, .95)))
+        self.assertNotAlmostEqual(expected[0], expected[-1])
+
+    def test_mount_diagnosis_cancels_common_rigid_motion(self):
+        rows = fixture(10)
+        for row in rows:
+            row.update(board_gz_dps="0", wt_gz_dps="0")
+        stationary = analyze(encode(rows))
+        moving = json.loads(json.dumps(stationary))
+        config = {"mode": "hood", "shoulder": [-27, -18, 32], "grip": [4, -19, 1.5],
+                  "neutral_direction": [math.cos(.4), math.sin(.4), 0],
+                  "forearm_and_palm": 30, "upper_arm": 31.62,
+                  "display_mount": [[0, -1, 0], [1, 0, 0], [0, 0, 1]]}
+        for index, frame in enumerate(moving["frames"]):
+            common = rotation((index * .1, index * -.08, index * .12))
+            frame["board"] = common.tolist()
+            frame["wt"] = common.tolist()
+            frame["board_heading_change_deg"] = math.degrees(index * .12)
+        original = json.dumps(moving)
+        baseline = diagnose_mount(stationary, config)
+        result = diagnose_mount(moving, config)
+        for key in ("ratio_p05", "ratio_p95", "outlier_fraction"):
+            self.assertAlmostEqual(result["baseline"][key], baseline["baseline"][key])
+            self.assertAlmostEqual(result["recommended_validation"][key],
+                                   baseline["recommended_validation"][key])
+        self.assertEqual(json.dumps(moving), original)
+        self.assertAlmostEqual(result["candidates"][0]["score"], baseline["candidates"][0]["score"])
+        for candidate in result["candidates"]:
+            mount = np.array(candidate["playback_from_arm"])
+            expected_mount = (np.array(candidate["alignment"]) @ np.array(candidate["sensor_reference"])
+                              @ np.array(candidate["native_from_arm"]))
+            np.testing.assert_allclose(mount, expected_mount, atol=1e-10)
+            np.testing.assert_allclose(mount.T @ mount, np.eye(3), atol=1e-10)
+            self.assertAlmostEqual(np.linalg.det(mount), 1)
+            for frame in moving["frames"]:
+                relative = np.array(frame["board"]).T @ np.array(frame["wt"]) @ mount
+                np.testing.assert_allclose(relative, mount, atol=1e-10)
 
     def test_signed_display_swaps_reach_diagnosis_without_modifying_raw_data(self):
         rows = fixture(10)
