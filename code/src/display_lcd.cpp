@@ -110,47 +110,42 @@ bool DisplayLcd::initTouch() {
   return touchCommand(0xD109);
 }
 
-bool DisplayLcd::readTouch(uint16_t &x, uint16_t &y) {
+UiTouchInput::Sample DisplayLcd::readTouch(uint16_t &x, uint16_t &y) {
+  using Sample = UiTouchInput::Sample;
   uint8_t count = 0;
-  if (!touchReadRegister(0xD005, &count, 1)) return false;
+  if (!touchReadRegister(0xD005, &count, 1)) return Sample::Invalid;
   count &= 0x0F;
-  if (count == 0 || count > 5) {
-    touchWriteRegister(0xD005, 0);
-    return false;
+  if (count != 1) {
+    if (!touchWriteRegister(0xD005, 0)) return Sample::Invalid;
+    return count == 0 ? Sample::Released : Sample::Invalid;
   }
 
   uint8_t points[27] = {};
   if (!touchReadRegister(0xD000, points, sizeof(points))) {
     touchWriteRegister(0xD005, 0);
-    return false;
+    return Sample::Invalid;
   }
-  touchWriteRegister(0xD005, 0);
+  if (!touchWriteRegister(0xD005, 0)) return Sample::Invalid;
   x = (uint16_t)((uint16_t)points[1] << 4) | (points[3] >> 4);
   y = (uint16_t)((uint16_t)points[2] << 4) | (points[3] & 0x0F);
-  return x < 240 && y < 320;
+  return x < 240 && y < 320 ? Sample::Pressed : Sample::Invalid;
 }
 
 void DisplayLcd::lvglTouchReadCb(lv_indev_drv_t *, lv_indev_data_t *data) {
   uint16_t x = 0;
   uint16_t y = 0;
-  const bool pressed = g_display && g_display->touchReady_ &&
-                       g_display->readTouch(x, y);
-  if (g_display && g_display->navigationGuard_.filterTouch(pressed, millis())) {
-    data->point.x = x;
-    data->point.y = y;
-    data->state = LV_INDEV_STATE_PR;
-  } else {
+  if (!g_display || !g_display->touchReady_) {
     data->state = LV_INDEV_STATE_REL;
-  }
-}
-
-void DisplayLcd::onBackNavigation(lv_event_t *event) {
-  if (!g_display || !g_display->navigationGuard_.beginBack(millis())) {
-    lv_event_stop_processing(event);
     return;
   }
-  lv_indev_t *input = lv_indev_get_act();
-  if (input) lv_indev_wait_release(input);
+  const auto sample = g_display->readTouch(x,y);
+  if (sample==UiTouchInput::Sample::Invalid && !g_display->touchReadFailed_) {
+    AppLog.println("[TOUCH] invalid/I2C sample; cancelled until stable release");
+    g_display->touchReadFailed_=true;
+  } else if (sample==UiTouchInput::Sample::Released) {
+    g_display->touchReadFailed_=false;
+  }
+  g_display->touchInput_.read(sample,x,y,millis(),data);
 }
 
 void DisplayLcd::onPowerSourceButton(lv_event_t *) {
@@ -224,6 +219,12 @@ void DisplayLcd::onResetDashboard(lv_event_t *) {
 void DisplayLcd::onSettingsBack(lv_event_t *) {
   if (!g_display) return;
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onSystemSettingsBack(lv_event_t *) {
+  if (!g_display) return;
+  lv_obj_add_flag(g_display->systemSettingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::onRideLogButton(lv_event_t *) {
@@ -1015,6 +1016,13 @@ void DisplayLcd::onTimeButton(lv_event_t *) {
   lv_obj_clear_flag(g_display->timePanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
+void DisplayLcd::onSystemSettingsButton(lv_event_t *) {
+  if (!g_display) return;
+  g_display->hideDevicePanels();
+  lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(g_display->systemSettingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
 void DisplayLcd::onNoticeDismiss(lv_event_t *) {
   if (!g_display) return;
   lv_obj_add_flag(g_display->noticePanel_, LV_OBJ_FLAG_HIDDEN);
@@ -1287,7 +1295,219 @@ void DisplayLcd::buildTimePanel() {
   lv_obj_center(wifiLabel);
 
   lv_obj_add_flag(timePanel_, LV_OBJ_FLAG_HIDDEN);
-  buildNoticePanel();
+}
+
+void DisplayLcd::buildSystemSettingsPanel() {
+  // 创建系统设置面板（统一的设置中心，带选项卡）
+  systemSettingsPanel_ = lv_obj_create(screen_);
+  lv_obj_set_size(systemSettingsPanel_, 240, 320);
+  lv_obj_center(systemSettingsPanel_);
+  lv_obj_clear_flag(systemSettingsPanel_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(systemSettingsPanel_, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_style_pad_all(systemSettingsPanel_, 0, 0);
+  lv_obj_set_style_radius(systemSettingsPanel_, 0, 0);
+  lv_obj_set_style_border_width(systemSettingsPanel_, 0, 0);
+  lv_obj_set_style_bg_color(systemSettingsPanel_, lv_color_make(248, 250, 252), 0);
+  lv_obj_set_style_bg_opa(systemSettingsPanel_, LV_OPA_COVER, 0);
+
+  buildPanelHeader(systemSettingsPanel_, "SYSTEM SETTINGS", onSystemSettingsBack);
+  systemSettingsTitle_ = lv_obj_get_child(systemSettingsPanel_, 1);
+
+  // 创建选项卡容器
+  systemSettingsTabs_ = lv_tabview_create(systemSettingsPanel_, LV_DIR_TOP, 32);
+  lv_obj_set_size(systemSettingsTabs_, 240, 288);
+  lv_obj_align(systemSettingsTabs_, LV_ALIGN_TOP_LEFT, 0, 52);
+  lv_obj_set_style_bg_color(systemSettingsTabs_, lv_color_make(248, 250, 252), 0);
+  lv_obj_set_style_text_font(systemSettingsTabs_, &lv_font_jetbrains_mono_14, 0);
+
+  // 获取选项卡按钮区域
+  lv_obj_t *tabButtonArea = lv_tabview_get_tab_btns(systemSettingsTabs_);
+  lv_obj_set_style_bg_color(tabButtonArea, lv_color_make(239, 244, 248), 0);
+
+  // ===== 时间选项卡 =====
+  systemSettingsTimeTabCont_ = lv_tabview_add_tab(systemSettingsTabs_, "TIME");
+  lv_obj_set_style_pad_all(systemSettingsTimeTabCont_, 12, 0);
+
+  systemSettingsTimeStatus_ = lv_label_create(systemSettingsTimeTabCont_);
+  lv_label_set_text(systemSettingsTimeStatus_, "Time Sync: OK");
+  lv_obj_set_style_text_font(systemSettingsTimeStatus_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(systemSettingsTimeStatus_, lv_color_make(30, 41, 59), 0);
+  lv_obj_align(systemSettingsTimeStatus_, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  systemSettingsTimeUTC_ = lv_label_create(systemSettingsTimeTabCont_);
+  lv_label_set_text(systemSettingsTimeUTC_, "UTC  --");
+  lv_obj_set_style_text_font(systemSettingsTimeUTC_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(systemSettingsTimeUTC_, lv_color_make(100, 116, 139), 0);
+  lv_obj_align(systemSettingsTimeUTC_, LV_ALIGN_TOP_LEFT, 0, 24);
+
+  systemSettingsTimezoneLabel_ = lv_label_create(systemSettingsTimeTabCont_);
+  lv_label_set_text(systemSettingsTimezoneLabel_, "Timezone:");
+  lv_obj_set_style_text_font(systemSettingsTimezoneLabel_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(systemSettingsTimezoneLabel_, lv_color_make(30, 41, 59), 0);
+  lv_obj_align(systemSettingsTimezoneLabel_, LV_ALIGN_TOP_LEFT, 0, 48);
+
+  // 时区快捷按钮（4 个常用时区）
+  const char *tzLabels[] = {"UTC", "UTC+8", "UTC-5", "Auto"};
+  const lv_coord_t tzX[] = {12, 72, 132, 192};
+  for (size_t i = 0; i < 4; ++i) {
+    systemSettingsTimezoneButtons_[i] = lv_btn_create(systemSettingsTimeTabCont_);
+    lv_obj_set_size(systemSettingsTimezoneButtons_[i], 48, 32);
+    lv_obj_set_style_radius(systemSettingsTimezoneButtons_[i], 6, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(systemSettingsTimezoneButtons_[i],
+                              i == 1 ? lv_color_make(37, 99, 235) : lv_color_make(219, 227, 236), 0);
+    lv_obj_align(systemSettingsTimezoneButtons_[i], LV_ALIGN_TOP_LEFT, tzX[i], 72);
+    lv_obj_t *label = lv_label_create(systemSettingsTimezoneButtons_[i]);
+    lv_label_set_text(label, tzLabels[i]);
+    lv_obj_set_style_text_font(label, &lv_font_jetbrains_mono_14, 0);
+    lv_obj_set_style_text_color(label, i == 1 ? lv_color_white() : lv_color_make(30, 41, 59), 0);
+    lv_obj_center(label);
+  }
+
+  // 时区列表（可滚动）
+  systemSettingsTimezoneList_ = lv_obj_create(systemSettingsTimeTabCont_);
+  lv_obj_set_size(systemSettingsTimezoneList_, 216, 100);
+  lv_obj_align(systemSettingsTimezoneList_, LV_ALIGN_TOP_LEFT, 0, 112);
+  lv_obj_set_scrollbar_mode(systemSettingsTimezoneList_, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_set_style_bg_color(systemSettingsTimezoneList_, lv_color_make(239, 244, 248), 0);
+  lv_obj_set_style_border_color(systemSettingsTimezoneList_, lv_color_make(203, 213, 225), 0);
+  lv_obj_set_style_border_width(systemSettingsTimezoneList_, 1, 0);
+
+  // 添加时区列表项
+  for (size_t i = 0; i < SystemSettings::TIMEZONE_COUNT; ++i) {
+    const auto &tzInfo = SystemSettings::TIMEZONE_LIST[i];
+    lv_obj_t *btn = lv_btn_create(systemSettingsTimezoneList_);
+    lv_obj_set_width(btn, lv_pct(100));
+    lv_obj_set_height(btn, 24);
+    lv_obj_set_style_bg_color(btn, lv_color_make(239, 244, 248), 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_radius(btn, 0, 0);
+    lv_obj_set_style_pad_all(btn, 2, 0);
+    lv_obj_t *label = lv_label_create(btn);
+    lv_label_set_text(label, tzInfo.name);
+    lv_obj_set_style_text_font(label, &lv_font_jetbrains_mono_14, 0);
+    lv_obj_set_style_text_color(label, lv_color_make(30, 41, 59), 0);
+    lv_obj_align(label, LV_ALIGN_LEFT_MID, 0, 0);
+  }
+
+  // ===== 声音选项卡 =====
+  systemSettingsSoundTabCont_ = lv_tabview_add_tab(systemSettingsTabs_, "SOUND");
+  lv_obj_set_style_pad_all(systemSettingsSoundTabCont_, 12, 0);
+
+  systemSettingsSoundLabel_ = lv_label_create(systemSettingsSoundTabCont_);
+  lv_label_set_text(systemSettingsSoundLabel_, "Volume:");
+  lv_obj_set_style_text_font(systemSettingsSoundLabel_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(systemSettingsSoundLabel_, lv_color_make(30, 41, 59), 0);
+  lv_obj_align(systemSettingsSoundLabel_, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  systemSettingsSoundValue_ = lv_label_create(systemSettingsSoundTabCont_);
+  lv_label_set_text(systemSettingsSoundValue_, "70%");
+  lv_obj_set_style_text_font(systemSettingsSoundValue_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(systemSettingsSoundValue_, lv_color_make(37, 99, 235), 0);
+  lv_obj_align(systemSettingsSoundValue_, LV_ALIGN_TOP_RIGHT, -12, 0);
+
+  systemSettingsSoundSlider_ = lv_slider_create(systemSettingsSoundTabCont_);
+  lv_obj_set_size(systemSettingsSoundSlider_, 200, 24);
+  lv_slider_set_range(systemSettingsSoundSlider_, 0, 100);
+  lv_slider_set_value(systemSettingsSoundSlider_, currentVolume_, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(systemSettingsSoundSlider_, lv_color_make(219, 227, 236), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(systemSettingsSoundSlider_, lv_color_make(37, 99, 235), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(systemSettingsSoundSlider_, lv_color_make(37, 99, 235), LV_PART_KNOB);
+  lv_obj_align(systemSettingsSoundSlider_, LV_ALIGN_TOP_LEFT, 6, 28);
+
+  // ===== 语言选项卡 =====
+  systemSettingsLanguageTabCont_ = lv_tabview_add_tab(systemSettingsTabs_, "LANG");
+  lv_obj_set_style_pad_all(systemSettingsLanguageTabCont_, 12, 0);
+
+  systemSettingsLanguageHint_ = lv_label_create(systemSettingsLanguageTabCont_);
+  lv_label_set_text(systemSettingsLanguageHint_, "Choose language:");
+  lv_obj_set_style_text_font(systemSettingsLanguageHint_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(systemSettingsLanguageHint_, lv_color_make(100, 116, 139), 0);
+  lv_obj_align(systemSettingsLanguageHint_, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  const char *langLabels[] = {"English", "简体中文"};
+  for (size_t i = 0; i < 2; ++i) {
+    systemSettingsLanguageButtons_[i] = lv_btn_create(systemSettingsLanguageTabCont_);
+    lv_obj_set_size(systemSettingsLanguageButtons_[i], 90, 40);
+    lv_obj_set_style_radius(systemSettingsLanguageButtons_[i], 8, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(systemSettingsLanguageButtons_[i],
+                              lv_color_make(239, 244, 248), 0);
+    lv_obj_set_style_border_color(systemSettingsLanguageButtons_[i],
+                                  lv_color_make(203, 213, 225), 0);
+    lv_obj_set_style_border_width(systemSettingsLanguageButtons_[i], 1, 0);
+    lv_obj_align(systemSettingsLanguageButtons_[i], LV_ALIGN_TOP_LEFT,
+                 (lv_coord_t)(12 + i * 102), 32);
+    systemSettingsLanguageLabels_[i] = lv_label_create(systemSettingsLanguageButtons_[i]);
+    lv_label_set_text(systemSettingsLanguageLabels_[i], langLabels[i]);
+    lv_obj_set_style_text_font(systemSettingsLanguageLabels_[i],
+                               i == 1 ? &lv_font_noto_sans_sc_14 : &lv_font_jetbrains_mono_14, 0);
+    lv_obj_center(systemSettingsLanguageLabels_[i]);
+  }
+
+  // ===== WiFi 选项卡 =====
+  systemSettingsWifiTabCont_ = lv_tabview_add_tab(systemSettingsTabs_, "WIFI");
+  lv_obj_set_style_pad_all(systemSettingsWifiTabCont_, 12, 0);
+
+  systemSettingsWifiLabel_ = lv_label_create(systemSettingsWifiTabCont_);
+  lv_label_set_text(systemSettingsWifiLabel_, "Wi-Fi:");
+  lv_obj_set_style_text_font(systemSettingsWifiLabel_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(systemSettingsWifiLabel_, lv_color_make(30, 41, 59), 0);
+  lv_obj_align(systemSettingsWifiLabel_, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  const char *wifiToggleLabels[] = {"OFF", "ON"};
+  for (size_t i = 0; i < 2; ++i) {
+    systemSettingsWifiToggle_[i] = lv_btn_create(systemSettingsWifiTabCont_);
+    lv_obj_set_size(systemSettingsWifiToggle_[i], 90, 40);
+    lv_obj_set_style_radius(systemSettingsWifiToggle_[i], 8, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(systemSettingsWifiToggle_[i],
+                              i == 1 ? lv_color_make(37, 99, 235) : lv_color_make(239, 244, 248), 0);
+    lv_obj_align(systemSettingsWifiToggle_[i], LV_ALIGN_TOP_LEFT,
+                 (lv_coord_t)(12 + i * 102), 32);
+    lv_obj_t *label = lv_label_create(systemSettingsWifiToggle_[i]);
+    lv_label_set_text(label, wifiToggleLabels[i]);
+    lv_obj_set_style_text_font(label, &lv_font_jetbrains_mono_14, 0);
+    lv_obj_set_style_text_color(label, i == 1 ? lv_color_white() : lv_color_make(30, 41, 59), 0);
+    lv_obj_center(label);
+  }
+
+  systemSettingsWifiStatus_ = lv_label_create(systemSettingsWifiTabCont_);
+  lv_label_set_text(systemSettingsWifiStatus_, "Status: Disconnected");
+  lv_obj_set_style_text_font(systemSettingsWifiStatus_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(systemSettingsWifiStatus_, lv_color_make(100, 116, 139), 0);
+  lv_obj_align(systemSettingsWifiStatus_, LV_ALIGN_TOP_LEFT, 0, 88);
+
+  // ===== USB 选项卡 =====
+  systemSettingsUsbTabCont_ = lv_tabview_add_tab(systemSettingsTabs_, "USB");
+  lv_obj_set_style_pad_all(systemSettingsUsbTabCont_, 12, 0);
+
+  systemSettingsUsbLabel_ = lv_label_create(systemSettingsUsbTabCont_);
+  lv_label_set_text(systemSettingsUsbLabel_, "USB Storage:");
+  lv_obj_set_style_text_font(systemSettingsUsbLabel_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(systemSettingsUsbLabel_, lv_color_make(30, 41, 59), 0);
+  lv_obj_align(systemSettingsUsbLabel_, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  const char *usbToggleLabels[] = {"OFF", "ON"};
+  for (size_t i = 0; i < 2; ++i) {
+    systemSettingsUsbToggle_[i] = lv_btn_create(systemSettingsUsbTabCont_);
+    lv_obj_set_size(systemSettingsUsbToggle_[i], 90, 40);
+    lv_obj_set_style_radius(systemSettingsUsbToggle_[i], 8, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(systemSettingsUsbToggle_[i],
+                              lv_color_make(239, 244, 248), 0);
+    lv_obj_align(systemSettingsUsbToggle_[i], LV_ALIGN_TOP_LEFT,
+                 (lv_coord_t)(12 + i * 102), 32);
+    lv_obj_t *label = lv_label_create(systemSettingsUsbToggle_[i]);
+    lv_label_set_text(label, usbToggleLabels[i]);
+    lv_obj_set_style_text_font(label, &lv_font_jetbrains_mono_14, 0);
+    lv_obj_set_style_text_color(label, lv_color_make(30, 41, 59), 0);
+    lv_obj_center(label);
+  }
+
+  systemSettingsUsbStatus_ = lv_label_create(systemSettingsUsbTabCont_);
+  lv_label_set_text(systemSettingsUsbStatus_, "Status: Disconnected");
+  lv_obj_set_style_text_font(systemSettingsUsbStatus_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(systemSettingsUsbStatus_, lv_color_make(100, 116, 139), 0);
+  lv_obj_align(systemSettingsUsbStatus_, LV_ALIGN_TOP_LEFT, 0, 88);
+
+  lv_obj_add_flag(systemSettingsPanel_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void DisplayLcd::buildNoticePanel() {
@@ -1390,7 +1610,6 @@ void DisplayLcd::buildPanelHeader(lv_obj_t *panel, const char *title,
   lv_obj_set_style_radius(backButton, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_color(backButton, lv_color_make(226, 232, 240), 0);
   lv_obj_align(backButton, LV_ALIGN_TOP_LEFT, 10, 10);
-  lv_obj_add_event_cb(backButton, onBackNavigation, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(backButton, backCallback, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *backLabel = lv_label_create(backButton);
   lv_label_set_text(backLabel, LV_SYMBOL_LEFT " BACK");
@@ -1751,20 +1970,20 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_text_font(settingsPowerButtonLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(settingsPowerButtonLabel_);
 
-  // 语言入口
-  settingsLanguageEntryButton_ = lv_btn_create(settingsPanel_);
-  lv_obj_set_size(settingsLanguageEntryButton_, kBtnW, kBtnH);
-  lv_obj_set_style_radius(settingsLanguageEntryButton_, 8, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(settingsLanguageEntryButton_, lv_color_make(79, 70, 229), 0);
-  lv_obj_align(settingsLanguageEntryButton_, LV_ALIGN_TOP_LEFT, kColX[1], kRowY[0]);
-  lv_obj_add_event_cb(settingsLanguageEntryButton_, onLanguageButton,
+  // 系统设置入口（新的统一面板，包含时间、声音、语言、WiFi、USB）
+  settingsSystemButton_ = lv_btn_create(settingsPanel_);
+  lv_obj_set_size(settingsSystemButton_, kBtnW, kBtnH);
+  lv_obj_set_style_radius(settingsSystemButton_, 8, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(settingsSystemButton_, lv_color_make(79, 70, 229), 0);
+  lv_obj_align(settingsSystemButton_, LV_ALIGN_TOP_LEFT, kColX[1], kRowY[0]);
+  lv_obj_add_event_cb(settingsSystemButton_, onSystemSettingsButton,
                       LV_EVENT_CLICKED, nullptr);
-  settingsLanguageEntryLabel_ = lv_label_create(settingsLanguageEntryButton_);
-  lv_label_set_text(settingsLanguageEntryLabel_, LV_SYMBOL_LIST "\nLANG");
-  lv_obj_set_style_text_color(settingsLanguageEntryLabel_, lv_color_white(), 0);
-  lv_obj_set_style_text_align(settingsLanguageEntryLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(settingsLanguageEntryLabel_, &lv_font_jetbrains_mono_14, 0);
-  lv_obj_center(settingsLanguageEntryLabel_);
+  settingsSystemButtonLabel_ = lv_label_create(settingsSystemButton_);
+  lv_label_set_text(settingsSystemButtonLabel_, LV_SYMBOL_SETTINGS "\nSYSTEM");
+  lv_obj_set_style_text_color(settingsSystemButtonLabel_, lv_color_white(), 0);
+  lv_obj_set_style_text_align(settingsSystemButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(settingsSystemButtonLabel_, &lv_font_jetbrains_mono_14, 0);
+  lv_obj_center(settingsSystemButtonLabel_);
 
   // Wi-Fi 入口
   settingsWifiEntryButton_ = lv_btn_create(settingsPanel_);
@@ -1781,26 +2000,12 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_text_font(settingsWifiEntryLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(settingsWifiEntryLabel_);
 
-  // 声音入口
-  settingsSoundButton_ = lv_btn_create(settingsPanel_);
-  lv_obj_set_size(settingsSoundButton_, kBtnW, kBtnH);
-  lv_obj_set_style_radius(settingsSoundButton_, 8, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(settingsSoundButton_, lv_color_make(124, 58, 237), 0);
-  lv_obj_align(settingsSoundButton_, LV_ALIGN_TOP_LEFT, kColX[1], kRowY[1]);
-  lv_obj_add_event_cb(settingsSoundButton_, onSoundButton, LV_EVENT_CLICKED, nullptr);
-  settingsSoundButtonLabel_ = lv_label_create(settingsSoundButton_);
-  lv_label_set_text(settingsSoundButtonLabel_, LV_SYMBOL_AUDIO "\nSOUND");
-  lv_obj_set_style_text_color(settingsSoundButtonLabel_, lv_color_white(), 0);
-  lv_obj_set_style_text_align(settingsSoundButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(settingsSoundButtonLabel_, &lv_font_jetbrains_mono_14, 0);
-  lv_obj_center(settingsSoundButtonLabel_);
-
   // 在线设备状态列表
   settingsSdButton_ = lv_btn_create(settingsPanel_);
   lv_obj_set_size(settingsSdButton_, kBtnW, kBtnH);
   lv_obj_set_style_radius(settingsSdButton_, 8, LV_PART_MAIN);
   lv_obj_set_style_bg_color(settingsSdButton_, lv_color_make(15, 118, 110), 0);
-  lv_obj_align(settingsSdButton_, LV_ALIGN_TOP_LEFT, kColX[0], kRowY[2]);
+  lv_obj_align(settingsSdButton_, LV_ALIGN_TOP_LEFT, kColX[1], kRowY[1]);
   lv_obj_add_event_cb(settingsSdButton_, onOnlineDevicesButton, LV_EVENT_CLICKED, nullptr);
   settingsSdButtonLabel_ = lv_label_create(settingsSdButton_);
   lv_label_set_text(settingsSdButtonLabel_, LV_SYMBOL_OK "\nONLINE");
@@ -1808,19 +2013,6 @@ void DisplayLcd::buildSettingsPanel() {
   lv_obj_set_style_text_align(settingsSdButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(settingsSdButtonLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_center(settingsSdButtonLabel_);
-
-  settingsTimeButton_ = lv_btn_create(settingsPanel_);
-  lv_obj_set_size(settingsTimeButton_, kBtnW, kBtnH);
-  lv_obj_set_style_radius(settingsTimeButton_, 8, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(settingsTimeButton_, lv_color_make(21, 128, 61), 0);
-  lv_obj_align(settingsTimeButton_, LV_ALIGN_TOP_LEFT, kColX[1], kRowY[2]);
-  lv_obj_add_event_cb(settingsTimeButton_, onTimeButton, LV_EVENT_CLICKED, nullptr);
-  settingsTimeButtonLabel_ = lv_label_create(settingsTimeButton_);
-  lv_label_set_text(settingsTimeButtonLabel_, LV_SYMBOL_WIFI "\nTIME");
-  lv_obj_set_style_text_color(settingsTimeButtonLabel_, lv_color_white(), 0);
-  lv_obj_set_style_text_align(settingsTimeButtonLabel_, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(settingsTimeButtonLabel_, &lv_font_jetbrains_mono_14, 0);
-  lv_obj_center(settingsTimeButtonLabel_);
 
   lv_obj_t *logs = lv_btn_create(settingsPanel_);
   lv_obj_set_size(logs, 96, 52);
@@ -1833,18 +2025,6 @@ void DisplayLcd::buildSettingsPanel() {
   lv_label_set_text(logsLabel, LV_SYMBOL_LIST "\nLOG");
   lv_obj_set_style_text_color(logsLabel, lv_color_white(), 0);
   lv_obj_center(logsLabel);
-
-  lv_obj_t *usb = lv_btn_create(settingsPanel_);
-  lv_obj_set_size(usb, 96, 52);
-  lv_obj_align(usb, LV_ALIGN_TOP_LEFT, 128, 246);
-  lv_obj_set_style_radius(usb, 8, 0);
-  lv_obj_set_style_bg_color(usb, lv_color_make(15, 118, 110), 0);
-  lv_obj_add_event_cb(usb, onUsbStorageButton, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t *usbLabel = lv_label_create(usb);
-  lv_label_set_text(usbLabel, LV_SYMBOL_USB "\nUSB");
-  lv_obj_set_style_text_font(usbLabel, &lv_font_jetbrains_mono_14, 0);
-  lv_obj_set_style_text_color(usbLabel, lv_color_white(), 0);
-  lv_obj_center(usbLabel);
 
   rideLogPanel_ = lv_obj_create(screen_);
   lv_obj_set_size(rideLogPanel_, 240, 320);
@@ -1913,6 +2093,8 @@ void DisplayLcd::buildSettingsPanel() {
   buildSoundPanel();
   buildSdPanel();
   buildTimePanel();
+  buildSystemSettingsPanel();  // 新的统一系统设置面板
+  buildNoticePanel();
 }
 
 void DisplayLcd::buildLanguagePanel() {
@@ -2249,15 +2431,15 @@ void DisplayLcd::refreshLanguage() {
   lv_label_set_text(settingsPowerButtonLabel_,
                     localized(LV_SYMBOL_BLUETOOTH "\nDEVICES",
                               LV_SYMBOL_BLUETOOTH "\n设备"));
-  lv_label_set_text(settingsLanguageEntryLabel_, localized(LV_SYMBOL_LIST "\nLANG", LV_SYMBOL_LIST "\n语言"));
+  lv_label_set_text(settingsSystemButtonLabel_,
+                    localized(LV_SYMBOL_SETTINGS "\nSYSTEM", LV_SYMBOL_SETTINGS "\n系统设置"));
+  lv_label_set_text(systemSettingsTitle_, localized("SYSTEM SETTINGS", "系统设置"));
+  lv_obj_set_style_text_font(systemSettingsTitle_, titleFont, 0);
   lv_label_set_text(settingsWifiEntryLabel_, LV_SYMBOL_WIFI "\nWI-FI");
   lv_label_set_text(settingsSdButtonLabel_,
                     localized(LV_SYMBOL_OK "\nONLINE", LV_SYMBOL_OK "\n在线设备"));
-  lv_label_set_text(settingsSoundButtonLabel_, localized(LV_SYMBOL_AUDIO "\nSOUND", LV_SYMBOL_AUDIO "\n声音"));
-  lv_label_set_text(settingsTimeButtonLabel_,
-                    localized(LV_SYMBOL_WIFI "\nTIME", LV_SYMBOL_WIFI "\n时间"));
   lv_obj_set_style_text_font(settingsTitle_, titleFont, 0);
-  for (auto *label : {settingsPowerButtonLabel_, settingsLanguageEntryLabel_, settingsWifiEntryLabel_, settingsSdButtonLabel_, settingsSoundButtonLabel_, settingsTimeButtonLabel_})
+  for (auto *label : {settingsPowerButtonLabel_, settingsSystemButtonLabel_, settingsWifiEntryLabel_, settingsSdButtonLabel_})
     lv_obj_set_style_text_font(label, font, 0);
   lv_label_set_text(lv_obj_get_child(deviceHubPanel_, 1),
                     localized("BLUETOOTH DEVICES", "蓝牙设备"));
@@ -2334,7 +2516,7 @@ void DisplayLcd::refreshLanguage() {
   lv_obj_t *panels[] = {
     powerSourcePanel_, deviceHubPanel_, heartDevicePanel_, postureDevicePanel_,
     onlineDevicesPanel_, bleDevicePanel_, bleConfirmPanel_,
-    bleLoadingPanel_, virtualPowerPanel_, settingsPanel_, soundPanel_, sdPanel_,
+    bleLoadingPanel_, virtualPowerPanel_, settingsPanel_, systemSettingsPanel_, soundPanel_, sdPanel_,
     timePanel_, languagePanel_, wifiPanel_, rideLogPanel_
   };
   for (lv_obj_t *panel : panels) {
@@ -2395,8 +2577,10 @@ void DisplayLcd::begin() {
     lv_indev_drv_init(&indevDrv);
     indevDrv.type = LV_INDEV_TYPE_POINTER;
     indevDrv.read_cb = lvglTouchReadCb;
-    lv_indev_drv_register(&indevDrv);
-    AppLog.println("[TOUCH] CST328 ready");
+    touchDevice_ = lv_indev_drv_register(&indevDrv);
+    touchReady_ = touchDevice_ != nullptr;
+    AppLog.println(touchReady_ ? "[TOUCH] CST328 ready" :
+                   "[TOUCH] input registration failed; touch controls disabled");
   } else {
     AppLog.println("[TOUCH] CST328 unavailable; touch controls disabled");
   }
@@ -2420,6 +2604,7 @@ void DisplayLcd::begin() {
   buildPowerSourcePanel();
   refreshLanguage();
   lv_scr_load(screen_);
+  if (touchReady_) touchInput_.attach(touchDevice_,screen_);
   _gfx->fillScreen(BLACK);
 }
 

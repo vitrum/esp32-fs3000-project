@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ui_touch_input.h"
+
 #include <lvgl.h>
 #include <cstring>
 #include <cstdio>
@@ -345,8 +347,7 @@ public:
   void showPage(Page page) {
     page_=page;
     for (unsigned i=0;i<PageCount;++i) {
-      if (i==page_) lv_obj_clear_flag(pages_[i],LV_OBJ_FLAG_HIDDEN);
-      else lv_obj_add_flag(pages_[i],LV_OBJ_FLAG_HIDDEN);
+      UiTouchInput::setPageHidden(pages_[i],i!=page_);
     }
     lv_label_set_text_fmt(pageLabel_,"%u / %u",unsigned(page_)+1,unsigned(PageCount));
     enabled(navigation_[0],page_!=Connection);

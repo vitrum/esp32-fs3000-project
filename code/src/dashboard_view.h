@@ -3,6 +3,7 @@
 #include "battery_gauge.h"
 #include "dashboard_layout.h"
 #include "sd_activity.h"
+#include "ui_touch_input.h"
 #include <lvgl.h>
 #include "jetbrains_mono_latin.h"
 #include <cmath>
@@ -100,6 +101,7 @@ public:
       lv_obj_clear_flag(row.box, LV_OBJ_FLAG_SCROLLABLE);
       lv_obj_add_flag(row.box, LV_OBJ_FLAG_CLICKABLE);
       lv_obj_add_flag(row.box, LV_OBJ_FLAG_PRESS_LOCK);
+      lv_obj_add_flag(row.box, UiTouchInput::DragRelease);
       lv_obj_add_event_cb(row.box, event, LV_EVENT_ALL, &row);
       row.title = text(row.box, 0, 0, 72, 18, &lv_font_jetbrains_mono_14);
       row.unit = text(row.box, 0, 18, 72, 18, &lv_font_jetbrains_mono_14);

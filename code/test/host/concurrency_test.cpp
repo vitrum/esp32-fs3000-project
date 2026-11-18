@@ -184,37 +184,47 @@ static void downloadTests() {
 
 static void navigationTests() {
   UiNavigationGuard guard;
-  assert(guard.filterTouch(true, 0));
-  assert(guard.beginBack(1000));
-  assert(!guard.beginBack(1000));
-  assert(!guard.filterTouch(false, 1000));
-  assert(!guard.filterTouch(false, 1120));
-  assert(!guard.beginBack(1120));
-  assert(!guard.filterTouch(true, 1240));
-  assert(!guard.filterTouch(false, 1250));
-  assert(!guard.filterTouch(false, 1369));
-  assert(!guard.beginBack(1369));
-  assert(!guard.filterTouch(false, 1370));
-  assert(guard.filterTouch(true, 1371));
-  assert(guard.beginBack(1400));
-  for (uint32_t t = 1400; t < 2400; t += 20) {
-    assert(!guard.filterTouch(true, t));
-    assert(!guard.beginBack(t));
+  using Sample = UiNavigationGuard::Sample;
+  guard.sample(Sample::Pressed,100,100,0);
+  assert(guard.pressed() && guard.started() && guard.clickAllowed());
+  guard.sample(Sample::Pressed,105,103,10);
+  assert(!guard.started() && guard.clickAllowed());
+  guard.sample(Sample::Pressed,112,100,20);
+  guard.sample(Sample::Pressed,100,100,30);
+  assert(!guard.clickAllowed());
+  assert(guard.navigate());
+  for (uint32_t t=40;t<=2000;t+=10) {
+    guard.sample(Sample::Pressed,100,100,t);
+    assert(!guard.pressed() && !guard.started());
   }
-  assert(!guard.filterTouch(false, 2400));
-  assert(!guard.filterTouch(true, 2450));
-  assert(!guard.filterTouch(false, 2500));
-  assert(!guard.filterTouch(false, 2619));
-  assert(!guard.beginBack(2619));
-  assert(!guard.filterTouch(false, 2620));
-  assert(guard.filterTouch(true, 2621));
-  assert(guard.beginBack(UINT32_MAX - 100));
-  assert(!guard.filterTouch(false, UINT32_MAX - 100));
-  assert(!guard.filterTouch(false, 148));
-  assert(!guard.beginBack(148));
-  assert(!guard.filterTouch(false, 149));
-  assert(guard.beginBack(150));
-  std::cout << "PASS UI: one-level back, held touch, release bounce, quiet release, timer wrap\n";
+  guard.sample(Sample::Released,0,0,2010);
+  guard.sample(Sample::Pressed,100,100,2030);
+  assert(!guard.pressed());
+  guard.sample(Sample::Released,0,0,2040);
+  guard.sample(Sample::Released,0,0,2070);
+  guard.sample(Sample::Pressed,80,80,2071);
+  assert(guard.pressed() && guard.started() && guard.clickAllowed());
+  assert(guard.sample(Sample::Invalid,0,0,2080));
+  assert(!guard.pressed() && !guard.clickAllowed());
+  guard.sample(Sample::Pressed,80,80,2090);
+  assert(!guard.pressed());
+  guard.sample(Sample::Released,0,0,2100);
+  guard.sample(Sample::Invalid,0,0,2120);
+  guard.sample(Sample::Released,0,0,2130);
+  guard.sample(Sample::Released,0,0,2160);
+  guard.sample(Sample::Pressed,80,80,2161);
+  assert(guard.pressed() && guard.clickAllowed());
+  guard.sample(Sample::Released,0,0,2170);
+  assert(guard.pressed() && guard.x()==80 && guard.y()==80);
+  guard.sample(Sample::Pressed,80,80,2180);
+  assert(guard.pressed() && !guard.started());
+  guard.sample(Sample::Released,0,0,UINT32_MAX-10);
+  guard.sample(Sample::Released,0,0,19);
+  assert(!guard.pressed());
+  assert(!guard.navigate());
+  guard.sample(Sample::Pressed,50,50,20);
+  assert(guard.pressed() && guard.clickAllowed());
+  std::cout << "PASS UI: shared touch session, held navigation, drag latch, invalid reads, quiet release, timer wrap\n";
 }
 
 int main() {

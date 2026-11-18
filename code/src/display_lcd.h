@@ -13,11 +13,12 @@
 #include "saved_connections.h"
 #include "wind_probe.h"
 #include "csv_logger.h"   // SdFileEntry
-#include "ui_navigation_guard.h"
+#include "ui_touch_input.h"
 #include "ui_touch_buffer.h"
 #include "dashboard_view.h"
 #include "sensor_views.h"
 #include "recent_sensor_reading.h"
+#include "system_settings.h"
 
 // ST7789 240x320 display for wind, CdA, live power, cadence, and status.
 class DisplayLcd {
@@ -196,8 +197,6 @@ private:
   lv_obj_t *settingsPowerButton_ = nullptr;
   lv_obj_t *settingsPowerButtonLabel_ = nullptr;
   // 设置主页 3×2 入口按钮
-  lv_obj_t *settingsLanguageEntryButton_ = nullptr;
-  lv_obj_t *settingsLanguageEntryLabel_ = nullptr;
   lv_obj_t *settingsWifiEntryButton_ = nullptr;
   lv_obj_t *settingsWifiEntryLabel_ = nullptr;
   // 独立「语言」页面
@@ -216,10 +215,8 @@ private:
   lv_obj_t *settingsWifiStatus_ = nullptr;
   lv_obj_t *settingsSdButton_ = nullptr;
   lv_obj_t *settingsSdButtonLabel_ = nullptr;
-  lv_obj_t *settingsSoundButton_ = nullptr;
-  lv_obj_t *settingsSoundButtonLabel_ = nullptr;
-  lv_obj_t *settingsTimeButton_ = nullptr;
-  lv_obj_t *settingsTimeButtonLabel_ = nullptr;
+  lv_obj_t *settingsSystemButton_ = nullptr;
+  lv_obj_t *settingsSystemButtonLabel_ = nullptr;
   lv_obj_t *timePanel_ = nullptr;
   lv_obj_t *timeTitle_ = nullptr;
   lv_obj_t *timeStatusLabel_ = nullptr;
@@ -241,6 +238,45 @@ private:
   lv_obj_t *sdRowLabels_[12] = {};          // 行文字
   lv_obj_t *sdUpButton_ = nullptr;
   lv_obj_t *sdUpLabel_ = nullptr;
+  
+  // 新的系统设置面板（统一的设置中心，带选项卡）
+  lv_obj_t *systemSettingsPanel_ = nullptr;
+  lv_obj_t *systemSettingsTitle_ = nullptr;
+  lv_obj_t *systemSettingsTabs_ = nullptr;    // 选项卡组件
+  
+  // 时间选项卡
+  lv_obj_t *systemSettingsTimeTabCont_ = nullptr;
+  lv_obj_t *systemSettingsTimeStatus_ = nullptr;
+  lv_obj_t *systemSettingsTimeUTC_ = nullptr;
+  lv_obj_t *systemSettingsTimezoneLabel_ = nullptr;
+  lv_obj_t *systemSettingsTimezoneButtons_[4] = {};  // 时区快捷按钮
+  lv_obj_t *systemSettingsTimezoneList_ = nullptr;   // 时区选择列表
+  SystemSettings::Timezone selectedTimezone_ = SystemSettings::Timezone::UTC_P8_BEIJING;
+  
+  // 声音选项卡
+  lv_obj_t *systemSettingsSoundTabCont_ = nullptr;
+  lv_obj_t *systemSettingsSoundLabel_ = nullptr;
+  lv_obj_t *systemSettingsSoundSlider_ = nullptr;
+  lv_obj_t *systemSettingsSoundValue_ = nullptr;
+  
+  // 语言选项卡
+  lv_obj_t *systemSettingsLanguageTabCont_ = nullptr;
+  lv_obj_t *systemSettingsLanguageHint_ = nullptr;
+  lv_obj_t *systemSettingsLanguageButtons_[2] = {};
+  lv_obj_t *systemSettingsLanguageLabels_[2] = {};
+  
+  // WiFi 选项卡
+  lv_obj_t *systemSettingsWifiTabCont_ = nullptr;
+  lv_obj_t *systemSettingsWifiLabel_ = nullptr;
+  lv_obj_t *systemSettingsWifiToggle_[2] = {};  // ON/OFF 按钮
+  lv_obj_t *systemSettingsWifiStatus_ = nullptr;
+  
+  // USB 选项卡
+  lv_obj_t *systemSettingsUsbTabCont_ = nullptr;
+  lv_obj_t *systemSettingsUsbLabel_ = nullptr;
+  lv_obj_t *systemSettingsUsbToggle_[2] = {};  // ON/OFF 按钮
+  lv_obj_t *systemSettingsUsbStatus_ = nullptr;
+
   lv_obj_t *virtualPowerPanel_ = nullptr;
   lv_obj_t *virtualPowerValueLabel_ = nullptr;
   lv_obj_t *virtualCadenceValueLabel_ = nullptr;
@@ -323,7 +359,9 @@ private:
   BleDevicePages bleDevicePages_;
   size_t selectedBleDevice_ = 0;
   bool touchReady_ = false;
-  UiNavigationGuard navigationGuard_;
+  UiTouchInput touchInput_;
+  lv_indev_t *touchDevice_ = nullptr;
+  bool touchReadFailed_ = false;
 
   // BLE 相关按钮的触控缓冲：吃掉重复点击与界面切换后的穿透点击。
   TouchBuffer bleScanTouch_{BLE_UI_TOUCH_GUARD_MS};
@@ -345,7 +383,6 @@ private:
   char sdListStatus_[64] = {};
   static void lvglFlushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);
   static void lvglTouchReadCb(lv_indev_drv_t *drv, lv_indev_data_t *data);
-  static void onBackNavigation(lv_event_t *event);
   static void onPowerSourceButton(lv_event_t *event);
   static void onDeviceHubPower(lv_event_t *event);
   static void onDeviceHubHeart(lv_event_t *event);
@@ -389,12 +426,14 @@ private:
   static void onSdFileClicked(lv_event_t *event);
   static void onSdUpClicked(lv_event_t *event);
   static void onTimeButton(lv_event_t *event);
+  static void onSystemSettingsButton(lv_event_t *event);
+  static void onSystemSettingsBack(lv_event_t *event);
   static void onTimeBack(lv_event_t *event);
   static void onTimeWifiClicked(lv_event_t *event);
   static void onNoticeDismiss(lv_event_t *event);
   void showNotice(const char *message);
   static uint16_t rgb565FromLvColor(lv_color_t c);
-  bool readTouch(uint16_t &x, uint16_t &y);
+  UiTouchInput::Sample readTouch(uint16_t &x, uint16_t &y);
   bool initTouch();
   bool touchCommand(uint16_t reg);
   bool touchReadRegister(uint16_t reg, uint8_t *data, size_t len);
@@ -411,6 +450,7 @@ private:
   void buildSoundPanel();
   void buildSdPanel();
   void buildTimePanel();
+  void buildSystemSettingsPanel();      // 新的统一系统设置面板
   void buildNoticePanel();
   void refreshSoundVolume();
   void refreshSdList();
