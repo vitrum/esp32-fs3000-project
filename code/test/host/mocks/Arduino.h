@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -30,8 +31,9 @@ public:
   long toInt() const { return strtol(c_str(), nullptr, 10); }
 };
 #define PROGMEM
+using std::min;
 using byte = uint8_t;
-constexpr int LOW = 0, HIGH = 1, OUTPUT = 1, INPUT_PULLUP = 2;
+constexpr int LOW = 0, HIGH = 1, INPUT = 0, OUTPUT = 1, INPUT_PULLUP = 2;
 constexpr float PI = 3.14159265358979323846f;
 inline int hostPins[64] = {};
 inline void pinMode(int, int) {}

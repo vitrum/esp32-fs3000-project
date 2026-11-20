@@ -69,6 +69,36 @@ a 300000 ms synchronization interval after connection. These tests use host
 LVGL/ESP service mocks; they do not prove physical display readability, RF
 coexistence, or actual NTP accuracy.
 
+### System Settings
+
+The `ui_system_settings` native scenario compiles the real `DisplayLcd`,
+LVGL and audio volume controller. Simulated pointer taps select every System
+tab and exercise Wi-Fi ON/OFF/setup, live status feedback, both languages and
+language persistence, timezone restore/save/failure and USB request/error display.
+Slider drags reach 0 and 100 and commit only on release. The test checks control
+bounds and retains `system-*.ppm` frames in `test/results/ui-language/`.
+The full native UI uses a 256 KiB LVGL pool to account for 64-bit host pointers;
+the production ESP32 pool remains 128 KiB.
+
+Run the focused checks with:
+
+```sh
+docker run --rm -v "$PWD:/project" aeroprobe-idf-test:4.4.6 \
+  /opt/pytest-venv/bin/python -m pytest -q test/host/test_regression.py \
+  -k 'ui_system_settings or ui_sensors or ui_language' \
+  --junitxml=test/results/system-settings-focused.xml
+```
+
+System tabs use the same commands as the existing standalone settings pages.
+Wi-Fi status follows the controller, not an optimistic ON highlight. TIME
+reflects actual NTP/holdover state; its persisted manual UTC offset changes the
+dashboard clock only, not UTC recording timestamps or the recording directory's
+existing UTC+8 convention. The nonfunctional automatic-timezone placeholder
+has been removed; local IP addresses do not reliably identify a timezone.
+Volume remains adjustable/persisted, but audio output and preview tones are
+disabled by the current firmware configuration. Real association, NTP, speaker
+output and a USB mode restart require an authorized physical-board test.
+
 ### Type-C SD Export
 
 The Waveshare schematic routes Type-C data to ESP32-S3 GPIO19/20, so its native
@@ -237,6 +267,12 @@ invalid/unpaired reference vectors are NaN. The comparison validator accepts
 both exact legacy and extended schemas. Existing BVH/web tools still use raw
 columns, not an automatic mounting-matrix import; retain the JSON alongside
 the CSV (available through SD/USB, not the current CSV/FIT-only HTTP browser).
+
+The IMU writer regression also checks that invalid metadata creates neither
+file and that retrying can write a clean CSV and JSON. For a restart during
+recording, capture the next boot's `[BOOT] reset_reason` at 115200 baud. Native
+tests do not exercise ESP32 task stack limits; verify START and STOP on the
+physical board with the SD card installed.
 
 An independent calibration trace records new wearable samples and phases;
 its initial sidecar is unconfirmed. Normal recordings save the applied result

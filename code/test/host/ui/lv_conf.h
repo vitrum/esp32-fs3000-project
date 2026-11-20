@@ -2,7 +2,8 @@
 #define LV_CONF_H
 #define LV_COLOR_DEPTH 16
 #define LV_MEM_CUSTOM 0
-#define LV_MEM_SIZE (128 * 1024)
+// The full UI uses 64-bit pointers on the host versus 32-bit on the ESP32.
+#define LV_MEM_SIZE (256 * 1024)
 #define LV_USE_LOG 0
 #define LV_USE_ASSERT_NULL 1
 #define LV_USE_ASSERT_MALLOC 1

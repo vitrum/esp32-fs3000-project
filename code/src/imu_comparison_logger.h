@@ -96,7 +96,11 @@ private:
   }
 
   bool open(uint32_t session) {
-    if (!sdCardReady() || !lockSdCard(pdMS_TO_TICKS(1000))) return false;
+    if (!sdCardReady()) return false;
+    // At START the CSV buffer is empty and owned by this worker. Reuse it
+    // rather than nesting a 2 KiB JSON buffer under the CSV formatter's frame.
+    const size_t length = metadata_.format(buffer_, 2048);
+    if (!length || !lockSdCard(pdMS_TO_TICKS(1000))) return false;
     char directory[160];
     snprintf(directory, sizeof(directory), "%s/IMU", sdMountPoint());
     bool success = mkdir(directory, 0775) == 0 || errno == EEXIST;
@@ -108,16 +112,14 @@ private:
     }
     success = success && fd_ >= 0;
     if (success) {
-      char json[2048];
-      const size_t length = metadata_.format(json,sizeof(json));
       char metadataPath[200];
       snprintf(metadataPath,sizeof(metadataPath),"%.*s.json",int(strlen(path)-4),path);
       const int metadataFd = ::open(metadataPath,O_WRONLY|O_CREAT|O_EXCL,0664);
-      bool written = metadataFd >= 0 && length;
+      bool written = metadataFd >= 0;
       if (written) {
         size_t offset=0;
         while (offset<length) {
-          const ssize_t count=::write(metadataFd,json+offset,length-offset);
+          const ssize_t count=::write(metadataFd,buffer_+offset,length-offset);
           if (count<=0) { written=false; break; }
           offset+=size_t(count);
         }

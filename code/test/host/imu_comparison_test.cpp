@@ -134,6 +134,24 @@ static void loggerTests(const ImuComparisonRecord &record) {
   assert(json.find("\"calibration_id\":999")==std::string::npos);
   char shortMetadata[8];
   assert(metadata.format(shortMetadata,sizeof(shortMetadata))==0);
+
+  metadata.address[0] = '"';
+  assert(logger.start(7, metadata));
+  await([&] { return !logger.busy(); });
+  assert(logger.failed());
+  const std::string retryPath = mountPath + "/IMU/I00000007-0";
+  assert(!std::ifstream(retryPath + ".csv").good());
+  assert(!std::ifstream(retryPath + ".json").good());
+  assert(logger.start(7));
+  assert(logger.log(record));
+  logger.requestStop();
+  await([&] { return !logger.busy(); });
+  assert(!logger.failed() && logger.written() == 1 && logger.dropped() == 0);
+  std::ifstream retried(retryPath + ".csv");
+  const std::string retriedText{std::istreambuf_iterator<char>(retried), std::istreambuf_iterator<char>()};
+  assert(retriedText.find(ImuComparison::header()) == 0);
+  assert(std::count(retriedText.begin(), retriedText.end(), '\n') == 2);
+  assert(std::ifstream(retryPath + ".json").good());
   assert(logger.end());
   std::cout << "PASS IMU storage: unavailable SD, real CSV, stop drain, unique files, write/fsync failures, bounded queue\n";
 }

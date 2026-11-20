@@ -41,6 +41,7 @@ Use other existing scenario names with `-k` as needed. Check
 | Production behavior | Existing test home |
 | --- | --- |
 | Real LVGL aero layout, Chinese glyph coverage, language-switch rendering and heap/pixels | `test/host/ui_language_test.cpp`, native build under `test/host/ui/` |
+| System tabs: real pointer Wi-Fi/setup/status, volume release, language persistence, timezone and USB requests/errors | `test/host/system_settings_test.cpp` (`ui_system_settings`), production `display_lcd.cpp` with hardware mocks |
 | FS3000 calibration, wind vector, BME280, power key, disabled audio | `test/host/sensors_power_test.cpp` |
 | BLE scanning, manager, CPS/FTMS/CSC/posture/HRS parsing and log queues (phone diagnostics removed) | `test/host/ble_diagnostics_test.cpp` |
 | Dashboard layout/hit targets/gestures/rendering, SD activity and CRC layout settings | `test/host/ui_language_test.cpp`, `test/host/system_coexistence_test.cpp` |
@@ -57,6 +58,8 @@ Use other existing scenario names with `-k` as needed. Check
 | Raw IMU CSV preservation, mounting sidecars and calibration corruption rejection | `test/host/imu_comparison_test.cpp`, `test/host/test_regression.py` (`imu_comparison`), `tools/imu_compare.py` |
 
 Read only the test home and owning production code relevant to the change.
+The `imu_comparison` suite also checks failed metadata startup and retry;
+verify task stack behavior and SD writes on the physical board.
 
 For guided mounting changes, run `imu_mount_calibration`, `imu_comparison`
 and `ui_sensors`, then retain `ui_language` in broader validation. Check both

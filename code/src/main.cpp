@@ -242,6 +242,7 @@ void setup() {
   if (!AppLog.begin()) Serial.println("[LOG] output task unavailable");
   delay(200);
   AppLog.println("\n== Aero Probe (single FS3000 + touch UI + BLE PM) ==");
+  AppLog.printf("[BOOT] reset_reason=%d (esp_reset_reason_t)\n", int(esp_reset_reason()));
   AppLog.println("[PM] Use SELECT POWER METER to choose BLE, virtual, or automatic input.");
   AppLog.println("[PM] BLE measurements are streamed to this monitor.");
   AppLog.printf("[MEM] PSRAM=%u internal free=%u largest=%u\n",
@@ -410,9 +411,14 @@ void loop() {
   if (lcd.takeVolumeRequest(newVolume)) {
     audio.setVolume(newVolume);
     Preferences prefs;
+    bool saved = false;
     if (prefs.begin("aero-ui", false)) {
-      prefs.putUChar("vol", newVolume);
+      saved = prefs.putUChar("vol", newVolume) == 1;
       prefs.end();
+    }
+    if (!saved) {
+      AppLog.println("[AUDIO] Could not save volume preference.");
+      lcd.showFitResult("Could not save volume. Retry.");
     }
     AppLog.printf("[AUDIO] volume set to %u%%\n", (unsigned)newVolume);
     audio.playBeepPreview();

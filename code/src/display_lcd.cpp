@@ -436,6 +436,16 @@ void DisplayLcd::refreshWifiStatus() {
 
   if (strcmp(lv_label_get_text(settingsWifiStatus_), status) != 0)
     lv_label_set_text(settingsWifiStatus_, status);
+  if (systemSettingsWifiStatus_) {
+    lv_label_set_text(systemSettingsWifiStatus_, status);
+    for (size_t i = 0; i < 2; ++i) {
+      const bool selected = wifiEnabled_ == (i == 1);
+      lv_obj_set_style_bg_color(systemSettingsWifiToggle_[i],
+          selected ? lv_color_make(37, 99, 235) : lv_color_make(239, 244, 248), 0);
+      lv_obj_set_style_text_color(lv_obj_get_child(systemSettingsWifiToggle_[i], 0),
+          selected ? lv_color_white() : lv_color_make(30, 41, 59), 0);
+    }
+  }
 }
 
 void DisplayLcd::updateOnlineDevices(bool powerConnected, bool powerResponding,
@@ -933,6 +943,12 @@ void DisplayLcd::refreshSoundVolume() {
   if (soundVolumeSlider_ &&
       lv_slider_get_value(soundVolumeSlider_) != currentVolume_)
     lv_slider_set_value(soundVolumeSlider_, currentVolume_, LV_ANIM_OFF);
+  if (systemSettingsSoundValue_) {
+    snprintf(text, sizeof(text), "%u%%", unsigned(currentVolume_));
+    lv_label_set_text(systemSettingsSoundValue_, text);
+    if (lv_slider_get_value(systemSettingsSoundSlider_) != currentVolume_)
+      lv_slider_set_value(systemSettingsSoundSlider_, currentVolume_, LV_ANIM_OFF);
+  }
 }
 
 void DisplayLcd::onSdCardButton(lv_event_t *) {
@@ -1021,6 +1037,50 @@ void DisplayLcd::onSystemSettingsButton(lv_event_t *) {
   g_display->hideDevicePanels();
   lv_obj_add_flag(g_display->settingsPanel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(g_display->systemSettingsPanel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void DisplayLcd::onTimezoneSelected(lv_event_t *event) {
+  if (!g_display) return;
+  const auto timezone = static_cast<SystemSettings::Timezone>(
+      (uintptr_t)lv_event_get_user_data(event));
+  Preferences preferences;
+  if (!preferences.begin("aero-ui", false)) {
+    AppLog.println("[UI] Could not open preferences to save timezone.");
+    g_display->showNotice("Could not save timezone.");
+    return;
+  }
+  const bool saved = preferences.putUChar("timezone", uint8_t(timezone)) == 1;
+  preferences.end();
+  if (!saved) {
+    AppLog.println("[UI] Could not save timezone preference.");
+    g_display->showNotice("Could not save timezone.");
+    return;
+  }
+  g_display->selectedTimezone_ = timezone;
+  g_display->refreshTimezone();
+  g_display->updateClock(g_display->networkUtc_);
+}
+
+void DisplayLcd::refreshTimezone() {
+  if (!systemSettingsTimezoneLabel_) return;
+  char text[32];
+  snprintf(text, sizeof(text), "UTC%+ld",
+           (long)SystemSettings::getTimezoneOffset(selectedTimezone_));
+  lv_label_set_text(systemSettingsTimezoneLabel_, text);
+  const SystemSettings::Timezone shortcuts[] = {
+      SystemSettings::Timezone::UTC_0, SystemSettings::Timezone::UTC_P8_BEIJING,
+      SystemSettings::Timezone::UTC_N5};
+  for (size_t i = 0; i < 3; ++i) {
+    if (shortcuts[i] == selectedTimezone_)
+      lv_obj_add_state(systemSettingsTimezoneButtons_[i], LV_STATE_CHECKED);
+    else lv_obj_clear_state(systemSettingsTimezoneButtons_[i], LV_STATE_CHECKED);
+  }
+  for (size_t i = 0; i < SystemSettings::TIMEZONE_COUNT; ++i) {
+    auto *button = lv_obj_get_child(systemSettingsTimezoneList_, i);
+    if (SystemSettings::TIMEZONE_LIST[i].id == selectedTimezone_)
+      lv_obj_add_state(button, LV_STATE_CHECKED);
+    else lv_obj_clear_state(button, LV_STATE_CHECKED);
+  }
 }
 
 void DisplayLcd::onNoticeDismiss(lv_event_t *) {
@@ -1215,6 +1275,8 @@ void DisplayLcd::showSettings() {
 }
 
 void DisplayLcd::updateNetworkTime(bool networkConnected, uint32_t utc) {
+  networkUtc_ = utc;
+  timeNetworkConnected_ = networkConnected;
   if (!timePanel_) return;
   lv_label_set_text(timeStatusLabel_, utc
       ? localized(networkConnected ? "NTP time synchronized" : "NTP synchronized / holdover",
@@ -1223,8 +1285,14 @@ void DisplayLcd::updateNetworkTime(bool networkConnected, uint32_t utc) {
                          : localized("Wi-Fi is disconnected", "Wi-Fi 未连接"));
   lv_obj_set_style_text_color(timeStatusLabel_, utc
       ? lv_color_make(22, 163, 74) : lv_color_make(217, 119, 6), 0);
+  if (systemSettingsTimeStatus_) {
+    lv_label_set_text(systemSettingsTimeStatus_, lv_label_get_text(timeStatusLabel_));
+    lv_obj_set_style_text_color(systemSettingsTimeStatus_,
+        lv_obj_get_style_text_color(timeStatusLabel_, 0), 0);
+  }
   if (!utc) {
     lv_label_set_text(timeUtcLabel_, localized("UTC  --", "UTC  --"));
+    if (systemSettingsTimeUTC_) lv_label_set_text(systemSettingsTimeUTC_, "UTC  --");
     lv_label_set_text(timeInfoLabel_, localized("Syncs every 5 minutes while online.",
                                                 "联网时每 5 分钟自动对时。"));
     return;
@@ -1235,6 +1303,8 @@ void DisplayLcd::updateNetworkTime(bool networkConnected, uint32_t utc) {
   if (gmtime_r(&epoch, &value) &&
       strftime(formatted, sizeof(formatted), "UTC  %Y-%m-%d %H:%M:%S", &value))
     lv_label_set_text(timeUtcLabel_, formatted);
+  if (systemSettingsTimeUTC_)
+    lv_label_set_text(systemSettingsTimeUTC_, lv_label_get_text(timeUtcLabel_));
   lv_label_set_text(timeInfoLabel_, localized("NTP refresh: every 5 minutes",
                                               "NTP 自动校准：每 5 分钟"));
 }
@@ -1315,7 +1385,7 @@ void DisplayLcd::buildSystemSettingsPanel() {
 
   // 创建选项卡容器
   systemSettingsTabs_ = lv_tabview_create(systemSettingsPanel_, LV_DIR_TOP, 32);
-  lv_obj_set_size(systemSettingsTabs_, 240, 288);
+  lv_obj_set_size(systemSettingsTabs_, 240, 268);
   lv_obj_align(systemSettingsTabs_, LV_ALIGN_TOP_LEFT, 0, 52);
   lv_obj_set_style_bg_color(systemSettingsTabs_, lv_color_make(248, 250, 252), 0);
   lv_obj_set_style_text_font(systemSettingsTabs_, &lv_font_jetbrains_mono_14, 0);
@@ -1323,13 +1393,17 @@ void DisplayLcd::buildSystemSettingsPanel() {
   // 获取选项卡按钮区域
   lv_obj_t *tabButtonArea = lv_tabview_get_tab_btns(systemSettingsTabs_);
   lv_obj_set_style_bg_color(tabButtonArea, lv_color_make(239, 244, 248), 0);
+  lv_obj_set_style_pad_all(tabButtonArea, 0, LV_PART_ITEMS);
+  lv_obj_clear_flag(lv_tabview_get_content(systemSettingsTabs_), LV_OBJ_FLAG_SCROLLABLE);
 
   // ===== 时间选项卡 =====
   systemSettingsTimeTabCont_ = lv_tabview_add_tab(systemSettingsTabs_, "TIME");
   lv_obj_set_style_pad_all(systemSettingsTimeTabCont_, 12, 0);
 
   systemSettingsTimeStatus_ = lv_label_create(systemSettingsTimeTabCont_);
-  lv_label_set_text(systemSettingsTimeStatus_, "Time Sync: OK");
+  lv_label_set_text(systemSettingsTimeStatus_, "Wi-Fi is disconnected");
+  lv_obj_set_width(systemSettingsTimeStatus_, 216);
+  lv_label_set_long_mode(systemSettingsTimeStatus_, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(systemSettingsTimeStatus_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(systemSettingsTimeStatus_, lv_color_make(30, 41, 59), 0);
   lv_obj_align(systemSettingsTimeStatus_, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -1338,35 +1412,48 @@ void DisplayLcd::buildSystemSettingsPanel() {
   lv_label_set_text(systemSettingsTimeUTC_, "UTC  --");
   lv_obj_set_style_text_font(systemSettingsTimeUTC_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(systemSettingsTimeUTC_, lv_color_make(100, 116, 139), 0);
-  lv_obj_align(systemSettingsTimeUTC_, LV_ALIGN_TOP_LEFT, 0, 24);
+  lv_obj_set_width(systemSettingsTimeUTC_, 216);
+  lv_label_set_long_mode(systemSettingsTimeUTC_, LV_LABEL_LONG_WRAP);
+  lv_obj_align(systemSettingsTimeUTC_, LV_ALIGN_TOP_LEFT, 0, 40);
 
   systemSettingsTimezoneLabel_ = lv_label_create(systemSettingsTimeTabCont_);
   lv_label_set_text(systemSettingsTimezoneLabel_, "Timezone:");
   lv_obj_set_style_text_font(systemSettingsTimezoneLabel_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(systemSettingsTimezoneLabel_, lv_color_make(30, 41, 59), 0);
-  lv_obj_align(systemSettingsTimezoneLabel_, LV_ALIGN_TOP_LEFT, 0, 48);
+  lv_obj_align(systemSettingsTimezoneLabel_, LV_ALIGN_TOP_LEFT, 0, 80);
 
-  // 时区快捷按钮（4 个常用时区）
-  const char *tzLabels[] = {"UTC", "UTC+8", "UTC-5", "Auto"};
-  const lv_coord_t tzX[] = {12, 72, 132, 192};
-  for (size_t i = 0; i < 4; ++i) {
+  // 时区快捷按钮（3 个常用时区）
+  const char *tzLabels[] = {"UTC", "UTC+8", "UTC-5"};
+  const SystemSettings::Timezone shortcuts[] = {
+      SystemSettings::Timezone::UTC_0, SystemSettings::Timezone::UTC_P8_BEIJING,
+      SystemSettings::Timezone::UTC_N5};
+  for (size_t i = 0; i < 3; ++i) {
     systemSettingsTimezoneButtons_[i] = lv_btn_create(systemSettingsTimeTabCont_);
-    lv_obj_set_size(systemSettingsTimezoneButtons_[i], 48, 32);
+    lv_obj_set_size(systemSettingsTimezoneButtons_[i], 68, 32);
     lv_obj_set_style_radius(systemSettingsTimezoneButtons_[i], 6, LV_PART_MAIN);
     lv_obj_set_style_bg_color(systemSettingsTimezoneButtons_[i],
-                              i == 1 ? lv_color_make(37, 99, 235) : lv_color_make(219, 227, 236), 0);
-    lv_obj_align(systemSettingsTimezoneButtons_[i], LV_ALIGN_TOP_LEFT, tzX[i], 72);
+                              lv_color_make(219, 227, 236), 0);
+    lv_obj_set_style_text_color(systemSettingsTimezoneButtons_[i],
+                                lv_color_make(30, 41, 59), 0);
+    lv_obj_set_style_bg_color(systemSettingsTimezoneButtons_[i],
+                              lv_color_make(37, 99, 235), LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(systemSettingsTimezoneButtons_[i],
+                                lv_color_white(), LV_STATE_CHECKED);
+    lv_obj_align(systemSettingsTimezoneButtons_[i], LV_ALIGN_TOP_LEFT, i * 74, 100);
+    lv_obj_add_event_cb(systemSettingsTimezoneButtons_[i], onTimezoneSelected,
+        LV_EVENT_CLICKED, (void *)(uintptr_t)shortcuts[i]);
     lv_obj_t *label = lv_label_create(systemSettingsTimezoneButtons_[i]);
     lv_label_set_text(label, tzLabels[i]);
     lv_obj_set_style_text_font(label, &lv_font_jetbrains_mono_14, 0);
-    lv_obj_set_style_text_color(label, i == 1 ? lv_color_white() : lv_color_make(30, 41, 59), 0);
     lv_obj_center(label);
   }
 
   // 时区列表（可滚动）
   systemSettingsTimezoneList_ = lv_obj_create(systemSettingsTimeTabCont_);
-  lv_obj_set_size(systemSettingsTimezoneList_, 216, 100);
-  lv_obj_align(systemSettingsTimezoneList_, LV_ALIGN_TOP_LEFT, 0, 112);
+  lv_obj_set_size(systemSettingsTimezoneList_, 216, 72);
+  lv_obj_align(systemSettingsTimezoneList_, LV_ALIGN_TOP_LEFT, 0, 140);
+  lv_obj_set_style_pad_all(systemSettingsTimezoneList_, 2, 0);
+  lv_obj_set_flex_flow(systemSettingsTimezoneList_, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scrollbar_mode(systemSettingsTimezoneList_, LV_SCROLLBAR_MODE_AUTO);
   lv_obj_set_style_bg_color(systemSettingsTimezoneList_, lv_color_make(239, 244, 248), 0);
   lv_obj_set_style_border_color(systemSettingsTimezoneList_, lv_color_make(203, 213, 225), 0);
@@ -1382,8 +1469,10 @@ void DisplayLcd::buildSystemSettingsPanel() {
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_set_style_radius(btn, 0, 0);
     lv_obj_set_style_pad_all(btn, 2, 0);
+    lv_obj_set_style_bg_color(btn, lv_color_make(219, 234, 254), LV_STATE_CHECKED);
+    lv_obj_add_event_cb(btn, onTimezoneSelected, LV_EVENT_CLICKED, (void *)(uintptr_t)tzInfo.id);
     lv_obj_t *label = lv_label_create(btn);
-    lv_label_set_text(label, tzInfo.name);
+    lv_label_set_text_fmt(label, "UTC%+ld", (long)tzInfo.offset);
     lv_obj_set_style_text_font(label, &lv_font_jetbrains_mono_14, 0);
     lv_obj_set_style_text_color(label, lv_color_make(30, 41, 59), 0);
     lv_obj_align(label, LV_ALIGN_LEFT_MID, 0, 0);
@@ -1413,6 +1502,12 @@ void DisplayLcd::buildSystemSettingsPanel() {
   lv_obj_set_style_bg_color(systemSettingsSoundSlider_, lv_color_make(37, 99, 235), LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(systemSettingsSoundSlider_, lv_color_make(37, 99, 235), LV_PART_KNOB);
   lv_obj_align(systemSettingsSoundSlider_, LV_ALIGN_TOP_LEFT, 6, 28);
+  lv_obj_add_event_cb(systemSettingsSoundSlider_, onVolumeSliderChanged, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(systemSettingsSoundSlider_, onVolumeSliderChanged, LV_EVENT_RELEASED, nullptr);
+  systemSettingsSoundHint_ = lv_label_create(systemSettingsSoundTabCont_);
+  lv_obj_set_width(systemSettingsSoundHint_, 216);
+  lv_label_set_long_mode(systemSettingsSoundHint_, LV_LABEL_LONG_WRAP);
+  lv_obj_align(systemSettingsSoundHint_, LV_ALIGN_TOP_LEFT, 0, 80);
 
   // ===== 语言选项卡 =====
   systemSettingsLanguageTabCont_ = lv_tabview_add_tab(systemSettingsTabs_, "LANG");
@@ -1435,7 +1530,9 @@ void DisplayLcd::buildSystemSettingsPanel() {
                                   lv_color_make(203, 213, 225), 0);
     lv_obj_set_style_border_width(systemSettingsLanguageButtons_[i], 1, 0);
     lv_obj_align(systemSettingsLanguageButtons_[i], LV_ALIGN_TOP_LEFT,
-                 (lv_coord_t)(12 + i * 102), 32);
+                 (lv_coord_t)(i * 114), 32);
+    lv_obj_add_event_cb(systemSettingsLanguageButtons_[i], onLanguageSelected,
+        LV_EVENT_CLICKED, (void *)(uintptr_t)i);
     systemSettingsLanguageLabels_[i] = lv_label_create(systemSettingsLanguageButtons_[i]);
     lv_label_set_text(systemSettingsLanguageLabels_[i], langLabels[i]);
     lv_obj_set_style_text_font(systemSettingsLanguageLabels_[i],
@@ -1461,7 +1558,9 @@ void DisplayLcd::buildSystemSettingsPanel() {
     lv_obj_set_style_bg_color(systemSettingsWifiToggle_[i],
                               i == 1 ? lv_color_make(37, 99, 235) : lv_color_make(239, 244, 248), 0);
     lv_obj_align(systemSettingsWifiToggle_[i], LV_ALIGN_TOP_LEFT,
-                 (lv_coord_t)(12 + i * 102), 32);
+                 (lv_coord_t)(i * 114), 32);
+    lv_obj_add_event_cb(systemSettingsWifiToggle_[i], onWifiSelected,
+        LV_EVENT_CLICKED, (void *)(uintptr_t)i);
     lv_obj_t *label = lv_label_create(systemSettingsWifiToggle_[i]);
     lv_label_set_text(label, wifiToggleLabels[i]);
     lv_obj_set_style_text_font(label, &lv_font_jetbrains_mono_14, 0);
@@ -1470,10 +1569,18 @@ void DisplayLcd::buildSystemSettingsPanel() {
   }
 
   systemSettingsWifiStatus_ = lv_label_create(systemSettingsWifiTabCont_);
+  lv_obj_set_width(systemSettingsWifiStatus_, 216);
+  lv_label_set_long_mode(systemSettingsWifiStatus_, LV_LABEL_LONG_WRAP);
   lv_label_set_text(systemSettingsWifiStatus_, "Status: Disconnected");
   lv_obj_set_style_text_font(systemSettingsWifiStatus_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(systemSettingsWifiStatus_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(systemSettingsWifiStatus_, LV_ALIGN_TOP_LEFT, 0, 88);
+  auto *setup = lv_btn_create(systemSettingsWifiTabCont_);
+  lv_obj_set_size(setup, 216, 36);
+  lv_obj_align(setup, LV_ALIGN_TOP_LEFT, 0, 172);
+  lv_obj_add_event_cb(setup, onWifiSetup, LV_EVENT_CLICKED, nullptr);
+  systemSettingsWifiSetupLabel_ = lv_label_create(setup);
+  lv_obj_center(systemSettingsWifiSetupLabel_);
 
   // ===== USB 选项卡 =====
   systemSettingsUsbTabCont_ = lv_tabview_add_tab(systemSettingsTabs_, "USB");
@@ -1493,7 +1600,9 @@ void DisplayLcd::buildSystemSettingsPanel() {
     lv_obj_set_style_bg_color(systemSettingsUsbToggle_[i],
                               lv_color_make(239, 244, 248), 0);
     lv_obj_align(systemSettingsUsbToggle_[i], LV_ALIGN_TOP_LEFT,
-                 (lv_coord_t)(12 + i * 102), 32);
+                 (lv_coord_t)(i * 114), 32);
+    lv_obj_add_event_cb(systemSettingsUsbToggle_[i], onUsbStorageMode,
+        LV_EVENT_CLICKED, (void *)(uintptr_t)i);
     lv_obj_t *label = lv_label_create(systemSettingsUsbToggle_[i]);
     lv_label_set_text(label, usbToggleLabels[i]);
     lv_obj_set_style_text_font(label, &lv_font_jetbrains_mono_14, 0);
@@ -1502,12 +1611,22 @@ void DisplayLcd::buildSystemSettingsPanel() {
   }
 
   systemSettingsUsbStatus_ = lv_label_create(systemSettingsUsbTabCont_);
-  lv_label_set_text(systemSettingsUsbStatus_, "Status: Disconnected");
+  lv_label_set_text(systemSettingsUsbStatus_, "USB STORAGE OFF\n\nRIDING MODE");
+  lv_obj_add_state(systemSettingsUsbToggle_[0], LV_STATE_DISABLED);
+  lv_obj_set_width(systemSettingsUsbStatus_, 216);
+  lv_label_set_long_mode(systemSettingsUsbStatus_, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(systemSettingsUsbStatus_, &lv_font_jetbrains_mono_14, 0);
   lv_obj_set_style_text_color(systemSettingsUsbStatus_, lv_color_make(100, 116, 139), 0);
   lv_obj_align(systemSettingsUsbStatus_, LV_ALIGN_TOP_LEFT, 0, 88);
 
   lv_obj_add_flag(systemSettingsPanel_, LV_OBJ_FLAG_HIDDEN);
+  for (auto *tab : {systemSettingsTimeTabCont_, systemSettingsSoundTabCont_,
+                   systemSettingsLanguageTabCont_, systemSettingsWifiTabCont_,
+                   systemSettingsUsbTabCont_}) {
+    lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+  }
+  refreshTimezone();
 }
 
 void DisplayLcd::buildNoticePanel() {
@@ -2434,7 +2553,38 @@ void DisplayLcd::refreshLanguage() {
   lv_label_set_text(settingsSystemButtonLabel_,
                     localized(LV_SYMBOL_SETTINGS "\nSYSTEM", LV_SYMBOL_SETTINGS "\n系统设置"));
   lv_label_set_text(systemSettingsTitle_, localized("SYSTEM SETTINGS", "系统设置"));
-  lv_obj_set_style_text_font(systemSettingsTitle_, titleFont, 0);
+  lv_obj_set_style_text_font(systemSettingsTitle_, font, 0);
+  const char *systemTabs[] = {
+      localized("TIME", "时间"), localized("SOUND", "声音"),
+      localized("LANG", "语言"), "WIFI", "USB"};
+  for (size_t i = 0; i < 5; ++i)
+    lv_tabview_rename_tab(systemSettingsTabs_, i, systemTabs[i]);
+  lv_obj_set_style_text_font(lv_tabview_get_tab_btns(systemSettingsTabs_), font, 0);
+  lv_label_set_text(systemSettingsSoundLabel_, localized("Volume:", "音量:"));
+  lv_label_set_text(systemSettingsSoundHint_,
+      localized("Drag the slider to set volume.\nPreview tones are disabled.",
+                "拖动滑块设置音量。\n试听提示音已禁用。"));
+  lv_label_set_text(systemSettingsLanguageHint_,
+      localized("Choose interface language", "选择界面语言"));
+  lv_label_set_text(systemSettingsWifiSetupLabel_, localized("SET UP WI-FI", "配置网络"));
+  for (auto *label : {systemSettingsTimeStatus_, systemSettingsSoundLabel_,
+                     systemSettingsSoundHint_, systemSettingsLanguageHint_,
+                     systemSettingsWifiStatus_, systemSettingsWifiSetupLabel_,
+                     systemSettingsUsbLabel_, systemSettingsUsbStatus_})
+    lv_obj_set_style_text_font(label, font, 0);
+  for (size_t i = 0; i < 2; ++i) {
+    const bool selected = chinese_ == (i == 1);
+    lv_obj_set_style_bg_color(systemSettingsLanguageButtons_[i],
+        selected ? lv_color_make(219, 234, 254) : lv_color_make(239, 244, 248), 0);
+    lv_obj_set_style_text_color(systemSettingsLanguageLabels_[i],
+        selected ? lv_color_make(29, 78, 216) : lv_color_make(51, 65, 85), 0);
+    for (auto *button : {systemSettingsWifiToggle_[i], systemSettingsUsbToggle_[i]}) {
+      auto *label = lv_obj_get_child(button, 0);
+      lv_label_set_text(label, i ? localized("ON", "开启") : localized("OFF", "关闭"));
+      lv_obj_set_style_text_font(label, font, 0);
+    }
+  }
+  updateNetworkTime(timeNetworkConnected_, networkUtc_);
   lv_label_set_text(settingsWifiEntryLabel_, LV_SYMBOL_WIFI "\nWI-FI");
   lv_label_set_text(settingsSdButtonLabel_,
                     localized(LV_SYMBOL_OK "\nONLINE", LV_SYMBOL_OK "\n在线设备"));
@@ -2544,6 +2694,10 @@ void DisplayLcd::begin() {
       chinese_ = preferences.getBool("zh", false);
       const uint8_t placement = preferences.getUChar("imu-wear", 3);
       if (placement <= 3) posturePlacement_ = RiderPosture::Placement(placement);
+      const uint8_t timezone = preferences.getUChar("timezone",
+          uint8_t(SystemSettings::Timezone::UTC_P8_BEIJING));
+      for (const auto &info : SystemSettings::TIMEZONE_LIST)
+        if (uint8_t(info.id) == timezone) selectedTimezone_ = info.id;
       preferences.end();
     }
   }
@@ -2889,10 +3043,12 @@ void DisplayLcd::update(const WindVector &w, bool windValid, float powerW,
 }
 
 void DisplayLcd::updateClock(uint32_t utc) {
+  networkUtc_ = utc;
   if (!timeLabel_) return;
   char text[12] = "--:--:--";
   if (utc != 0) {
-    const uint32_t seconds = ((uint64_t)utc + 8 * 3600) % 86400;
+    const uint32_t seconds = (int64_t(utc) +
+        SystemSettings::getTimezoneOffset(selectedTimezone_) * 3600 + 86400) % 86400;
     snprintf(text, sizeof(text), "%02u:%02u:%02u",
              (unsigned)(seconds / 3600), (unsigned)(seconds / 60 % 60),
              (unsigned)(seconds % 60));

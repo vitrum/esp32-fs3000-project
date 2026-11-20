@@ -33,6 +33,9 @@ SUITES = {
     "ui_sensors": (
         ["ui_language_test.cpp"], [], ["PASS sensor UI:"],
     ),
+    "ui_system_settings": (
+        ["system_settings_test.cpp"], [], ["PASS system settings:"],
+    ),
     "sensors_power": (
         ["sensors_power_test.cpp"],
         ["fs3000.cpp", "wind_probe.cpp", "bme280_env.cpp", "power_key.cpp", "runtime_log.cpp", "audio.cpp"],
@@ -285,12 +288,13 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
         assert (gps / "TinyGPS++.cpp").is_file(), "Set GPS_SOURCE_DIR to TinyGPSPlus/src"
         command += ["-I" + str(gps), str(gps / "TinyGPS++.cpp")]
     command += ["-o", str(binary)]
-    if suite in {"ui_language", "ui_sensors"}:
+    if suite in {"ui_language", "ui_sensors", "ui_system_settings"}:
         configured = subprocess.run(
             ["cmake", "-S", str(ROOT / "test/host/ui"), "-B", str(tmp_path), "-DCMAKE_BUILD_TYPE=Debug"],
             cwd=ROOT, capture_output=True, text=True, timeout=120)
         assert configured.returncode == 0, configured.stdout + configured.stderr
-        command = ["cmake", "--build", str(tmp_path), "--parallel", "2"]
+        target = "ui_system_settings" if suite == "ui_system_settings" else "ui_language"
+        command = ["cmake", "--build", str(tmp_path), "--target", target, "--parallel", "2"]
     built = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=120)
     assert built.returncode == 0, built.stdout + built.stderr
     arguments = [str(binary)]
@@ -304,7 +308,7 @@ def test_native_regression(suite: str, tmp_path: Path, dut: Dut, msg_queue: Mess
         artifact_root.mkdir(parents=True, exist_ok=True)
         imu_artifacts = Path(tempfile.mkdtemp(prefix="comparison-", dir=artifact_root))
         environment["IMU_ARTIFACT_DIR"] = str(imu_artifacts)
-    if suite in {"ui_language", "ui_sensors"}:
+    if suite in {"ui_language", "ui_sensors", "ui_system_settings"}:
         ui_artifacts = ROOT / "test/results/ui-language"
         ui_artifacts.mkdir(parents=True, exist_ok=True)
         environment["UI_ARTIFACT_DIR"] = str(ui_artifacts)

@@ -32,6 +32,19 @@ public:
     bytes[namespace_ + "/" + key] = std::vector<uint8_t>(begin, begin + size);
     return size;
   }
+  uint8_t getUChar(const char *key, uint8_t fallback = 0) const {
+    uint8_t value;
+    return getBytes(key, &value, sizeof(value)) == sizeof(value) ? value : fallback;
+  }
+  size_t putUChar(const char *key, uint8_t value) {
+    return putBytes(key, &value, sizeof(value));
+  }
+  bool getBool(const char *key, bool fallback = false) const {
+    return getUChar(key, fallback ? 1 : 0) != 0;
+  }
+  size_t putBool(const char *key, bool value) {
+    return putUChar(key, value ? 1 : 0);
+  }
   void end() {}
   inline static bool failOpen = false, failWrite = false;
   inline static bool lastReadOnly = false;

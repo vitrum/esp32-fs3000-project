@@ -67,6 +67,8 @@ public:
   void showUsbStorageError(const char *message) {
     usbStorageError_ = true;
     if (usbStorageStatus_) lv_label_set_text(usbStorageStatus_, message);
+    if (systemSettingsUsbStatus_) lv_label_set_text(systemSettingsUsbStatus_, message);
+    showNotice(message);
   }
   bool takeUsbStorageRequest(bool &enabled) {
     if (!usbStorageRequestPending_) return false;
@@ -249,7 +251,7 @@ private:
   lv_obj_t *systemSettingsTimeStatus_ = nullptr;
   lv_obj_t *systemSettingsTimeUTC_ = nullptr;
   lv_obj_t *systemSettingsTimezoneLabel_ = nullptr;
-  lv_obj_t *systemSettingsTimezoneButtons_[4] = {};  // 时区快捷按钮
+  lv_obj_t *systemSettingsTimezoneButtons_[3] = {};
   lv_obj_t *systemSettingsTimezoneList_ = nullptr;   // 时区选择列表
   SystemSettings::Timezone selectedTimezone_ = SystemSettings::Timezone::UTC_P8_BEIJING;
   
@@ -258,6 +260,7 @@ private:
   lv_obj_t *systemSettingsSoundLabel_ = nullptr;
   lv_obj_t *systemSettingsSoundSlider_ = nullptr;
   lv_obj_t *systemSettingsSoundValue_ = nullptr;
+  lv_obj_t *systemSettingsSoundHint_ = nullptr;
   
   // 语言选项卡
   lv_obj_t *systemSettingsLanguageTabCont_ = nullptr;
@@ -270,12 +273,15 @@ private:
   lv_obj_t *systemSettingsWifiLabel_ = nullptr;
   lv_obj_t *systemSettingsWifiToggle_[2] = {};  // ON/OFF 按钮
   lv_obj_t *systemSettingsWifiStatus_ = nullptr;
+  lv_obj_t *systemSettingsWifiSetupLabel_ = nullptr;
   
   // USB 选项卡
   lv_obj_t *systemSettingsUsbTabCont_ = nullptr;
   lv_obj_t *systemSettingsUsbLabel_ = nullptr;
   lv_obj_t *systemSettingsUsbToggle_[2] = {};  // ON/OFF 按钮
   lv_obj_t *systemSettingsUsbStatus_ = nullptr;
+  uint32_t networkUtc_ = 0;
+  bool timeNetworkConnected_ = false;
 
   lv_obj_t *virtualPowerPanel_ = nullptr;
   lv_obj_t *virtualPowerValueLabel_ = nullptr;
@@ -428,6 +434,8 @@ private:
   static void onTimeButton(lv_event_t *event);
   static void onSystemSettingsButton(lv_event_t *event);
   static void onSystemSettingsBack(lv_event_t *event);
+  static void onTimezoneSelected(lv_event_t *event);
+  void refreshTimezone();
   static void onTimeBack(lv_event_t *event);
   static void onTimeWifiClicked(lv_event_t *event);
   static void onNoticeDismiss(lv_event_t *event);

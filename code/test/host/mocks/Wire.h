@@ -5,8 +5,10 @@
 
 class TwoWire {
 public:
+  void begin(int, int, uint32_t) {}
+  size_t write(uint8_t) { return 1; }
   void beginTransmission(uint8_t address) { lastAddress = address; }
-  uint8_t endTransmission() const { return ack ? 0 : 2; }
+  uint8_t endTransmission(bool = true) const { return ack ? 0 : 2; }
   uint8_t requestFrom(uint8_t address, uint8_t) {
     lastAddress = address;
     availableBytes.assign(frame.begin(), frame.end());
@@ -23,3 +25,4 @@ public:
   std::vector<uint8_t> frame;
   std::deque<uint8_t> availableBytes;
 };
+extern TwoWire Wire1;
